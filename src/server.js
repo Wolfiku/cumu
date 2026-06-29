@@ -9,8 +9,8 @@ const morgan = require('morgan');
 const cors = require('cors');
 
 const { initDB, getConfig } = require('./db');
-const authRoutes = require('./routes/auth');
-const apiRoutes = require('./routes/api');
+const authRoutes  = require('./routes/auth');
+const apiRoutes   = require('./routes/api');
 const adminRoutes = require('./routes/admin');
 const streamRoutes = require('./routes/stream');
 
@@ -27,7 +27,7 @@ const config = getConfig();
 const PORT = process.env.PORT || config.port || 3000;
 const HOST = process.env.HOST || config.host || '0.0.0.0';
 
-// Middleware
+// Core middleware
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(morgan('dev'));
 app.use(cors());
@@ -42,41 +42,53 @@ app.use(session({
   cookie: { secure: false, maxAge: 7 * 24 * 60 * 60 * 1000 }
 }));
 
-// ── Setup guard BEFORE static files ─────────────────────────────────────────
-// Paths that are always allowed even without setup
-const SETUP_WHITELIST = ['/auth/', '/api/setup', '/setup', '/css/', '/js/'];
+// ── Setup guard ──────────────────────────────────────────────────────────────
+// Static assets (css/js/fonts) must load even before setup is complete
+const ALWAYS_ALLOWED = ['/css/', '/js/', '/fonts/', '/favicon'];
+// API + auth routes that are needed during setup itself
+const SETUP_ALLOWED  = ['/auth/setup', '/auth/login', '/auth/logout', '/auth/me'];
+
+function isSetupDone() {
+  // Re-read from DB every time so we catch the moment setup completes
+  const cfg = getConfig();
+  return cfg.setupDone === true || cfg.setupDone === 'true';
+}
 
 app.use((req, res, next) => {
-  const cfg = getConfig();
-  if (cfg.setupDone) return next();                        // setup done → pass through
-  const allowed = SETUP_WHITELIST.some(p => req.path.startsWith(p));
-  if (allowed) return next();                              // whitelisted asset/route → pass
-  // Everything else → show setup page
-  if (req.path === '/' || !req.path.startsWith('/api')) {
-    return res.sendFile(path.join(__dirname, '../public/setup.html'));
-  }
-  return res.status(503).json({ error: 'setup not complete' });
-});
-// ────────────────────────────────────────────────────────────────────────────
+  // Always allow static assets so the setup page can load its CSS/JS
+  if (ALWAYS_ALLOWED.some(p => req.path.startsWith(p))) return next();
+  // Always allow auth endpoints
+  if (SETUP_ALLOWED.some(p => req.path.startsWith(p)))  return next();
 
-// Static files (after guard)
+  if (isSetupDone()) return next();
+
+  // Setup not done yet
+  if (req.path.startsWith('/api') || req.path.startsWith('/admin') || req.path.startsWith('/stream')) {
+    return res.status(503).json({ error: 'Setup not complete. Open the app in your browser.' });
+  }
+
+  // All other requests → serve setup page
+  return res.sendFile(path.join(__dirname, '../public/setup.html'));
+});
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Static files
 app.use(express.static(path.join(__dirname, '../public')));
 
-// Routes
-app.use('/auth', authRoutes);
-app.use('/api', apiRoutes);
-app.use('/admin', adminRoutes);
+// API / feature routes
+app.use('/auth',   authRoutes);
+app.use('/api',    apiRoutes);
+app.use('/admin',  adminRoutes);
 app.use('/stream', streamRoutes);
 
-// SPA fallback
+// SPA catch-all
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
 app.listen(PORT, HOST, () => {
-  const cfg = getConfig();
   console.log(`[cumu] Server running at http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
-  if (!cfg.setupDone) {
-    console.log('[cumu] First run detected — open the URL above to complete setup.');
+  if (!isSetupDone()) {
+    console.log('[cumu] First run — open the URL above to complete setup.');
   }
 });
