@@ -42,7 +42,24 @@ app.use(session({
   cookie: { secure: false, maxAge: 7 * 24 * 60 * 60 * 1000 }
 }));
 
-// Static files
+// ── Setup guard BEFORE static files ─────────────────────────────────────────
+// Paths that are always allowed even without setup
+const SETUP_WHITELIST = ['/auth/', '/api/setup', '/setup', '/css/', '/js/'];
+
+app.use((req, res, next) => {
+  const cfg = getConfig();
+  if (cfg.setupDone) return next();                        // setup done → pass through
+  const allowed = SETUP_WHITELIST.some(p => req.path.startsWith(p));
+  if (allowed) return next();                              // whitelisted asset/route → pass
+  // Everything else → show setup page
+  if (req.path === '/' || !req.path.startsWith('/api')) {
+    return res.sendFile(path.join(__dirname, '../public/setup.html'));
+  }
+  return res.status(503).json({ error: 'setup not complete' });
+});
+// ────────────────────────────────────────────────────────────────────────────
+
+// Static files (after guard)
 app.use(express.static(path.join(__dirname, '../public')));
 
 // Routes
@@ -51,29 +68,14 @@ app.use('/api', apiRoutes);
 app.use('/admin', adminRoutes);
 app.use('/stream', streamRoutes);
 
-// Setup check middleware
-app.use((req, res, next) => {
-  const cfg = getConfig();
-  const setupPaths = ['/setup', '/auth', '/api/setup'];
-  const isSetupPath = setupPaths.some(p => req.path.startsWith(p));
-  if (!cfg.setupDone && !isSetupPath) {
-    return res.redirect('/setup');
-  }
-  next();
-});
-
 // SPA fallback
 app.get('*', (req, res) => {
-  const cfg = getConfig();
-  if (!cfg.setupDone) {
-    return res.sendFile(path.join(__dirname, '../public/setup.html'));
-  }
   res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
 app.listen(PORT, HOST, () => {
-  console.log(`[cumu] Server running at http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
   const cfg = getConfig();
+  console.log(`[cumu] Server running at http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
   if (!cfg.setupDone) {
     console.log('[cumu] First run detected — open the URL above to complete setup.');
   }
