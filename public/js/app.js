@@ -7,7 +7,7 @@
   let currentPage  = 'home';
   let queue        = [];
   let queueIndex   = 0;
-  let isSpokenWord = false;   // formerly "audiobook / Hörspiel"
+  let isSpokenWord = false;
   let audio        = new Audio();
   let currentSong  = null;
   let isPlaying    = false;
@@ -25,7 +25,6 @@
   const contextMenu = document.getElementById('contextMenu');
 
   // ── SVG icon set ───────────────────────────────────────────────────────────
-  // Inline SVGs — monochrome, stroke-based, consistent with the minimal design
   const ICONS = {
     play:     `<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="5,3 19,12 5,21"/></svg>`,
     pause:    `<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="5" y="3" width="4" height="18"/><rect x="15" y="3" width="4" height="18"/></svg>`,
@@ -43,17 +42,19 @@
     album:    `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg>`,
     artist:   `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="7" r="4"/><path d="M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/></svg>`,
     list:     `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3" cy="6" r="1" fill="currentColor"/><circle cx="3" cy="12" r="1" fill="currentColor"/><circle cx="3" cy="18" r="1" fill="currentColor"/></svg>`,
+    home:     `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg>`,
+    search:   `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`,
+    library:  `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 19a2 2 0 0 1 2-2h14"/><path d="M6 17V5a2 2 0 0 1 2-2h12v16H8a2 2 0 0 0-2 2z"/></svg>`,
+    settings: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06A1.65 1.65 0 0 0 15 19.4a1.65 1.65 0 0 0-1 .6 1.65 1.65 0 0 0-.35 1.1V21a2 2 0 0 1-4 0v-.02a1.65 1.65 0 0 0-.35-1.1 1.65 1.65 0 0 0-1-.6 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-.6-1 1.65 1.65 0 0 0-1.1-.35H3a2 2 0 0 1 0-4h.02a1.65 1.65 0 0 0 1.1-.35 1.65 1.65 0 0 0 .6-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06A2 2 0 1 1 7.12 3.7l.06.06A1.65 1.65 0 0 0 9 4.6c.24-.3.53-.5 1-.6A1.65 1.65 0 0 0 10.35 3H10a2 2 0 0 1 4 0v.02c0 .42.14.83.35 1.1.47.1.76.3 1 .6a1.65 1.65 0 0 0 1.82-.33l.06-.06A2 2 0 1 1 20.3 7.12l-.06.06c-.3.24-.5.53-.6 1 .1.47.3.76.6 1z"/></svg>`,
+    dashboard:`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>`
   };
 
   // ── AAC / ALAC capability detection ───────────────────────────────────────
-  // The HTML Audio element natively decodes AAC in all modern browsers.
-  // ALAC (.m4a container with Apple Lossless codec) is supported in Safari
-  // and Chromium-based browsers. We detect support and expose a warning if not.
   const audioCapabilities = (function () {
     const t = document.createElement('audio');
     return {
-      aac:  t.canPlayType('audio/mp4; codecs="mp4a.40.2"') !== '',   // AAC-LC in MP4
-      alac: t.canPlayType('audio/mp4; codecs="alac"') !== '',        // Apple Lossless
+      aac:  t.canPlayType('audio/mp4; codecs="mp4a.40.2"') !== '',
+      alac: t.canPlayType('audio/mp4; codecs="alac"') !== '',
       mp3:  t.canPlayType('audio/mpeg') !== '',
       flac: t.canPlayType('audio/flac') !== '',
       ogg:  t.canPlayType('audio/ogg; codecs="vorbis"') !== '',
@@ -114,9 +115,14 @@
   // ── Router ─────────────────────────────────────────────────────────────────
   window.navigate = function (page, params) {
     currentPage = page;
+
+    if (page === 'nowplaying') document.body.classList.add('nowplaying-fullscreen');
+    else document.body.classList.remove('nowplaying-fullscreen');
+
     document.querySelectorAll('.nav-tab').forEach(t =>
       t.classList.toggle('active', t.dataset.page === page)
     );
+
     if      (page === 'home')       renderHome();
     else if (page === 'search')     renderSearch();
     else if (page === 'library')    renderLibrary();
@@ -127,6 +133,7 @@
     else if (page === 'song')       renderSong(params);
     else if (page === 'nowplaying') renderNowPlaying();
     else if (page === 'settings')   initSettingsPage();
+
     window.scrollTo(0, 0);
   };
 
@@ -138,7 +145,7 @@
     if (data.recentlyPlayed?.length) html += section('[+] recently played', renderSongList(data.recentlyPlayed, 'recent'));
     if (data.mostPlayed?.length)     html += section('[+] most played',      renderSongList(data.mostPlayed, 'popular'));
     if (data.newSongs?.length)       html += section('[+] new additions',    renderSongList(data.newSongs, 'new'));
-    if (!html) html = `<div class="page-section"><div class="empty-state"><div class="big">[~]</div><p>your library is empty<br>go to the admin panel to upload music</p></div></div>`;
+    if (!html) html = `<div class="page-section"><div class="empty-state"><div class="big">${ICONS.home}</div><p>your library is empty<br>go to the admin panel to upload music</p></div></div>`;
     main.innerHTML = html;
     bindSongRows();
   }
@@ -161,8 +168,12 @@
     let html = '';
     if (data.songs?.length)     html += `<div class="section-header"><span class="section-label">songs</span></div>${renderSongList(data.songs, 'search')}`;
     if (data.albums?.length)    html += `<div class="section-header" style="margin-top:16px"><span class="section-label">albums</span></div><div class="card-scroll">${data.albums.map(renderAlbumCard).join('')}</div>`;
-    if (data.artists?.length)   html += `<div class="section-header" style="margin-top:16px"><span class="section-label">artists</span></div><ul class="song-list">${data.artists.map(a => `<li class="song-row" onclick="navigate('artist','${a.id}')"><div class="song-cover">[A]</div><div class="song-meta"><div class="song-title">${esc(a.name)}</div><div class="song-sub">${a.song_count || 0} songs</div></div></li>`).join('')}</ul>`;
-    if (data.playlists?.length) html += `<div class="section-header" style="margin-top:16px"><span class="section-label">playlists</span></div><ul class="song-list">${data.playlists.map(p => `<li class="song-row" onclick="navigate('playlist','${p.id}')"><div class="song-cover">[=]</div><div class="song-meta"><div class="song-title">${esc(p.name)}</div></div></li>`).join('')}</ul>`;
+    if (data.artists?.length) {
+      html += `<div class="section-header" style="margin-top:16px"><span class="section-label">artists</span></div><ul class="song-list">${data.artists.map(a => `<li class="song-row" onclick="navigate('artist','${a.id}')"><div class="song-cover">${ICONS.artist}</div><div class="song-meta"><div class="song-title">${esc(a.name)}</div><div class="song-sub">${a.song_count || 0} songs</div></div></li>`).join('')}</ul>`;
+    }
+    if (data.playlists?.length) {
+      html += `<div class="section-header" style="margin-top:16px"><span class="section-label">playlists</span></div><ul class="song-list">${data.playlists.map(p => `<li class="song-row" onclick="navigate('playlist','${p.id}')"><div class="song-cover">${ICONS.list}</div><div class="song-meta"><div class="song-title">${esc(p.name)}</div></div></li>`).join('')}</ul>`;
+    }
     if (!html) html = `<div class="empty-state"><p>no results for &ldquo;${esc(q)}&rdquo;</p></div>`;
     el.innerHTML = html;
     bindSongRows();
@@ -174,17 +185,18 @@
     main.innerHTML = '<div class="page-section"><div class="spinner"></div></div>';
     const data = await apiFetch('/api/library');
     await loadPlaylists();
+
     let html = '<div class="page-section">';
-    html += `<div class="section-header"><span class="section-label">[=] my library</span><button class="btn-primary" onclick="showCreatePlaylist()">${ICONS.plus} playlist</button></div>`;
+    html += `<div class="section-header"><span class="section-label">${ICONS.library} my library</span><button class="btn-primary" onclick="showCreatePlaylist()">${ICONS.plus} playlist</button></div>`;
     if (playlists.length) {
       html += `<div style="margin-bottom:24px"><h3 style="margin-bottom:12px">playlists</h3>`;
-      html += playlists.map(p => `<div class="playlist-item" onclick="navigate('playlist','${p.id}')"><div class="playlist-cover">[=]</div><div class="song-meta"><div class="song-title">${esc(p.name)}</div><div class="song-sub">${p.description || 'playlist'}</div></div></div>`).join('');
+      html += playlists.map(p => `<div class="playlist-item" onclick="navigate('playlist','${p.id}')"><div class="playlist-cover">${ICONS.list}</div><div class="song-meta"><div class="song-title">${esc(p.name)}</div><div class="song-sub">${p.description || 'playlist'}</div></div></div>`).join('');
       html += '</div>';
     }
     if (data.songs?.length) {
       html += `<h3 style="margin-bottom:12px">saved songs</h3>${renderSongList(data.songs, 'library')}`;
     } else {
-      html += '<div class="empty-state"><div class="big">[=]</div><p>no saved songs yet</p></div>';
+      html += `<div class="empty-state"><div class="big">${ICONS.library}</div><p>no saved songs yet</p></div>`;
     }
     html += '</div>';
     main.innerHTML = html;
@@ -210,35 +222,29 @@
 
     main.innerHTML = `
       <div class="now-playing-page">
-        <!-- top bar -->
         <div class="np-page-topbar">
           <button class="icon-btn np-page-back" onclick="history.back()" aria-label="Go back">${ICONS.back}</button>
           <span class="np-page-label">now playing</span>
           <button class="icon-btn" id="npDots" aria-label="More options" aria-haspopup="true">${ICONS.dots}</button>
         </div>
 
-        <!-- cover -->
         <div class="np-full-cover-wrap">${coverHtml}</div>
 
-        <!-- info -->
         <div class="np-full-info">
           <div class="np-full-title">${esc(s.title)}</div>
           <div class="np-full-artist">${esc(s.artist_name || 'unknown artist')}</div>
           ${s.is_audiobook ? '<span class="badge spoken-word">spoken word</span>' : ''}
         </div>
 
-        <!-- seek -->
         <div class="np-full-seek">
           <span id="npFullCurrent">0:00</span>
           <input type="range" id="npFullSeek" min="0" max="100" value="0" class="seek-input" aria-label="Seek position">
           <span id="npFullDuration">0:00</span>
         </div>
 
-        <!-- controls -->
         <div class="np-full-controls" id="npFullControls" role="group" aria-label="Playback controls"></div>
       </div>`;
 
-    // Sync seek bar with the shared audio element
     function syncSeek() {
       const cur   = document.getElementById('npFullCurrent');
       const seekR = document.getElementById('npFullSeek');
@@ -257,10 +263,8 @@
       });
     }
 
-    // Render icon controls into the full page
     renderNowPlayingControls(document.getElementById('npFullControls'), true);
 
-    // 3-dot menu
     document.getElementById('npDots')?.addEventListener('click', (e) => {
       e.stopPropagation();
       showSongSheet(s);
@@ -268,13 +272,10 @@
   }
 
   // ── NOW PLAYING CONTROLS ───────────────────────────────────────────────────
-  // Renders transport control buttons (SVG icons) into a given container.
-  // fullPage=true uses the larger full-screen layout; false uses the compact bar layout.
   function renderNowPlayingControls(container, fullPage) {
     if (!container) container = npControls;
 
     if (isSpokenWord) {
-      // Spoken word / audiobook mode: seek-back, play/pause, stop, seek-forward
       container.innerHTML = `
         <button class="np-btn${fullPage ? ' np-btn-lg' : ''}" id="ctrl-back" aria-label="Skip back 15 seconds" title="Back 15s">${ICONS.seek_back}</button>
         <button class="np-btn${fullPage ? ' np-btn-lg' : ''}" id="ctrl-playpause" aria-label="${isPlaying ? 'Pause' : 'Play'}" title="${isPlaying ? 'Pause' : 'Play'}">${isPlaying ? ICONS.pause : ICONS.play}</button>
@@ -283,7 +284,6 @@
       container.querySelector('#ctrl-back').addEventListener('click', () => { audio.currentTime = Math.max(0, audio.currentTime - 15); });
       container.querySelector('#ctrl-fwd').addEventListener('click',  () => { audio.currentTime = Math.min(audio.duration || 0, audio.currentTime + 15); });
     } else {
-      // Music mode: previous, play/pause, stop, next
       container.innerHTML = `
         <button class="np-btn${fullPage ? ' np-btn-lg' : ''}" id="ctrl-prev" aria-label="Previous track" title="Previous">${ICONS.prev}</button>
         <button class="np-btn${fullPage ? ' np-btn-lg' : ''}" id="ctrl-playpause" aria-label="${isPlaying ? 'Pause' : 'Play'}" title="${isPlaying ? 'Pause' : 'Play'}">${isPlaying ? ICONS.pause : ICONS.play}</button>
@@ -416,7 +416,6 @@
     const song = await apiFetch(`/api/songs/${songParam}`);
     const coverSrc = song.cover ? `/stream/cover/${song.cover}` : null;
 
-    // Warn if browser cannot decode AAC/ALAC
     let codecWarning = '';
     const ext = (song.mime_type || '').includes('mp4') || (song.mime_type || '').includes('aac');
     if (ext && !audioCapabilities.aac) {
@@ -718,10 +717,6 @@
   }
 
   // ── AUDIO ENGINE ───────────────────────────────────────────────────────────
-  // Supports MP3, AAC (.m4a/.aac), ALAC (.m4a), FLAC, OGG, WAV, OPUS.
-  // AAC and ALAC are decoded natively by the HTML5 Audio element in all modern
-  // browsers (Chrome, Firefox, Safari, Edge). No additional codec library needed.
-
   function playQueue(songs, idx, spokenWord) {
     queue       = songs;
     queueIndex  = idx;
@@ -743,10 +738,8 @@
     updateNowPlayingBar();
     renderNowPlayingControls();
 
-    // If now-playing full page is open, re-render it
     if (currentPage === 'nowplaying') renderNowPlaying();
 
-    // Mark playing row
     document.querySelectorAll('.song-row').forEach(r => r.classList.remove('playing'));
     document.querySelectorAll(`[data-song-id="${song.id}"]`).forEach(r => r.classList.add('playing'));
   }
@@ -791,14 +784,13 @@
   }
 
   audio.addEventListener('ended', () => {
-    if (isSpokenWord) return; // don't auto-advance in spoken word mode
+    if (isSpokenWord) return;
     nextTrack();
   });
 
   audio.addEventListener('play',  () => { isPlaying = true;  renderNowPlayingControls(); });
   audio.addEventListener('pause', () => { isPlaying = false; renderNowPlayingControls(); });
 
-  // Seek bar sync for the mini now-playing bar
   audio.addEventListener('timeupdate', () => {
     if (!audio.duration) return;
     npSeek.value           = (audio.currentTime / audio.duration) * 100;
@@ -862,27 +854,18 @@
   }
 
   function bindSongRows() {
-    // Click on row → play
     document.querySelectorAll('.song-row').forEach((row) => {
       row.addEventListener('click', (e) => {
-        if (e.target.closest('.song-more')) return; // handled by dots button
-        const ctx    = row.dataset.context;
-        const idx    = parseInt(row.dataset.idx, 10);
+        if (e.target.closest('.song-more')) return;
         const songId = row.dataset.songId;
-        // Build queue from all rows in the same context
-        const ctxRows = [...document.querySelectorAll(`.song-row[data-context="${ctx}"]`)];
-        const ctxIdx  = ctxRows.indexOf(row);
-        const songIds = ctxRows.map(r => r.dataset.songId);
-        // We don't have full song objects here — play individually by ID
         apiFetch(`/api/songs/${songId}`).then(song => {
-          queue      = [];  // will be rebuilt if needed
+          queue      = [];
           queueIndex = 0;
           playSong(song);
         });
       });
     });
 
-    // Dots button → show action sheet
     document.querySelectorAll('.song-more').forEach((btn) => {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
