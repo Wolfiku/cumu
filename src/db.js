@@ -112,6 +112,12 @@ function initDB() {
     );
   `);
 
+  // Migration: add theme column to users if it doesn't exist yet
+  const cols = db.prepare('PRAGMA table_info(users)').all();
+  if (!cols.find(c => c.name === 'theme')) {
+    db.exec("ALTER TABLE users ADD COLUMN theme TEXT NOT NULL DEFAULT 'codec'");
+  }
+
   return db;
 }
 
