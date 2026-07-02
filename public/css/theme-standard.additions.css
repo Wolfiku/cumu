@@ -1,0 +1,37 @@
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   ADDITIONS — UI update patch (Standard / Codec-alt theme scope)
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Requirement #5: icon-only Settings/Admin buttons — Standard theme look
+   Differentiated from Codec: pill-shaped, tinted background on hover, uses
+   the theme's primary/accent color instead of monochrome ink. */
+[data-theme="standard"] .btn-icon.icon-only,
+[data-theme="standard"] .btn-secondary.icon-only {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: var(--radius-pill);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+[data-theme="standard"] .btn-icon.icon-only:hover {
+  background: var(--surface-2);
+  color: var(--primary);
+  border-color: var(--primary);
+}
+[data-theme="standard"] .btn-secondary.icon-only:hover {
+  background: var(--surface-2);
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+/* Requirement #2: search-to-add modal, Standard styling */
+[data-theme="standard"] #addSongsModal .modal { box-shadow: var(--shadow-elevated); }
+
+/* Requirement #4: fullscreen now-playing keeps Standard's dark surface */
+[data-theme="standard"] body.np-fullscreen .now-playing-page {
+  background: var(--surface-dark);
+}

@@ -1,0 +1,52 @@
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   ADDITIONS — UI update patch
+   (Classic / Codec theme is the default, unscoped ruleset below)
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Requirement #1: inline SVG icons replace bracket placeholders ─────────
+   No extra CSS needed for the icons themselves (they inherit currentColor),
+   but we ensure icon-bearing buttons/labels lay out inline consistently. */
+.section-label svg,
+.admin-sidebar-item svg,
+.sheet-item svg,
+.song-cover svg,
+.playlist-cover svg,
+.empty-state .big svg,
+.np-full-cover--placeholder svg {
+  vertical-align: middle;
+  display: inline-block;
+}
+.section-label { display: inline-flex; align-items: center; gap: 6px; }
+.admin-sidebar-item { display: flex; align-items: center; gap: 8px; }
+.btn-primary svg, .btn-secondary svg, .btn-danger svg, .btn-icon svg { flex-shrink: 0; }
+
+/* Icon-only variant for top-nav buttons (Requirement #5 — Codec look) */
+.btn-icon.icon-only,
+.btn-secondary.icon-only {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+}
+
+/* ── Requirement #2: playlist "add songs" search modal ─────────────────── */
+#addSongsModal .modal { max-height: 80vh; display: flex; flex-direction: column; }
+#addSongsResults .song-row { padding: 6px 4px; }
+.add-song-btn { display: inline-flex; align-items: center; gap: 4px; }
+
+/* ── Requirement #4: true fullscreen Now Playing page ───────────────────
+   When body.np-fullscreen is set, top-nav / bottom-nav / now-playing mini
+   bar are hidden via inline display:none (set in app.js), and main content
+   is stretched edge-to-edge with no offset. */
+body.np-fullscreen .main-content {
+  margin-top: 0;
+  padding-bottom: 0;
+  min-height: 100vh;
+}
+body.np-fullscreen .now-playing-bar { display: none !important; }
+body.np-fullscreen .now-playing-page { min-height: 100vh; }
