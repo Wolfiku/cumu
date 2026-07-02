@@ -583,16 +583,7 @@ select {
 
 /* Search */
 .search-bar { position: relative; margin-bottom: 24px; }
-.search-bar input { padding-left: 40px; font-size: 16px; }
-.search-bar::before {
-  content: '[?]';
-  position: absolute;
-  left: 12px; top: 50%;
-  transform: translateY(-50%);
-  color: var(--mute);
-  font-size: 14px;
-  pointer-events: none;
-}
+.search-bar input { padding-left: 12px; font-size: 16px; }
 
 /* Forms */
 .form-section { margin-bottom: 24px; }
