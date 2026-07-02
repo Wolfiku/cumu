@@ -1,9 +1,9 @@
-// public/js/settings.js
+// settings.js
 // Settings page: password change + theme preference
 
 'use strict';
 
-/* ── Password strength scorer ──────────────────────────────────────── */
+/* ── Password strength scorer ─────────────────────────────────────── */
 function scorePassword(pw) {
   if (!pw) return { score: 0, label: '' };
   let score = 0;
@@ -17,14 +17,14 @@ function scorePassword(pw) {
   return { score, label: 'strong' };
 }
 
-/* ── Render ───────────────────────────────────────────────────────────── */
+/* ── Render ───────────────────────────────────────────────────── */
 function renderSettingsPage(user) {
   return `
 <div class="settings-page">
   <h2>settings</h2>
   <p class="settings-subtitle">manage your account preferences</p>
 
-  <!-- ── Password ─────────────────────────────────────────────── -->
+  <!-- ── Password ──────────────────────────────────────────── -->
   <div class="settings-card">
     <div class="settings-card-title">change password</div>
     <div class="settings-card-desc">choose a strong password with at least 8 characters.</div>
@@ -55,7 +55,7 @@ function renderSettingsPage(user) {
     </form>
   </div>
 
-  <!-- ── Theme ────────────────────────────────────────────────── -->
+  <!-- ── Theme ────────────────────────────────────────────── -->
   <div class="settings-card">
     <div class="settings-card-title">design</div>
     <div class="settings-card-desc">choose how cumu looks. your preference is saved to your account.</div>
@@ -75,7 +75,7 @@ function renderSettingsPage(user) {
         <div class="theme-preview">
           <div class="theme-preview-swatch standard"></div>
           <div class="theme-preview-label">Standard</div>
-          <div class="theme-preview-sub">GitHub Primer · clean</div>
+          <div class="theme-preview-sub">clean · modern icons</div>
         </div>
       </label>
     </div>
@@ -95,7 +95,7 @@ async function initSettingsPage() {
 
   document.getElementById('mainContent').innerHTML = renderSettingsPage(user);
 
-  // ── Password form ──────────────────────────────────────────────── //
+  // ── Password form ──────────────────────────────────────────── //
   const pwForm       = document.getElementById('settingsPwForm');
   const newPwInput   = document.getElementById('settingsNewPw');
   const strengthFill = document.getElementById('pwStrengthFill');
@@ -154,7 +154,7 @@ async function initSettingsPage() {
     }
   });
 
-  // ── Theme radios ─────────────────────────────────────────────── //
+  // ── Theme radios ──────────────────────────────────────────── //
   const radios = document.querySelectorAll('input[name="cumuTheme"]');
   radios.forEach(radio => {
     radio.addEventListener('change', async () => {
@@ -163,7 +163,6 @@ async function initSettingsPage() {
       const themeSuccess = document.getElementById('settingsThemeSuccess');
       themeError.style.display = themeSuccess.style.display = 'none';
 
-      // Optimistic apply
       applyTheme(theme);
 
       try {
@@ -187,17 +186,13 @@ async function initSettingsPage() {
   });
 }
 
-/* ── Helpers ──────────────────────────────────────────────────────────── */
+/* ── Helpers ────────────────────────────────────────────────────────── */
 function showSettingsMsg(el, text) {
   el.textContent = text;
   el.style.display = 'block';
   setTimeout(() => { el.style.display = 'none'; }, 5000);
 }
 
-/**
- * Apply theme globally and persist to localStorage for zero-flash on next load.
- * @param {'codec'|'standard'} theme
- */
 function applyTheme(theme) {
   if (theme === 'standard') {
     document.documentElement.setAttribute('data-theme', 'standard');
