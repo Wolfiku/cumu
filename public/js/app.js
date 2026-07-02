@@ -76,14 +76,12 @@
     const libraryIcon = document.querySelector('.nav-tab[data-page="library"] .nav-icon');
 
     if (isStandardTheme()) {
-      // standard theme → SVG icons
       if (homeIcon)    homeIcon.innerHTML    = ICONS.home;
       if (searchIcon)  searchIcon.innerHTML  = ICONS.search;
       if (libraryIcon) libraryIcon.innerHTML = ICONS.library;
       if (settingsBtn) { settingsBtn.innerHTML = ICONS.settings; settingsBtn.classList.add('icon-only'); }
       if (adminBtn)    { adminBtn.innerHTML    = ICONS.admin;    adminBtn.classList.add('icon-only'); }
     } else {
-      // codec theme → [] text icons
       if (homeIcon)    homeIcon.textContent    = PLACEHOLDERS.home;
       if (searchIcon)  searchIcon.textContent  = PLACEHOLDERS.search;
       if (libraryIcon) libraryIcon.textContent = PLACEHOLDERS.library;
@@ -92,7 +90,6 @@
     }
   }
 
-  // codec theme → fallbackText ([] icons), standard theme → SVG
   function themedIcon(name, fallbackText) {
     return isStandardTheme() ? (ICONS[name] || '') : (fallbackText || '');
   }
@@ -219,7 +216,12 @@
 
   let searchTimeout;
   function renderSearch() {
-    main.innerHTML = `<div class="page-section"><div class="search-bar"><input type="search" id="searchInput" placeholder="search songs, albums, artists..." autofocus aria-label="Search" /></div><div id="searchResults"></div></div>`;
+    main.innerHTML = `
+      <div class="page-section">
+        <div class="section-header"><span class="section-label">${themedIcon('search', '[?]')} search</span></div>
+        <div class="search-bar"><input type="search" id="searchInput" placeholder="search songs, albums, artists..." autofocus aria-label="Search" /></div>
+        <div id="searchResults"></div>
+      </div>`;
     document.getElementById('searchInput').addEventListener('input', (e) => {
       clearTimeout(searchTimeout);
       searchTimeout = setTimeout(() => doSearch(e.target.value), 300);
@@ -681,7 +683,7 @@
         <div class="admin-sidebar" role="navigation" aria-label="Admin tabs">
           <button class="admin-sidebar-item active" onclick="adminTab(this,'upload')">${themedIcon('upload', '[+]')} upload</button>
           <button class="admin-sidebar-item" onclick="adminTab(this,'songs')">${themedIcon('list', '[=]')} songs</button>
-          <button class="admin-sidebar-item" onclick="adminTab(this,'albums')">${themedIcon('album', '&#9834;')} albums</button>
+          <button class="admin-sidebar-item" onclick="adminTab(this,'albums')">${themedIcon('album', '[o]')} albums</button>
           ${currentUser.role === 'admin' ? `<button class="admin-sidebar-item" onclick="adminTab(this,'users')">${themedIcon('users', '[u]')} users</button>` : ''}
           <button class="admin-sidebar-item" onclick="adminTab(this,'stats')">${themedIcon('stats', '[%]')} stats</button>
         </div>
@@ -838,12 +840,12 @@
     const albums = await apiFetch('/api/albums');
     if (!albums.length) { container.innerHTML = '<div class="empty-state"><p>no albums yet</p></div>'; return; }
     container.innerHTML = `
-      <h2 style="margin-bottom:16px">${themedIcon('album', '&#9834;')} albums (${albums.length})</h2>
+      <h2 style="margin-bottom:16px">${themedIcon('album', '[o]')} albums (${albums.length})</h2>
       <div class="card-scroll" style="flex-wrap:wrap">
         ${albums.map(a => `
           <div class="album-card" style="margin-bottom:16px">
             <div class="album-cover" onclick="navigate('album','${a.id}')" role="button" tabindex="0" aria-label="Open album ${esc(a.title)}" style="cursor:pointer">
-              ${a.cover ? `<img src="/stream/cover/${a.cover}" alt="Cover for ${esc(a.title)}">` : `<span aria-hidden="true">${themedIcon('note', '&#9834;')}</span>`}
+              ${a.cover ? `<img src="/stream/cover/${a.cover}" alt="Cover for ${esc(a.title)}">` : `<span aria-hidden="true">${themedIcon('note', '[o]')}</span>`}
             </div>
             <div class="album-card-title">${esc(a.title)}</div>
             <div class="album-card-sub">${esc(a.artist_name || '')}</div>
