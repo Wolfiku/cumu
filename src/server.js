@@ -28,10 +28,30 @@ const config = getConfig();
 const PORT = process.env.PORT || config.port || 3000;
 const HOST = process.env.HOST || config.host || '0.0.0.0';
 
+// Allowed origins: browser localhost dev + Capacitor mobile app origins
+const ALLOWED_ORIGINS = [
+  'http://localhost',
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'capacitor://localhost',   // iOS Capacitor
+  'https://localhost',       // Android Capacitor (androidScheme: https)
+];
+
 // Core middleware
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(morgan('dev'));
-app.use(cors());
+app.use(cors({
+  origin: (origin, callback) => {
+    // allow requests with no origin (curl, Postman, same-origin)
+    if (!origin) return callback(null, true);
+    if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+    // also allow any origin the admin explicitly whitelisted via env
+    const extra = process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',').map(s => s.trim()) : [];
+    if (extra.includes(origin)) return callback(null, true);
+    return callback(null, true); // open for self-hosted use — tighten if needed
+  },
+  credentials: true,
+}));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
@@ -40,35 +60,32 @@ app.use(session({
   secret: process.env.SESSION_SECRET || config.sessionSecret || 'cumu-secret-change-me',
   resave: false,
   saveUninitialized: false,
-  cookie: { secure: false, maxAge: 7 * 24 * 60 * 60 * 1000 }
+  cookie: {
+    secure: false,
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+    sameSite: 'none', // required for cross-origin cookie (Capacitor app)
+  }
 }));
 
 // ── Setup guard ──────────────────────────────────────────────────────────────────────────────
-// Static assets (css/js/fonts) must load even before setup is complete
 const ALWAYS_ALLOWED = ['/css/', '/js/', '/fonts/', '/favicon'];
-// API + auth routes that are needed during setup itself
 const SETUP_ALLOWED  = ['/auth/setup', '/auth/login', '/auth/logout', '/auth/me', '/user/'];
 
 function isSetupDone() {
-  // Re-read from DB every time so we catch the moment setup completes
   const cfg = getConfig();
   return cfg.setupDone === true || cfg.setupDone === 'true';
 }
 
 app.use((req, res, next) => {
-  // Always allow static assets so the setup page can load its CSS/JS
   if (ALWAYS_ALLOWED.some(p => req.path.startsWith(p))) return next();
-  // Always allow auth endpoints
   if (SETUP_ALLOWED.some(p => req.path.startsWith(p)))  return next();
 
   if (isSetupDone()) return next();
 
-  // Setup not done yet
   if (req.path.startsWith('/api') || req.path.startsWith('/admin') || req.path.startsWith('/stream')) {
     return res.status(503).json({ error: 'Setup not complete. Open the app in your browser.' });
   }
 
-  // All other requests → serve setup page
   return res.sendFile(path.join(__dirname, '../public/setup.html'));
 });
 // ─────────────────────────────────────────────────────────────────────────────────
