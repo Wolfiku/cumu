@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#1a1a2e" />
+  <title>Cumu</title>
+  <link rel="stylesheet" href="styles/main.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Setup Screen (shown on first launch) -->
+    <div id="screen-setup" class="screen active">
+      <div class="setup-container">
+        <div class="setup-logo">
+          <div class="logo-icon">♫</div>
+          <h1>Cumu</h1>
+          <p>Self-hosted Music Streaming</p>
+        </div>
+        <div class="setup-form">
+          <h2>Server verbinden</h2>
+          <div class="form-group">
+            <label for="server-url">Server URL</label>
+            <input type="url" id="server-url" placeholder="https://mein-cumu.beispiel.de" autocomplete="url" />
+          </div>
+          <div class="form-group">
+            <label for="username">Benutzername</label>
+            <input type="text" id="username" placeholder="admin" autocomplete="username" />
+          </div>
+          <div class="form-group">
+            <label for="password">Passwort</label>
+            <input type="password" id="password" placeholder="••••••••" autocomplete="current-password" />
+          </div>
+          <button id="btn-connect" class="btn-primary">Verbinden</button>
+          <p id="setup-error" class="error-msg hidden"></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main App Screen -->
+    <div id="screen-main" class="screen">
+      <!-- Top Bar -->
+      <div class="topbar">
+        <span class="topbar-title">Cumu</span>
+        <button id="btn-logout" class="btn-icon" title="Abmelden">⏏</button>
+      </div>
+
+      <!-- Navigation Tabs -->
+      <div class="tabs">
+        <button class="tab active" data-tab="library">Bibliothek</button>
+        <button class="tab" data-tab="offline">Offline</button>
+      </div>
+
+      <!-- Library Tab -->
+      <div id="tab-library" class="tab-content active">
+        <div class="search-bar">
+          <input type="search" id="search-input" placeholder="Suchen…" />
+        </div>
+        <div id="song-list" class="song-list">
+          <div class="loading-spinner">Laden…</div>
+        </div>
+      </div>
+
+      <!-- Offline Tab -->
+      <div id="tab-offline" class="tab-content">
+        <h3 class="section-title">Offline Lieder</h3>
+        <div id="offline-list" class="song-list">
+          <p class="empty-hint">Noch keine Lieder heruntergeladen.<br/>Tippe auf ↓ um ein Lied zu speichern.</p>
+        </div>
+      </div>
+
+      <!-- Player Bar -->
+      <div id="player-bar" class="player-bar hidden">
+        <div class="player-info">
+          <span id="player-title" class="player-title">–</span>
+          <span id="player-artist" class="player-artist">–</span>
+        </div>
+        <div class="player-controls">
+          <button id="btn-prev" class="btn-icon">⏮</button>
+          <button id="btn-play" class="btn-icon btn-play">▶</button>
+          <button id="btn-next" class="btn-icon">⏭</button>
+        </div>
+        <div class="player-progress">
+          <div id="progress-bar" class="progress-bar">
+            <div id="progress-fill" class="progress-fill"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <audio id="audio-player"></audio>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
