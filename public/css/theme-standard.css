@@ -346,3 +346,12 @@
 [data-theme="standard"] ::-webkit-scrollbar-track  { background: var(--surface-1); }
 [data-theme="standard"] ::-webkit-scrollbar-thumb  { background: var(--border); border-radius: 3px; }
 [data-theme="standard"] ::-webkit-scrollbar-thumb:hover { background: var(--ink-muted); }
+[data-theme="standard"] #addSongsModal .modal { box-shadow: var(--shadow-elevated); }
+
+[data-theme="standard"] body.np-fullscreen .now-playing-page {
+  background: var(--surface-dark);
+}
+[data-theme="standard"] .np-full-cover--placeholder {
+  background: var(--surface-2);
+  color: var(--mute);
+}
