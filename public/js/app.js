@@ -7,29 +7,28 @@
   let currentPage  = 'home';
   let queue        = [];
   let queueIndex   = 0;
-  let isSpokenWord = false;   // formerly "audiobook / Hörspiel"
+  let isSpokenWord = false;
   let audio        = new Audio();
   let currentSong  = null;
   let isPlaying    = false;
   let playlists    = [];
 
   // ── DOM ────────────────────────────────────────────────────────────────────
-  const main        = document.getElementById('mainContent');
-  const loginModal  = document.getElementById('loginModal');
-  const npBar       = document.getElementById('nowPlayingBar');
-  const npInfo      = document.getElementById('npInfo');
-  const npControls  = document.getElementById('npControls');
-  const npSeek       = document.getElementById('npSeek');
-  const npCurrentTime = document.getElementById('npCurrentTime');
-  const npDuration   = document.getElementById('npDuration');
-  const contextMenu  = document.getElementById('contextMenu');
-  const topNav        = document.getElementById('topNav');
-  const bottomNav      = document.querySelector('.bottom-nav');
+  const main          = document.getElementById('mainContent');
+  const loginModal     = document.getElementById('loginModal');
+  const npBar          = document.getElementById('nowPlayingBar');
+  const npInfo         = document.getElementById('npInfo');
+  const npControls     = document.getElementById('npControls');
+  const npSeek          = document.getElementById('npSeek');
+  const npCurrentTime   = document.getElementById('npCurrentTime');
+  const npDuration      = document.getElementById('npDuration');
+  const contextMenu     = document.getElementById('contextMenu');
+  const topNav          = document.getElementById('topNav');
+  const bottomNav       = document.querySelector('.bottom-nav');
+  const settingsBtn     = document.getElementById('settingsBtn');
+  const adminBtn        = document.getElementById('adminBtn');
 
-  // ── SVG icon set ───────────────────────────────────────────────────────────
-  // Inline SVGs — monochrome, stroke-based, consistent with the minimal design.
-  // All bracket placeholders (e.g. "[~]", "[=]", "[+]") that used to appear in
-  // the Classic theme have been replaced by entries in this set.
+  // ── SVG icon set (used ONLY when Classic/Codec theme is active) ───────────
   const ICONS = {
     play:      `<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="5,3 19,12 5,21"/></svg>`,
     pause:     `<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="5" y="3" width="4" height="18"/><rect x="15" y="3" width="4" height="18"/></svg>`,
@@ -47,12 +46,11 @@
     album:     `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg>`,
     artist:    `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="7" r="4"/><path d="M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/></svg>`,
     list:      `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3" cy="6" r="1" fill="currentColor"/><circle cx="3" cy="12" r="1" fill="currentColor"/><circle cx="3" cy="18" r="1" fill="currentColor"/></svg>`,
-    // ── newly added icons (replace former bracket placeholders) ──────────────
     home:      `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>`,
     search:    `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`,
     library:   `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="4" height="16" rx="1"/><rect x="10" y="4" width="4" height="16" rx="1"/><path d="M17 4l4 1.5v13L17 20z"/></svg>`,
-    settings:  `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`,
-    admin:     `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z"/><path d="M9 12l2 2 4-4"/></svg>`,
+    settings:  `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`,
+    admin:     `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z"/><path d="M9 12l2 2 4-4"/></svg>`,
     edit:      `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>`,
     trash:     `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="3,6 5,6 21,6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>`,
     users:     `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`,
@@ -60,10 +58,41 @@
     note:      `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>`,
     upload:    `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17,8 12,3 7,8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>`,
     empty:     `<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>`,
-    logout:    `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16,17 21,12 16,7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>`,
   };
 
-  // ── AAC / ALAC capability detection ───────────────────────────────────────
+  const PLACEHOLDERS = {
+    home: '[~]', search: '[?]', library: '[=]',
+    settingsLabel: 'settings', adminLabel: 'admin',
+  };
+
+  function isStandardTheme() {
+    return document.documentElement.getAttribute('data-theme') === 'standard';
+  }
+
+  function applyNavIconsForTheme() {
+    const homeIcon    = document.querySelector('.nav-tab[data-page="home"] .nav-icon');
+    const searchIcon  = document.querySelector('.nav-tab[data-page="search"] .nav-icon');
+    const libraryIcon = document.querySelector('.nav-tab[data-page="library"] .nav-icon');
+
+    if (isStandardTheme()) {
+      if (homeIcon)    homeIcon.textContent    = PLACEHOLDERS.home;
+      if (searchIcon)  searchIcon.textContent  = PLACEHOLDERS.search;
+      if (libraryIcon) libraryIcon.textContent = PLACEHOLDERS.library;
+      if (settingsBtn) { settingsBtn.innerHTML = PLACEHOLDERS.settingsLabel; settingsBtn.classList.remove('icon-only'); }
+      if (adminBtn)    { adminBtn.innerHTML    = PLACEHOLDERS.adminLabel;    adminBtn.classList.remove('icon-only'); }
+    } else {
+      if (homeIcon)    homeIcon.innerHTML    = ICONS.home;
+      if (searchIcon)  searchIcon.innerHTML  = ICONS.search;
+      if (libraryIcon) libraryIcon.innerHTML = ICONS.library;
+      if (settingsBtn) { settingsBtn.innerHTML = ICONS.settings; settingsBtn.classList.add('icon-only'); }
+      if (adminBtn)    { adminBtn.innerHTML    = ICONS.admin;    adminBtn.classList.add('icon-only'); }
+    }
+  }
+
+  function themedIcon(name, fallbackText) {
+    return isStandardTheme() ? (fallbackText || '') : (ICONS[name] || '');
+  }
+
   const audioCapabilities = (function () {
     const t = document.createElement('audio');
     return {
@@ -76,7 +105,6 @@
     };
   })();
 
-  // ── Init ───────────────────────────────────────────────────────────────────
   async function init() {
     try {
       const res = await fetch('/auth/me');
@@ -90,12 +118,13 @@
 
   function onLogin() {
     hideLogin();
-    document.getElementById('navUser').textContent = currentUser.username;
+    document.getElementById('navUser').textContent = `[${currentUser.username}]`;
     if (['admin', 'creator'].includes(currentUser.role)) {
-      document.getElementById('adminBtn').style.display = 'inline-flex';
+      adminBtn.style.display = 'inline-flex';
     }
     loadPlaylists();
     applyTheme(currentUser.theme || 'codec');
+    applyNavIconsForTheme();
     navigate('home');
   }
 
@@ -126,24 +155,44 @@
     } catch {}
   }
 
-  // ── Router ─────────────────────────────────────────────────────────────────
+  const _origApplyTheme = window.applyTheme;
+  window.applyTheme = function (theme) {
+    if (typeof _origApplyTheme === 'function') _origApplyTheme(theme);
+    else {
+      if (theme === 'standard') {
+        document.documentElement.setAttribute('data-theme', 'standard');
+        localStorage.setItem('cumu_theme', 'standard');
+      } else {
+        document.documentElement.removeAttribute('data-theme');
+        localStorage.setItem('cumu_theme', 'codec');
+      }
+    }
+    applyNavIconsForTheme();
+    if (currentPage && currentUser) navigate(currentPage, window._lastNavParams);
+  };
+
   window.navigate = function (page, params) {
     currentPage = page;
+    window._lastNavParams = params;
+
     document.querySelectorAll('.nav-tab').forEach(t =>
       t.classList.toggle('active', t.dataset.page === page)
     );
 
-    // ── Fullscreen Now Playing: hide top + bottom nav while open ─────────────
     const isFullscreenNP = page === 'nowplaying';
     document.body.classList.toggle('np-fullscreen', isFullscreenNP);
     if (topNav)    topNav.style.display    = isFullscreenNP ? 'none' : '';
     if (bottomNav) bottomNav.style.display = isFullscreenNP ? 'none' : '';
+    if (npBar)     npBar.style.display     = isFullscreenNP ? 'none' : (currentSong ? 'grid' : 'none');
 
     if      (page === 'home')       renderHome();
     else if (page === 'search')     renderSearch();
     else if (page === 'library')    renderLibrary();
     else if (page === 'admin')      renderAdmin();
-    else if (page === 'album')      renderAlbum(params);
+    else if (page === 'album') {
+      if (typeof params === 'string' && params.startsWith('edit:')) renderAlbumEdit(params.slice(5));
+      else renderAlbum(params);
+    }
     else if (page === 'artist')     renderArtist(params);
     else if (page === 'playlist')   renderPlaylist(params);
     else if (page === 'song')       renderSong(params);
@@ -152,20 +201,18 @@
     window.scrollTo(0, 0);
   };
 
-  // ── HOME ───────────────────────────────────────────────────────────────────
   async function renderHome() {
     main.innerHTML = '<div class="page-section"><div class="spinner"></div></div>';
     const data = await apiFetch('/api/home');
     let html = '';
-    if (data.recentlyPlayed?.length) html += section(`${ICONS.note} recently played`, renderSongList(data.recentlyPlayed, 'recent'));
-    if (data.mostPlayed?.length)     html += section(`${ICONS.note} most played`,      renderSongList(data.mostPlayed, 'popular'));
-    if (data.newSongs?.length)       html += section(`${ICONS.note} new additions`,    renderSongList(data.newSongs, 'new'));
-    if (!html) html = `<div class="page-section"><div class="empty-state"><div class="big">${ICONS.empty}</div><p>your library is empty<br>go to the admin panel to upload music</p></div></div>`;
+    if (data.recentlyPlayed?.length) html += section(`${themedIcon('note', '[+]')} recently played`, renderSongList(data.recentlyPlayed, 'recent'));
+    if (data.mostPlayed?.length)     html += section(`${themedIcon('note', '[+]')} most played`,      renderSongList(data.mostPlayed, 'popular'));
+    if (data.newSongs?.length)       html += section(`${themedIcon('note', '[+]')} new additions`,    renderSongList(data.newSongs, 'new'));
+    if (!html) html = `<div class="page-section"><div class="empty-state"><div class="big">${themedIcon('empty', '[~]')}</div><p>your library is empty<br>go to the admin panel to upload music</p></div></div>`;
     main.innerHTML = html;
     bindSongRows();
   }
 
-  // ── SEARCH ─────────────────────────────────────────────────────────────────
   let searchTimeout;
   function renderSearch() {
     main.innerHTML = `<div class="page-section"><div class="search-bar"><input type="search" id="searchInput" placeholder="search songs, albums, artists..." autofocus aria-label="Search" /></div><div id="searchResults"></div></div>`;
@@ -183,30 +230,29 @@
     let html = '';
     if (data.songs?.length)     html += `<div class="section-header"><span class="section-label">songs</span></div>${renderSongList(data.songs, 'search')}`;
     if (data.albums?.length)    html += `<div class="section-header" style="margin-top:16px"><span class="section-label">albums</span></div><div class="card-scroll">${data.albums.map(renderAlbumCard).join('')}</div>`;
-    if (data.artists?.length)   html += `<div class="section-header" style="margin-top:16px"><span class="section-label">artists</span></div><ul class="song-list">${data.artists.map(a => `<li class="song-row" onclick="navigate('artist','${a.id}')"><div class="song-cover">${ICONS.artist}</div><div class="song-meta"><div class="song-title">${esc(a.name)}</div><div class="song-sub">${a.song_count || 0} songs</div></div></li>`).join('')}</ul>`;
-    if (data.playlists?.length) html += `<div class="section-header" style="margin-top:16px"><span class="section-label">playlists</span></div><ul class="song-list">${data.playlists.map(p => `<li class="song-row" onclick="navigate('playlist','${p.id}')"><div class="song-cover">${ICONS.library}</div><div class="song-meta"><div class="song-title">${esc(p.name)}</div></div></li>`).join('')}</ul>`;
+    if (data.artists?.length)   html += `<div class="section-header" style="margin-top:16px"><span class="section-label">artists</span></div><ul class="song-list">${data.artists.map(a => `<li class="song-row" onclick="navigate('artist','${a.id}')"><div class="song-cover">${themedIcon('artist', '[A]')}</div><div class="song-meta"><div class="song-title">${esc(a.name)}</div><div class="song-sub">${a.song_count || 0} songs</div></div></li>`).join('')}</ul>`;
+    if (data.playlists?.length) html += `<div class="section-header" style="margin-top:16px"><span class="section-label">playlists</span></div><ul class="song-list">${data.playlists.map(p => `<li class="song-row" onclick="navigate('playlist','${p.id}')"><div class="song-cover">${themedIcon('library', '[=]')}</div><div class="song-meta"><div class="song-title">${esc(p.name)}</div></div></li>`).join('')}</ul>`;
     if (!html) html = `<div class="empty-state"><p>no results for &ldquo;${esc(q)}&rdquo;</p></div>`;
     el.innerHTML = html;
     bindSongRows();
     el.querySelectorAll('.album-card').forEach(c => c.addEventListener('click', () => navigate('album', c.dataset.id)));
   }
 
-  // ── LIBRARY ────────────────────────────────────────────────────────────────
   async function renderLibrary() {
     main.innerHTML = '<div class="page-section"><div class="spinner"></div></div>';
     const data = await apiFetch('/api/library');
     await loadPlaylists();
     let html = '<div class="page-section">';
-    html += `<div class="section-header"><span class="section-label">${ICONS.library} my library</span><button class="btn-primary" onclick="showCreatePlaylist()">${ICONS.plus} playlist</button></div>`;
+    html += `<div class="section-header"><span class="section-label">${themedIcon('library', '[=]')} my library</span><button class="btn-primary" onclick="showCreatePlaylist()">${themedIcon('plus', '[+]')} playlist</button></div>`;
     if (playlists.length) {
       html += `<div style="margin-bottom:24px"><h3 style="margin-bottom:12px">playlists</h3>`;
-      html += playlists.map(p => `<div class="playlist-item" onclick="navigate('playlist','${p.id}')"><div class="playlist-cover">${ICONS.library}</div><div class="song-meta"><div class="song-title">${esc(p.name)}</div><div class="song-sub">${p.description || 'playlist'}</div></div></div>`).join('');
+      html += playlists.map(p => `<div class="playlist-item" onclick="navigate('playlist','${p.id}')"><div class="playlist-cover">${themedIcon('library', '[=]')}</div><div class="song-meta"><div class="song-title">${esc(p.name)}</div><div class="song-sub">${p.description || 'playlist'}</div></div></div>`).join('');
       html += '</div>';
     }
     if (data.songs?.length) {
       html += `<h3 style="margin-bottom:12px">saved songs</h3>${renderSongList(data.songs, 'library')}`;
     } else {
-      html += `<div class="empty-state"><div class="big">${ICONS.empty}</div><p>no saved songs yet</p></div>`;
+      html += `<div class="empty-state"><div class="big">${themedIcon('empty', '[=]')}</div><p>no saved songs yet</p></div>`;
     }
     html += '</div>';
     main.innerHTML = html;
@@ -222,41 +268,31 @@
     navigate('library');
   };
 
-  // ── NOW PLAYING — FULL PAGE (true fullscreen: top/bottom nav hidden) ──────
   function renderNowPlaying() {
     if (!currentSong) { navigate('home'); return; }
     const s = currentSong;
     const coverHtml = s.cover
       ? `<img src="/stream/cover/${s.cover}" class="np-full-cover" alt="Album cover for ${esc(s.title)}">`
-      : `<div class="np-full-cover np-full-cover--placeholder" aria-hidden="true">${ICONS.note}</div>`;
+      : `<div class="np-full-cover np-full-cover--placeholder" aria-hidden="true">${themedIcon('note', '&#9834;')}</div>`;
 
     main.innerHTML = `
       <div class="now-playing-page">
-        <!-- top bar -->
         <div class="np-page-topbar">
-          <button class="icon-btn np-page-back" onclick="navigate('home')" aria-label="Close now playing">${ICONS.back}</button>
+          <button class="icon-btn np-page-back" onclick="navigate('home')" aria-label="Close now playing">${themedIcon('back', '&larr;')}</button>
           <span class="np-page-label">now playing</span>
-          <button class="icon-btn" id="npDots" aria-label="More options" aria-haspopup="true">${ICONS.dots}</button>
+          <button class="icon-btn" id="npDots" aria-label="More options" aria-haspopup="true">${themedIcon('dots', '&bull;&bull;&bull;')}</button>
         </div>
-
-        <!-- cover -->
         <div class="np-full-cover-wrap">${coverHtml}</div>
-
-        <!-- info -->
         <div class="np-full-info">
           <div class="np-full-title">${esc(s.title)}</div>
           <div class="np-full-artist">${esc(s.artist_name || 'unknown artist')}</div>
           ${s.is_audiobook ? '<span class="badge spoken-word">spoken word</span>' : ''}
         </div>
-
-        <!-- seek -->
         <div class="np-full-seek">
           <span id="npFullCurrent">0:00</span>
           <input type="range" id="npFullSeek" min="0" max="100" value="0" class="seek-input" aria-label="Seek position">
           <span id="npFullDuration">0:00</span>
         </div>
-
-        <!-- controls -->
         <div class="np-full-controls" id="npFullControls" role="group" aria-label="Playback controls"></div>
       </div>`;
 
@@ -284,26 +320,30 @@
       e.stopPropagation();
       showSongSheet(s);
     });
+
+    if (topNav)    topNav.style.display    = 'none';
+    if (bottomNav) bottomNav.style.display = 'none';
+    if (npBar)     npBar.style.display     = 'none';
+    document.body.classList.add('np-fullscreen');
   }
 
-  // ── NOW PLAYING CONTROLS ───────────────────────────────────────────────────
   function renderNowPlayingControls(container, fullPage) {
     if (!container) container = npControls;
 
     if (isSpokenWord) {
       container.innerHTML = `
-        <button class="np-btn${fullPage ? ' np-btn-lg' : ''}" id="ctrl-back" aria-label="Skip back 15 seconds" title="Back 15s">${ICONS.seek_back}</button>
-        <button class="np-btn${fullPage ? ' np-btn-lg' : ''}" id="ctrl-playpause" aria-label="${isPlaying ? 'Pause' : 'Play'}" title="${isPlaying ? 'Pause' : 'Play'}">${isPlaying ? ICONS.pause : ICONS.play}</button>
-        <button class="np-btn${fullPage ? ' np-btn-lg' : ''}" id="ctrl-stop" aria-label="Stop" title="Stop">${ICONS.stop}</button>
-        <button class="np-btn${fullPage ? ' np-btn-lg' : ''}" id="ctrl-fwd" aria-label="Skip forward 15 seconds" title="Forward 15s">${ICONS.seek_fwd}</button>`;
+        <button class="np-btn${fullPage ? ' np-btn-lg' : ''}" id="ctrl-back" aria-label="Skip back 15 seconds" title="Back 15s">${themedIcon('seek_back', '&laquo;15')}</button>
+        <button class="np-btn${fullPage ? ' np-btn-lg' : ''}" id="ctrl-playpause" aria-label="${isPlaying ? 'Pause' : 'Play'}" title="${isPlaying ? 'Pause' : 'Play'}">${isPlaying ? themedIcon('pause', 'II') : themedIcon('play', '&#9654;')}</button>
+        <button class="np-btn${fullPage ? ' np-btn-lg' : ''}" id="ctrl-stop" aria-label="Stop" title="Stop">${themedIcon('stop', '[]')}</button>
+        <button class="np-btn${fullPage ? ' np-btn-lg' : ''}" id="ctrl-fwd" aria-label="Skip forward 15 seconds" title="Forward 15s">${themedIcon('seek_fwd', '15&raquo;')}</button>`;
       container.querySelector('#ctrl-back').addEventListener('click', () => { audio.currentTime = Math.max(0, audio.currentTime - 15); });
       container.querySelector('#ctrl-fwd').addEventListener('click',  () => { audio.currentTime = Math.min(audio.duration || 0, audio.currentTime + 15); });
     } else {
       container.innerHTML = `
-        <button class="np-btn${fullPage ? ' np-btn-lg' : ''}" id="ctrl-prev" aria-label="Previous track" title="Previous">${ICONS.prev}</button>
-        <button class="np-btn${fullPage ? ' np-btn-lg' : ''}" id="ctrl-playpause" aria-label="${isPlaying ? 'Pause' : 'Play'}" title="${isPlaying ? 'Pause' : 'Play'}">${isPlaying ? ICONS.pause : ICONS.play}</button>
-        <button class="np-btn${fullPage ? ' np-btn-lg' : ''}" id="ctrl-stop" aria-label="Stop" title="Stop">${ICONS.stop}</button>
-        <button class="np-btn${fullPage ? ' np-btn-lg' : ''}" id="ctrl-next" aria-label="Next track" title="Next">${ICONS.next}</button>`;
+        <button class="np-btn${fullPage ? ' np-btn-lg' : ''}" id="ctrl-prev" aria-label="Previous track" title="Previous">${themedIcon('prev', '&#9668;&#9668;')}</button>
+        <button class="np-btn${fullPage ? ' np-btn-lg' : ''}" id="ctrl-playpause" aria-label="${isPlaying ? 'Pause' : 'Play'}" title="${isPlaying ? 'Pause' : 'Play'}">${isPlaying ? themedIcon('pause', 'II') : themedIcon('play', '&#9654;')}</button>
+        <button class="np-btn${fullPage ? ' np-btn-lg' : ''}" id="ctrl-stop" aria-label="Stop" title="Stop">${themedIcon('stop', '[]')}</button>
+        <button class="np-btn${fullPage ? ' np-btn-lg' : ''}" id="ctrl-next" aria-label="Next track" title="Next">${themedIcon('next', '&#9658;&#9658;')}</button>`;
       container.querySelector('#ctrl-prev').addEventListener('click', prevTrack);
       container.querySelector('#ctrl-next').addEventListener('click', nextTrack);
     }
@@ -312,7 +352,6 @@
     container.querySelector('#ctrl-stop').addEventListener('click', stopAudio);
   }
 
-  // ── SONG ACTION SHEET (3-dot menu) ─────────────────────────────────────────
   function showSongSheet(song) {
     let sheet = document.getElementById('songSheet');
     if (sheet) sheet.remove();
@@ -329,13 +368,13 @@
           <div class="song-sheet-title">${esc(song.title)}</div>
           <div class="song-sheet-sub">${esc(song.artist_name || '')}</div>
         </div>
-        <button class="sheet-item" id="si-playlist" role="menuitem">${ICONS.list} <span>add to playlist</span></button>
-        <button class="sheet-item" id="si-library"  role="menuitem">${ICONS.heart} <span>save to library</span></button>
-        <button class="sheet-item" id="si-info"     role="menuitem">${ICONS.info} <span>song info</span></button>
-        ${song.album_id  ? `<button class="sheet-item" id="si-album"  role="menuitem">${ICONS.album} <span>view album</span></button>` : ''}
-        ${song.artist_id ? `<button class="sheet-item" id="si-artist" role="menuitem">${ICONS.artist} <span>view artist</span></button>` : ''}
-        ${['admin', 'creator'].includes(currentUser?.role) ? `<button class="sheet-item danger" id="si-edit" role="menuitem">${ICONS.edit} <span>edit song</span></button>` : ''}
-        <button class="sheet-item muted" id="si-cancel" role="menuitem">${ICONS.close} <span>cancel</span></button>
+        <button class="sheet-item" id="si-playlist" role="menuitem">${themedIcon('list', '[=]')} <span>add to playlist</span></button>
+        <button class="sheet-item" id="si-library"  role="menuitem">${themedIcon('heart', '[<3]')} <span>save to library</span></button>
+        <button class="sheet-item" id="si-info"     role="menuitem">${themedIcon('info', '[i]')} <span>song info</span></button>
+        ${song.album_id  ? `<button class="sheet-item" id="si-album"  role="menuitem">${themedIcon('album', '[o]')} <span>view album</span></button>` : ''}
+        ${song.artist_id ? `<button class="sheet-item" id="si-artist" role="menuitem">${themedIcon('artist', '[A]')} <span>view artist</span></button>` : ''}
+        ${['admin', 'creator'].includes(currentUser?.role) ? `<button class="sheet-item danger" id="si-edit" role="menuitem">${themedIcon('edit', '[edit]')} <span>edit song</span></button>` : ''}
+        <button class="sheet-item muted" id="si-cancel" role="menuitem">${themedIcon('close', '[x]')} <span>cancel</span></button>
       </div>`;
     document.body.appendChild(sheet);
 
@@ -366,7 +405,6 @@
     }
   }
 
-  // ── ALBUM ──────────────────────────────────────────────────────────────────
   async function renderAlbum(albumId) {
     main.innerHTML = '<div class="page-section"><div class="spinner"></div></div>';
     const album = await apiFetch(`/api/albums/${albumId}`);
@@ -375,30 +413,29 @@
       <div class="artist-hero">
         ${coverSrc
           ? `<img src="${coverSrc}" style="width:100px;height:100px;border-radius:4px;object-fit:cover;margin-bottom:12px" alt="Album art for ${esc(album.title)}">`
-          : `<div style="font-size:60px;margin-bottom:12px" aria-hidden="true">${ICONS.note}</div>`
+          : `<div style="font-size:60px;margin-bottom:12px" aria-hidden="true">${themedIcon('note', '[&#9834;]')}</div>`
         }
         <h1>${esc(album.title)}</h1>
         <p class="caption">${esc(album.artist_name || 'unknown')} ${album.year ? '&middot; ' + album.year : ''} ${album.is_audiobook ? '<span class="badge spoken-word">spoken word</span>' : ''}</p>
         <div style="margin-top:16px;display:flex;gap:8px">
-          <button class="btn-primary" onclick="_playAlbum()" aria-label="Play all songs in ${esc(album.title)}">${ICONS.play} play all</button>
-          ${['admin', 'creator'].includes(currentUser?.role) ? `<button class="btn-secondary" onclick="navigate('album','edit:${album.id}')">${ICONS.edit} edit</button>` : ''}
+          <button class="btn-primary" onclick="_playAlbum()" aria-label="Play all songs in ${esc(album.title)}">${themedIcon('play', '&#9654;')} play all</button>
+          ${['admin', 'creator'].includes(currentUser?.role) ? `<button class="btn-secondary" onclick="navigate('album','edit:${album.id}')">${themedIcon('edit', '[edit]')} edit</button>` : ''}
         </div>
       </div>
       <div class="page-section">
-        <div class="section-header"><span class="section-label">${ICONS.list} tracklist (${album.songs?.length || 0})</span></div>
+        <div class="section-header"><span class="section-label">${themedIcon('list', '[+]')} tracklist (${album.songs?.length || 0})</span></div>
         ${renderSongList(album.songs || [], 'album_' + albumId)}
       </div>`;
     bindSongRows();
     window._playAlbum = () => { if (album.songs?.length) playQueue(album.songs, 0, album.is_audiobook); };
   }
 
-  // ── ALBUM EDIT ─────────────────────────────────────────────────────────────
   async function renderAlbumEdit(id) {
     if (!['admin', 'creator'].includes(currentUser?.role)) { navigate('home'); return; }
     const album = await apiFetch(`/api/albums/${id}`);
     main.innerHTML = `
       <div class="page-section">
-        <div class="section-header"><span class="section-label">${ICONS.edit} edit album</span></div>
+        <div class="section-header"><span class="section-label">${themedIcon('edit', '[edit]')} edit album</span></div>
         <form id="editAlbumForm">
           <div class="form-row"><label for="editAlbumTitle">title</label><input id="editAlbumTitle" name="title" value="${esc(album.title)}" /></div>
           <div class="form-row"><label for="editAlbumArtist">artist</label><input id="editAlbumArtist" name="artist" value="${esc(album.artist_name || '')}" /></div>
@@ -438,32 +475,30 @@
     });
   }
 
-  // ── ARTIST ─────────────────────────────────────────────────────────────────
   async function renderArtist(artistId) {
     main.innerHTML = '<div class="page-section"><div class="spinner"></div></div>';
     const artist = await apiFetch(`/api/artists/${artistId}`);
-    let html = `<div class="artist-hero"><div style="font-size:60px;margin-bottom:12px" aria-hidden="true">${ICONS.artist}</div><h1>${esc(artist.name)}</h1><p class="caption">${artist.albums?.length || 0} albums &middot; ${artist.songs?.length || 0} songs</p></div><div class="page-section">`;
-    if (artist.albums?.length) html += `<div class="section-header"><span class="section-label">${ICONS.album} albums</span></div><div class="card-scroll">${artist.albums.map(renderAlbumCard).join('')}</div>`;
-    if (artist.songs?.length)  html += `<div class="section-header" style="margin-top:24px"><span class="section-label">${ICONS.list} all songs</span></div>${renderSongList(artist.songs, 'artist')}`;
+    let html = `<div class="artist-hero"><div style="font-size:60px;margin-bottom:12px" aria-hidden="true">${themedIcon('artist', '[A]')}</div><h1>${esc(artist.name)}</h1><p class="caption">${artist.albums?.length || 0} albums &middot; ${artist.songs?.length || 0} songs</p></div><div class="page-section">`;
+    if (artist.albums?.length) html += `<div class="section-header"><span class="section-label">${themedIcon('album', '[+]')} albums</span></div><div class="card-scroll">${artist.albums.map(renderAlbumCard).join('')}</div>`;
+    if (artist.songs?.length)  html += `<div class="section-header" style="margin-top:24px"><span class="section-label">${themedIcon('list', '[+]')} all songs</span></div>${renderSongList(artist.songs, 'artist')}`;
     html += '</div>';
     main.innerHTML = html;
     bindSongRows();
     main.querySelectorAll('.album-card').forEach(c => c.addEventListener('click', () => navigate('album', c.dataset.id)));
   }
 
-  // ── PLAYLIST ───────────────────────────────────────────────────────────────
   async function renderPlaylist(playlistId) {
     main.innerHTML = '<div class="page-section"><div class="spinner"></div></div>';
     const playlist = await apiFetch(`/api/playlists/${playlistId}`);
     main.innerHTML = `
       <div class="artist-hero">
-        <div style="font-size:60px;margin-bottom:12px" aria-hidden="true">${ICONS.library}</div>
+        <div style="font-size:60px;margin-bottom:12px" aria-hidden="true">${themedIcon('library', '[=]')}</div>
         <h1>${esc(playlist.name)}</h1>
         <p class="caption">${playlist.songs?.length || 0} songs</p>
         <div style="margin-top:16px;display:flex;gap:8px">
-          <button class="btn-primary" onclick="_playPlaylist()" aria-label="Play playlist ${esc(playlist.name)}">${ICONS.play} play</button>
-          <button class="btn-secondary" id="playlistAddBtn" aria-label="Add songs to ${esc(playlist.name)}">${ICONS.plus} add songs</button>
-          <button class="btn-danger" onclick="_deletePlaylist('${playlistId}')" aria-label="Delete playlist ${esc(playlist.name)}">${ICONS.trash} delete</button>
+          <button class="btn-primary" onclick="_playPlaylist()" aria-label="Play playlist ${esc(playlist.name)}">${themedIcon('play', '&#9654;')} play</button>
+          <button class="btn-secondary" id="playlistAddBtn" aria-label="Add songs to ${esc(playlist.name)}">${themedIcon('plus', '[+]')} add songs</button>
+          <button class="btn-danger" onclick="_deletePlaylist('${playlistId}')" aria-label="Delete playlist ${esc(playlist.name)}">${themedIcon('trash', '[x]')} delete</button>
         </div>
       </div>
       <div class="page-section" id="playlistSongsWrap">${renderSongList(playlist.songs || [], 'pl_' + playlistId)}</div>`;
@@ -478,7 +513,6 @@
     document.getElementById('playlistAddBtn').addEventListener('click', () => showAddSongsToPlaylistModal(playlistId));
   }
 
-  // ── ADD SONGS TO PLAYLIST — search modal (Requirement #2) ─────────────────
   function showAddSongsToPlaylistModal(playlistId) {
     let modal = document.getElementById('addSongsModal');
     if (modal) modal.remove();
@@ -492,7 +526,7 @@
       <div class="modal" style="max-width:480px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
           <h3>add songs</h3>
-          <button class="icon-btn" id="addSongsClose" aria-label="Close">${ICONS.close}</button>
+          <button class="icon-btn" id="addSongsClose" aria-label="Close">${themedIcon('close', '[x]')}</button>
         </div>
         <div class="search-bar"><input type="search" id="addSongsInput" placeholder="search songs..." autofocus aria-label="Search songs to add" /></div>
         <div id="addSongsResults" style="max-height:360px;overflow-y:auto;margin-top:12px"></div>
@@ -519,19 +553,18 @@
     if (!songs.length) { el.innerHTML = '<div class="empty-state"><p>no songs found</p></div>'; return; }
     el.innerHTML = `<ul class="song-list">${songs.map(s => `
       <li class="song-row" style="cursor:default">
-        <div class="song-cover">${s.cover ? `<img src="/stream/cover/${s.cover}" alt="">` : ICONS.note}</div>
+        <div class="song-cover">${s.cover ? `<img src="/stream/cover/${s.cover}" alt="">` : themedIcon('note', '&#9834;')}</div>
         <div class="song-meta">
           <div class="song-title">${esc(s.title)}</div>
           <div class="song-sub">${esc(s.artist_name || '')}</div>
         </div>
-        <button class="btn-icon add-song-btn" data-song-id="${s.id}" aria-label="Add ${esc(s.title)} to playlist">${ICONS.plus} add</button>
+        <button class="btn-icon add-song-btn" data-song-id="${s.id}" aria-label="Add ${esc(s.title)} to playlist">${themedIcon('plus', '[+]')} add</button>
       </li>`).join('')}</ul>`;
     el.querySelectorAll('.add-song-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
         btn.disabled = true;
         await addSongToPlaylist(btn.dataset.songId, playlistId);
         btn.textContent = 'added';
-        // Refresh the playlist song list underneath without closing the modal
         const playlist = await apiFetch(`/api/playlists/${playlistId}`);
         const wrap = document.getElementById('playlistSongsWrap');
         if (wrap) { wrap.innerHTML = renderSongList(playlist.songs || [], 'pl_' + playlistId); bindSongRows(); }
@@ -539,7 +572,6 @@
     });
   }
 
-  // ── SONG INFO ──────────────────────────────────────────────────────────────
   async function renderSong(songParam) {
     if (songParam?.startsWith('edit:')) { renderSongEdit(songParam.slice(5)); return; }
     const song = await apiFetch(`/api/songs/${songParam}`);
@@ -555,7 +587,7 @@
       <div class="artist-hero">
         ${coverSrc
           ? `<img src="${coverSrc}" style="width:120px;height:120px;border-radius:4px;object-fit:cover;margin-bottom:12px" alt="Cover for ${esc(song.title)}">`
-          : `<div style="font-size:64px;margin-bottom:12px" aria-hidden="true">${ICONS.note}</div>`
+          : `<div style="font-size:64px;margin-bottom:12px" aria-hidden="true">${themedIcon('note', '&#9834;')}</div>`
         }
         <h1>${esc(song.title)}</h1>
         <p class="caption">
@@ -565,9 +597,9 @@
         </p>
         ${codecWarning}
         <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn-primary" onclick="playSong(_songData)" aria-label="Play ${esc(song.title)}">${ICONS.play} play</button>
-          <button class="btn-secondary" onclick="apiFetch('/api/library/song','POST',{songId:'${song.id}'})">${ICONS.heart} save to library</button>
-          ${['admin', 'creator'].includes(currentUser?.role) ? `<button class="btn-secondary" onclick="navigate('song','edit:${song.id}')">${ICONS.edit} edit</button>` : ''}
+          <button class="btn-primary" onclick="playSong(_songData)" aria-label="Play ${esc(song.title)}">${themedIcon('play', '&#9654;')} play</button>
+          <button class="btn-secondary" onclick="apiFetch('/api/library/song','POST',{songId:'${song.id}'})">${themedIcon('heart', '[<3]')} save to library</button>
+          ${['admin', 'creator'].includes(currentUser?.role) ? `<button class="btn-secondary" onclick="navigate('song','edit:${song.id}')">${themedIcon('edit', '[edit]')} edit</button>` : ''}
         </div>
       </div>
       <div class="page-section">
@@ -591,13 +623,12 @@
     return `<tr><td style="padding:8px 0;color:var(--mute);width:120px">${label}</td><td style="padding:8px 0">${value}</td></tr>`;
   }
 
-  // ── SONG EDIT (Requirement #3: all relevant fields fully editable) ────────
   async function renderSongEdit(id) {
     if (!['admin', 'creator'].includes(currentUser?.role)) { navigate('home'); return; }
     const song = await apiFetch(`/api/songs/${id}`);
     main.innerHTML = `
       <div class="page-section">
-        <div class="section-header"><span class="section-label">${ICONS.edit} edit song</span></div>
+        <div class="section-header"><span class="section-label">${themedIcon('edit', '[edit]')} edit song</span></div>
         <form id="editSongForm">
           <div class="form-row"><label for="editTitle">title</label><input id="editTitle" name="title" value="${esc(song.title)}" /></div>
           <div class="form-row"><label for="editArtist">artist</label><input id="editArtist" name="artist" value="${esc(song.artist_name || '')}" placeholder="artist name" /></div>
@@ -639,17 +670,16 @@
     });
   }
 
-  // ── ADMIN ──────────────────────────────────────────────────────────────────
   function renderAdmin() {
     if (!['admin', 'creator'].includes(currentUser?.role)) { navigate('home'); return; }
     main.innerHTML = `
       <div class="admin-grid">
         <div class="admin-sidebar" role="navigation" aria-label="Admin tabs">
-          <button class="admin-sidebar-item active" onclick="adminTab(this,'upload')">${ICONS.upload} upload</button>
-          <button class="admin-sidebar-item" onclick="adminTab(this,'songs')">${ICONS.list} songs</button>
-          <button class="admin-sidebar-item" onclick="adminTab(this,'albums')">${ICONS.album} albums</button>
-          ${currentUser.role === 'admin' ? `<button class="admin-sidebar-item" onclick="adminTab(this,'users')">${ICONS.users} users</button>` : ''}
-          <button class="admin-sidebar-item" onclick="adminTab(this,'stats')">${ICONS.stats} stats</button>
+          <button class="admin-sidebar-item active" onclick="adminTab(this,'upload')">${themedIcon('upload', '[+]')} upload</button>
+          <button class="admin-sidebar-item" onclick="adminTab(this,'songs')">${themedIcon('list', '[=]')} songs</button>
+          <button class="admin-sidebar-item" onclick="adminTab(this,'albums')">${themedIcon('album', '&#9834;')} albums</button>
+          ${currentUser.role === 'admin' ? `<button class="admin-sidebar-item" onclick="adminTab(this,'users')">${themedIcon('users', '[u]')} users</button>` : ''}
+          <button class="admin-sidebar-item" onclick="adminTab(this,'stats')">${themedIcon('stats', '[%]')} stats</button>
         </div>
         <div class="admin-main" id="adminMain"></div>
       </div>`;
@@ -669,11 +699,11 @@
 
   function renderAdminUpload(container) {
     container.innerHTML = `
-      <h2 style="margin-bottom:24px">${ICONS.upload} upload music</h2>
+      <h2 style="margin-bottom:24px">${themedIcon('upload', '[+]')} upload music</h2>
       <form id="uploadForm" enctype="multipart/form-data">
         <div class="upload-zone" id="uploadZone">
           <input type="file" id="fileInput" name="files" multiple accept=".mp3,.m4a,.aac,.mp4,.flac,.ogg,.wav,.opus" style="display:none" aria-label="Choose audio files">
-          <div class="upload-label">${ICONS.upload} click or drag files here</div>
+          <div class="upload-label">${themedIcon('upload', '[+]')} click or drag files here</div>
           <div class="upload-sub">mp3 &bull; aac &bull; alac (m4a) &bull; flac &bull; ogg &bull; wav</div>
           <button type="button" class="btn-secondary" style="margin-top:12px" onclick="document.getElementById('fileInput').click()">choose files</button>
         </div>
@@ -696,7 +726,7 @@
         </div>
         <div id="uploadProgress"></div>
         <div id="uploadErr" class="error-msg" style="display:none" role="alert"></div>
-        <button type="submit" class="btn-primary" style="margin-top:8px">${ICONS.upload} upload</button>
+        <button type="submit" class="btn-primary" style="margin-top:8px">${themedIcon('upload', '[+]')} upload</button>
       </form>`;
 
     const zone  = document.getElementById('uploadZone');
@@ -717,18 +747,6 @@
       list.innerHTML = [...files].map(f => `<div class="upload-progress">${esc(f.name)} <span class="mute">(${(f.size / 1048576).toFixed(1)} MB)</span></div>`).join('');
     }
 
-    // ── Requirement #7: fixed upload error handling ──────────────────────────
-    // Root causes addressed:
-    //  1. Client now uses XHR (not fetch) so we get real upload progress and can
-    //     distinguish a genuine network/connection failure from an HTTP error
-    //     response returned by the server (which fetch() was masking as a
-    //     generic "network error" when res.ok was false but body parsing failed,
-    //     or when the connection was reset for large files).
-    //  2. Client sends one file at a time when multiple large files are queued,
-    //     avoiding request-size related connection resets on constrained hosts.
-    //  3. Server-side (see admin.js) now has explicit multer error handling and
-    //     a raised, explicit limit so oversized/malformed uploads return a JSON
-    //     error instead of dropping the connection.
     document.getElementById('uploadForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       const errEl  = document.getElementById('uploadErr');
@@ -738,7 +756,6 @@
       if (!input.files.length) { errEl.textContent = 'choose at least one audio file'; errEl.style.display = 'block'; return; }
 
       const fd = new FormData(e.target);
-
       progEl.innerHTML = `<div class="upload-progress"><div class="spinner"></div> <span id="uploadPct">uploading... 0%</span></div>`;
       const pctEl = document.getElementById('uploadPct');
 
@@ -746,7 +763,7 @@
         const json = await new Promise((resolve, reject) => {
           const xhr = new XMLHttpRequest();
           xhr.open('POST', '/admin/upload');
-          xhr.timeout = 10 * 60 * 1000; // 10 minutes for large libraries
+          xhr.timeout = 10 * 60 * 1000;
 
           xhr.upload.addEventListener('progress', (ev) => {
             if (ev.lengthComputable && pctEl) {
@@ -763,14 +780,14 @@
           });
 
           xhr.addEventListener('error', () => reject(new Error('upload failed (network error) — check your connection or server logs')));
-          xhr.addEventListener('timeout', () => reject(new Error('upload failed (timed out) — the file may be too large or the connection too slow')));
+          xhr.addEventListener('timeout', () => reject(new Error('upload failed (timed out)')));
           xhr.addEventListener('abort', () => reject(new Error('upload cancelled')));
 
           xhr.send(fd);
         });
 
         if (json.success) {
-          progEl.innerHTML = `<div class="badge success">${ICONS.upload} uploaded ${json.uploaded} file${json.uploaded !== 1 ? 's' : ''}</div>`;
+          progEl.innerHTML = `<div class="badge success">${themedIcon('upload', '[+]')} uploaded ${json.uploaded} file${json.uploaded !== 1 ? 's' : ''}</div>`;
           list.innerHTML = '';
           input.value = '';
         } else {
@@ -791,17 +808,17 @@
     const songs = await apiFetch('/api/songs');
     if (!songs.length) { container.innerHTML = '<div class="empty-state"><p>no songs uploaded yet</p></div>'; return; }
     container.innerHTML = `
-      <h2 style="margin-bottom:16px">${ICONS.list} songs (${songs.length})</h2>
+      <h2 style="margin-bottom:16px">${themedIcon('list', '[=]')} songs (${songs.length})</h2>
       <ul class="song-list">
         ${songs.map(s => `
           <li class="song-row" style="cursor:default">
-            <div class="song-cover">${s.cover ? `<img src="/stream/cover/${s.cover}" alt="">` : ICONS.note}</div>
+            <div class="song-cover">${s.cover ? `<img src="/stream/cover/${s.cover}" alt="">` : themedIcon('note', '&#9834;')}</div>
             <div class="song-meta">
               <div class="song-title">${esc(s.title)}</div>
               <div class="song-sub">${esc(s.artist_name || '')} ${s.album_title ? '&middot; ' + esc(s.album_title) : ''}</div>
             </div>
-            <button class="btn-icon" onclick="navigate('song','edit:${s.id}')" aria-label="Edit ${esc(s.title)}">${ICONS.edit} edit</button>
-            <button class="btn-danger" onclick="adminDeleteSong('${s.id}')" aria-label="Delete ${esc(s.title)}" style="margin-left:4px">${ICONS.trash} del</button>
+            <button class="btn-icon" onclick="navigate('song','edit:${s.id}')" aria-label="Edit ${esc(s.title)}">${themedIcon('edit', 'edit')}</button>
+            <button class="btn-danger" onclick="adminDeleteSong('${s.id}')" aria-label="Delete ${esc(s.title)}" style="margin-left:4px">${themedIcon('trash', 'del')}</button>
           </li>`).join('')}
       </ul>`;
   }
@@ -817,18 +834,18 @@
     const albums = await apiFetch('/api/albums');
     if (!albums.length) { container.innerHTML = '<div class="empty-state"><p>no albums yet</p></div>'; return; }
     container.innerHTML = `
-      <h2 style="margin-bottom:16px">${ICONS.album} albums (${albums.length})</h2>
+      <h2 style="margin-bottom:16px">${themedIcon('album', '&#9834;')} albums (${albums.length})</h2>
       <div class="card-scroll" style="flex-wrap:wrap">
         ${albums.map(a => `
           <div class="album-card" style="margin-bottom:16px">
             <div class="album-cover" onclick="navigate('album','${a.id}')" role="button" tabindex="0" aria-label="Open album ${esc(a.title)}" style="cursor:pointer">
-              ${a.cover ? `<img src="/stream/cover/${a.cover}" alt="Cover for ${esc(a.title)}">` : `<span aria-hidden="true">${ICONS.note}</span>`}
+              ${a.cover ? `<img src="/stream/cover/${a.cover}" alt="Cover for ${esc(a.title)}">` : `<span aria-hidden="true">${themedIcon('note', '&#9834;')}</span>`}
             </div>
             <div class="album-card-title">${esc(a.title)}</div>
             <div class="album-card-sub">${esc(a.artist_name || '')}</div>
             <div style="display:flex;gap:4px;margin-top:4px">
-              <button class="btn-icon" onclick="navigate('album','edit:${a.id}')" aria-label="Edit album ${esc(a.title)}" style="font-size:12px;height:28px;padding:2px 10px">${ICONS.edit} edit</button>
-              <button class="btn-danger" onclick="adminDeleteAlbum('${a.id}')" aria-label="Delete album ${esc(a.title)}" style="font-size:12px;height:28px;padding:2px 10px">${ICONS.trash} delete</button>
+              <button class="btn-icon" onclick="navigate('album','edit:${a.id}')" aria-label="Edit album ${esc(a.title)}" style="font-size:12px;height:28px;padding:2px 10px">${themedIcon('edit', 'edit')}</button>
+              <button class="btn-danger" onclick="adminDeleteAlbum('${a.id}')" aria-label="Delete album ${esc(a.title)}" style="font-size:12px;height:28px;padding:2px 10px">${themedIcon('trash', 'delete album')}</button>
             </div>
           </div>`).join('')}
       </div>`;
@@ -845,8 +862,8 @@
     container.innerHTML = '<div class="spinner"></div>';
     const users = await apiFetch('/api/users');
     container.innerHTML = `
-      <h2 style="margin-bottom:16px">${ICONS.users} users</h2>
-      <button class="btn-primary" onclick="adminCreateUser()" style="margin-bottom:16px">${ICONS.plus} new user</button>
+      <h2 style="margin-bottom:16px">${themedIcon('users', '[u]')} users</h2>
+      <button class="btn-primary" onclick="adminCreateUser()" style="margin-bottom:16px">${themedIcon('plus', '[+]')} new user</button>
       <ul class="song-list">
         ${users.map(u => `
           <li class="song-row" style="cursor:default">
@@ -854,7 +871,7 @@
               <div class="song-title">${esc(u.username)}</div>
               <div class="song-sub">${u.role}</div>
             </div>
-            ${u.id !== currentUser.id ? `<button class="btn-danger" onclick="adminDeleteUser('${u.id}')" aria-label="Delete user ${esc(u.username)}">${ICONS.trash} del</button>` : '<span class="mute caption">(you)</span>'}
+            ${u.id !== currentUser.id ? `<button class="btn-danger" onclick="adminDeleteUser('${u.id}')" aria-label="Delete user ${esc(u.username)}">${themedIcon('trash', 'del')}</button>` : '<span class="mute caption">(you)</span>'}
           </li>`).join('')}
       </ul>`;
   }
@@ -882,7 +899,7 @@
     const usedGb  = (s.storageUsedBytes / 1073741824).toFixed(2);
     const pct     = Math.min(100, (s.storageUsedBytes / (s.maxStorageGb * 1073741824)) * 100).toFixed(1);
     container.innerHTML = `
-      <h2 style="margin-bottom:24px">${ICONS.stats} stats</h2>
+      <h2 style="margin-bottom:24px">${themedIcon('stats', '[%]')} stats</h2>
       <div class="stats-grid">
         <div class="stat-card"><div class="stat-value">${s.songs}</div><div class="stat-label">songs</div></div>
         <div class="stat-card"><div class="stat-value">${s.albums}</div><div class="stat-label">albums</div></div>
@@ -898,7 +915,6 @@
       </div>`;
   }
 
-  // ── AUDIO ENGINE ───────────────────────────────────────────────────────────
   function playQueue(songs, idx, spokenWord) {
     queue       = songs;
     queueIndex  = idx;
@@ -986,10 +1002,11 @@
 
   function updateNowPlayingBar() {
     if (!currentSong) return;
+    if (currentPage === 'nowplaying') { npBar.style.display = 'none'; return; }
     npBar.style.display = 'grid';
     const coverHtml = currentSong.cover
       ? `<img src="/stream/cover/${currentSong.cover}" class="np-cover" alt="">`
-      : `<div class="np-cover" aria-hidden="true">${ICONS.note}</div>`;
+      : `<div class="np-cover" aria-hidden="true">${themedIcon('note', '&#9834;')}</div>`;
     npInfo.innerHTML = `
       ${coverHtml}
       <div class="np-text">
@@ -999,7 +1016,6 @@
     renderNowPlayingControls();
   }
 
-  // ── HELPERS ────────────────────────────────────────────────────────────────
   function section(label, content) {
     return `<div class="page-section"><div class="section-header"><span class="section-label">${label}</span></div>${content}</div>`;
   }
@@ -1010,7 +1026,7 @@
       ${songs.map((s, i) => {
         const coverHtml = s.cover
           ? `<img src="/stream/cover/${s.cover}" class="song-cover" alt="" loading="lazy">`
-          : `<div class="song-cover" aria-hidden="true">${ICONS.note}</div>`;
+          : `<div class="song-cover" aria-hidden="true">${themedIcon('note', '&#9834;')}</div>`;
         return `<li class="song-row" data-song-id="${s.id}" data-idx="${i}" data-context="${context}" role="listitem">
           ${coverHtml}
           <div class="song-meta">
@@ -1018,7 +1034,7 @@
             <div class="song-sub">${esc(s.artist_name || '')}${s.album_title ? ' &middot; ' + esc(s.album_title) : ''}</div>
           </div>
           <span class="song-duration">${formatTime(s.duration)}</span>
-          <button class="song-more" data-song-id="${s.id}" aria-label="More options for ${esc(s.title)}" title="More options">${ICONS.dots}</button>
+          <button class="song-more" data-song-id="${s.id}" aria-label="More options for ${esc(s.title)}" title="More options">${themedIcon('dots', '&bull;&bull;&bull;')}</button>
         </li>`;
       }).join('')}
     </ul>`;
@@ -1027,7 +1043,7 @@
   function renderAlbumCard(album) {
     const coverHtml = album.cover
       ? `<img src="/stream/cover/${album.cover}" alt="Cover for ${esc(album.title)}">`
-      : `<span aria-hidden="true">${ICONS.note}</span>`;
+      : `<span aria-hidden="true">${themedIcon('note', '&#9834;')}</span>`;
     return `<div class="album-card" data-id="${album.id}" role="button" tabindex="0" aria-label="Open album ${esc(album.title)}">
       <div class="album-cover">${coverHtml}</div>
       <div class="album-card-title">${esc(album.title)}</div>
@@ -1072,7 +1088,7 @@
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
+      .replace(/\"/g, '&quot;')
       .replace(/'/g, '&#039;');
   }
 
@@ -1099,25 +1115,6 @@
     t._timer = setTimeout(() => t.classList.remove('visible'), 2400);
   }
 
-  window.navigate.wrappedForAlbumEdit = renderAlbumEdit; // exposed for router below
-
-  // Patch router to support album edit (album,'edit:<id>') without altering the
-  // public navigate() signature used everywhere else in this file/HTML.
-  const _origNavigate = window.navigate;
-  window.navigate = function (page, params) {
-    if (page === 'album' && typeof params === 'string' && params.startsWith('edit:')) {
-      currentPage = 'album';
-      document.body.classList.remove('np-fullscreen');
-      if (topNav)    topNav.style.display    = '';
-      if (bottomNav) bottomNav.style.display = '';
-      renderAlbumEdit(params.slice(5));
-      window.scrollTo(0, 0);
-      return;
-    }
-    return _origNavigate(page, params);
-  };
-
-  // ── BOOT ───────────────────────────────────────────────────────────────────
   init();
 
 })();
