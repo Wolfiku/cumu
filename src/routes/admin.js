@@ -14,7 +14,6 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-// ── multer storage ───────────────────────────────────────────────────────────
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const cfg = getConfig();
@@ -23,61 +22,36 @@ const storage = multer.diskStorage({
       if (!fs.existsSync(musicPath)) fs.mkdirSync(musicPath, { recursive: true });
       cb(null, musicPath);
     } catch (err) {
-      // Requirement #7: surface filesystem errors (permissions, missing disk,
-      // read-only mount) instead of letting multer fail silently and drop
-      // the connection, which the browser reports as "network error".
       cb(err);
     }
   },
   filename: (req, file, cb) => cb(null, `${uuidv4()}${path.extname(file.originalname).toLowerCase()}`)
 });
 
-// Allowed audio formats: MP3, AAC, ALAC (.m4a/.aac), FLAC, OGG, WAV + images
-const AUDIO_EXTS  = ['.mp3', '.m4a', '.aac', '.alac', '.mp4', '.flac', '.ogg', '.wav', '.opus'];
-const IMAGE_EXTS  = ['.jpg', '.jpeg', '.png', '.webp'];
+const AUDIO_EXTS = ['.mp3', '.m4a', '.aac', '.alac', '.mp4', '.flac', '.ogg', '.wav', '.opus'];
+const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp'];
 
-// Requirement #7: explicit, generous per-file limit + a sane field-count
-// limit. The previous config only capped fileSize but had no fields/parts
-// limit, and had no error handler wired in at all — any multer error
-// (LIMIT_FILE_SIZE, LIMIT_UNEXPECTED_FILE, corrupted multipart stream, or a
-// client disconnect mid-upload) propagated as an uncaught exception, which
-// Express turned into a connection reset. The browser then reports this as
-// a generic "network error" with no useful message.
 const upload = multer({
   storage,
-  limits: {
-    fileSize: 1024 * 1024 * 1024, // 1 GB per file (raised from 500MB to avoid false positives on large lossless files)
-    files: 200,
-    fields: 30,
-  },
+  limits: { fileSize: 1024 * 1024 * 1024, files: 200, fields: 30 },
   fileFilter: (req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
     if (![...AUDIO_EXTS, ...IMAGE_EXTS].includes(ext)) {
-      // Reject with an explicit error (rather than cb(null, false), which
-      // silently drops the file and can leave req.files inconsistent)
       return cb(new multer.MulterError('LIMIT_UNEXPECTED_FILE', file.fieldname));
     }
     cb(null, true);
   }
 });
 
-// ── MIME type helper ─────────────────────────────────────────────────────────
 function mimeForExt(ext) {
   const map = {
-    '.mp3':  'audio/mpeg',
-    '.m4a':  'audio/mp4',
-    '.aac':  'audio/aac',
-    '.alac': 'audio/x-m4a',
-    '.mp4':  'audio/mp4',
-    '.flac': 'audio/flac',
-    '.ogg':  'audio/ogg',
-    '.wav':  'audio/wav',
-    '.opus': 'audio/ogg; codecs=opus',
+    '.mp3':  'audio/mpeg', '.m4a':  'audio/mp4', '.aac':  'audio/aac',
+    '.alac': 'audio/x-m4a', '.mp4':  'audio/mp4', '.flac': 'audio/flac',
+    '.ogg':  'audio/ogg', '.wav':  'audio/wav', '.opus': 'audio/ogg; codecs=opus',
   };
   return map[ext] || 'audio/mpeg';
 }
 
-// ── metadata extraction (music-metadata handles MP3, AAC, ALAC, FLAC …) ─────
 async function extractMeta(filePath) {
   try {
     const meta   = await mm.parseFile(filePath, { duration: true });
@@ -116,40 +90,58 @@ function getOrCreateAlbum(db, title, artistId, meta) {
   return row.id;
 }
 
-// ── Requirement #7: dedicated multer error wrapper ───────────────────────────
-// Wraps the upload middleware so any error thrown during multipart parsing
-// (bad boundary, oversized file, disk write failure, aborted stream, etc.)
-// is caught and turned into a structured JSON response with a helpful
-// message, rather than an unhandled exception that Express/Node closes the
-// socket for — which is exactly what previously surfaced in the browser as
-// "upload failed (network error)" with no further detail.
+let _songsColumnsCache = null;
+function getSongsColumns(db) {
+  if (_songsColumnsCache) return _songsColumnsCache;
+  const rows = db.prepare('PRAGMA table_info(songs)').all();
+  _songsColumnsCache = new Set(rows.map(r => r.name));
+  return _songsColumnsCache;
+}
+
+function insertSong(db, fields) {
+  const cols = getSongsColumns(db);
+  const candidate = {
+    id: fields.id,
+    title: fields.title,
+    artist_id: fields.artist_id,
+    album_id: fields.album_id,
+    filename: fields.filename,
+    duration: fields.duration,
+    track_number: fields.track_number,
+    genre: fields.genre,
+    year: fields.year,
+    is_audiobook: fields.is_audiobook,
+    file_size: fields.file_size,
+    cover: fields.cover,
+    mime_type: fields.mime_type,
+  };
+  const usableKeys = Object.keys(candidate).filter(k => cols.has(k));
+  const placeholders = usableKeys.map(() => '?').join(', ');
+  const values = usableKeys.map(k => candidate[k]);
+  db.prepare(`INSERT INTO songs (${usableKeys.join(', ')}) VALUES (${placeholders})`).run(...values);
+}
+
 function handleUpload(req, res, next) {
   const mw = upload.fields([{ name: 'files', maxCount: 200 }, { name: 'cover', maxCount: 1 }]);
   mw(req, res, (err) => {
     if (!err) return next();
-
     console.error('[cumu] upload error:', err);
-
     if (err instanceof multer.MulterError) {
       const messages = {
-        LIMIT_FILE_SIZE:      'One or more files exceed the maximum allowed size (1 GB per file).',
-        LIMIT_FILE_COUNT:     'Too many files in a single upload (max 200).',
-        LIMIT_UNEXPECTED_FILE:'Unsupported file type. Allowed audio: mp3, m4a, aac, mp4, flac, ogg, wav, opus. Allowed images: jpg, jpeg, png, webp.',
-        LIMIT_FIELD_COUNT:    'Too many form fields sent with the upload.',
+        LIMIT_FILE_SIZE:       'One or more files exceed the maximum allowed size (1 GB per file).',
+        LIMIT_FILE_COUNT:      'Too many files in a single upload (max 200).',
+        LIMIT_UNEXPECTED_FILE: 'Unsupported file type. Allowed audio: mp3, m4a, aac, mp4, flac, ogg, wav, opus. Allowed images: jpg, jpeg, png, webp.',
+        LIMIT_FIELD_COUNT:     'Too many form fields sent with the upload.',
       };
       return res.status(400).json({ error: messages[err.code] || `Upload error: ${err.code}` });
     }
-
-    // Filesystem / disk errors surfaced from storage.destination()
     if (err.code === 'ENOSPC') return res.status(507).json({ error: 'Server is out of disk space.' });
     if (err.code === 'EACCES' || err.code === 'EPERM') return res.status(500).json({ error: 'Server does not have permission to write to the music directory.' });
     if (err.code === 'ENOENT') return res.status(500).json({ error: 'Music storage directory is missing or inaccessible.' });
-
     return res.status(500).json({ error: err.message || 'Unexpected upload error.' });
   });
 }
 
-// ── POST /admin/upload ───────────────────────────────────────────────────────
 router.post('/upload', requireAdmin, handleUpload, async (req, res) => {
   try {
     const db        = getDB();
@@ -175,7 +167,6 @@ router.post('/upload', requireAdmin, handleUpload, async (req, res) => {
       const artistId = getOrCreateArtist(db, artistName);
       const albumId  = getOrCreateAlbum(db, albumTitle, artistId, meta);
 
-      // Cover artwork
       let coverFilename = null;
       if (coverFile) {
         coverFilename = coverFile.filename;
@@ -187,28 +178,35 @@ router.post('/upload', requireAdmin, handleUpload, async (req, res) => {
         if (albumId) db.prepare('UPDATE albums SET cover=? WHERE id=?').run(coverFilename, albumId);
       }
 
-      // Persist song (mime_type column lets stream.js serve the correct Content-Type)
       const songId   = uuidv4();
       const fileSize = fs.statSync(filePath).size;
-      db.prepare(
-        'INSERT INTO songs (id, title, artist_id, album_id, filename, duration, track_number, genre, year, is_audiobook, file_size, cover, mime_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-      ).run(songId, songTitle, artistId, albumId, file.filename, meta.duration, meta.track, meta.genre, meta.year, isAudiobook, fileSize, coverFilename, mime);
+
+      insertSong(db, {
+        id: songId,
+        title: songTitle,
+        artist_id: artistId,
+        album_id: albumId,
+        filename: file.filename,
+        duration: meta.duration,
+        track_number: meta.track,
+        genre: meta.genre,
+        year: meta.year,
+        is_audiobook: isAudiobook,
+        file_size: fileSize,
+        cover: coverFilename,
+        mime_type: mime,
+      });
 
       results.push({ id: songId, title: songTitle, artist: artistName, album: albumTitle, codec: meta.codec });
     }
 
     res.json({ success: true, uploaded: results.length, songs: results });
   } catch (err) {
-    // Requirement #7: catch-all so an error mid-processing (e.g. a corrupt
-    // file that crashes metadata parsing outside the try/catch in
-    // extractMeta, or a DB write failure) never results in a dropped
-    // connection / unhandled rejection.
     console.error('[cumu] upload processing error:', err);
     res.status(500).json({ error: 'Upload processing failed: ' + (err.message || 'unknown error') });
   }
 });
 
-// ── PUT /admin/songs/:id (Requirement #3: fully editable, incl. artist/album) ─
 router.put('/songs/:id', requireAdmin, (req, res) => {
   try {
     const db = getDB();
@@ -218,26 +216,16 @@ router.put('/songs/:id', requireAdmin, (req, res) => {
     if (!song) return res.status(404).json({ error: 'Song not found' });
 
     let artistId = song.artist_id;
-    if (artist !== undefined) {
-      artistId = artist ? getOrCreateArtist(db, artist) : null;
-    }
+    if (artist !== undefined) artistId = artist ? getOrCreateArtist(db, artist) : null;
 
     let albumId = song.album_id;
-    if (album !== undefined) {
-      albumId = album ? getOrCreateAlbum(db, album, artistId, { year, genre }) : null;
-    }
+    if (album !== undefined) albumId = album ? getOrCreateAlbum(db, album, artistId, { year, genre }) : null;
 
     db.prepare(
       'UPDATE songs SET title=COALESCE(?,title), artist_id=?, album_id=?, genre=COALESCE(?,genre), year=COALESCE(?,year), track_number=COALESCE(?,track_number), is_audiobook=COALESCE(?,is_audiobook) WHERE id=?'
     ).run(
-      title || null,
-      artistId,
-      albumId,
-      genre || null,
-      year || null,
-      track_number || null,
-      is_audiobook != null ? (is_audiobook ? 1 : 0) : null,
-      req.params.id
+      title || null, artistId, albumId, genre || null, year || null, track_number || null,
+      is_audiobook != null ? (is_audiobook ? 1 : 0) : null, req.params.id
     );
 
     res.json(db.prepare('SELECT * FROM songs WHERE id=?').get(req.params.id));
@@ -247,7 +235,6 @@ router.put('/songs/:id', requireAdmin, (req, res) => {
   }
 });
 
-// ── PUT /admin/albums/:id (new — Requirement #3: album edit page) ────────────
 router.put('/albums/:id', requireAdmin, (req, res) => {
   try {
     const db = getDB();
@@ -257,9 +244,7 @@ router.put('/albums/:id', requireAdmin, (req, res) => {
     if (!album) return res.status(404).json({ error: 'Album not found' });
 
     let artistId = album.artist_id;
-    if (artist !== undefined) {
-      artistId = artist ? getOrCreateArtist(db, artist) : null;
-    }
+    if (artist !== undefined) artistId = artist ? getOrCreateArtist(db, artist) : null;
 
     db.prepare(
       'UPDATE albums SET title=COALESCE(?,title), artist_id=?, year=COALESCE(?,year), genre=COALESCE(?,genre) WHERE id=?'
@@ -276,7 +261,6 @@ router.put('/albums/:id', requireAdmin, (req, res) => {
   }
 });
 
-// ── DELETE /admin/songs/:id ──────────────────────────────────────────────────
 router.delete('/songs/:id', requireAdmin, (req, res) => {
   const db = getDB();
   const cfg = getConfig();
@@ -291,7 +275,6 @@ router.delete('/songs/:id', requireAdmin, (req, res) => {
   res.json({ success: true });
 });
 
-// ── DELETE /admin/albums/:id ─────────────────────────────────────────────────
 router.delete('/albums/:id', requireAdmin, (req, res) => {
   const db = getDB();
   const cfg = getConfig();
