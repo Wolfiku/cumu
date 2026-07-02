@@ -905,3 +905,77 @@ input[type="checkbox"] { width: auto; height: auto; }
   .np-full-cover-wrap { max-width: 280px; }
   .np-full-info, .np-full-seek, .np-full-controls { max-width: 280px; }
 }
+
+
+.section-label svg,
+.admin-sidebar-item svg,
+.sheet-item svg,
+.song-cover svg,
+.playlist-cover svg,
+.empty-state .big svg,
+.np-full-cover--placeholder svg {
+  vertical-align: middle;
+  display: inline-block;
+}
+.section-label { display: inline-flex; align-items: center; gap: 6px; }
+.admin-sidebar-item { display: flex; align-items: center; gap: 8px; }
+.btn-primary svg, .btn-secondary svg, .btn-danger svg, .btn-icon svg { flex-shrink: 0; }
+
+.btn-icon.icon-only,
+.btn-secondary.icon-only {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+}
+
+#addSongsModal .modal { max-height: 80vh; display: flex; flex-direction: column; }
+#addSongsResults .song-row { padding: 6px 4px; }
+.add-song-btn { display: inline-flex; align-items: center; gap: 4px; }
+
+body.np-fullscreen #topNav,
+body.np-fullscreen .bottom-nav,
+body.np-fullscreen .now-playing-bar {
+  display: none !important;
+}
+body.np-fullscreen .main-content {
+  margin-top: 0;
+  padding-bottom: 0;
+  min-height: 100vh;
+}
+body.np-fullscreen .now-playing-page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+.np-page-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+}
+.np-full-cover-wrap {
+  display: flex;
+  justify-content: center;
+  padding: 24px;
+}
+.np-full-cover, .np-full-cover--placeholder {
+  width: min(80vw, 320px);
+  height: min(80vw, 320px);
+  border-radius: 8px;
+  object-fit: cover;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 64px;
+}
+.np-full-info { text-align: center; padding: 0 24px; }
+.np-full-title { font-size: 20px; font-weight: 600; }
+.np-full-artist { color: var(--mute); margin-top: 4px; }
+.np-full-seek { display: flex; align-items: center; gap: 8px; padding: 24px; }
+.np-full-seek input[type="range"] { flex: 1; }
+.np-full-controls { display: flex; justify-content: center; align-items: center; gap: 24px; padding: 16px 0 40px; margin-top: auto; }
+.np-btn-lg { width: 56px; height: 56px; }
