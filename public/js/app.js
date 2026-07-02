@@ -28,7 +28,7 @@
   const settingsBtn     = document.getElementById('settingsBtn');
   const adminBtn        = document.getElementById('adminBtn');
 
-  // ── SVG icon set (used ONLY when Classic/Codec theme is active) ───────────
+  // ── SVG icon set (used ONLY when Standard theme is active) ────────────────
   const ICONS = {
     play:      `<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="5,3 19,12 5,21"/></svg>`,
     pause:     `<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="5" y="3" width="4" height="18"/><rect x="15" y="3" width="4" height="18"/></svg>`,
@@ -60,6 +60,7 @@
     empty:     `<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>`,
   };
 
+  // codec = [] text icons, standard = SVG icons
   const PLACEHOLDERS = {
     home: '[~]', search: '[?]', library: '[=]',
     settingsLabel: 'settings', adminLabel: 'admin',
@@ -75,22 +76,25 @@
     const libraryIcon = document.querySelector('.nav-tab[data-page="library"] .nav-icon');
 
     if (isStandardTheme()) {
-      if (homeIcon)    homeIcon.textContent    = PLACEHOLDERS.home;
-      if (searchIcon)  searchIcon.textContent  = PLACEHOLDERS.search;
-      if (libraryIcon) libraryIcon.textContent = PLACEHOLDERS.library;
-      if (settingsBtn) { settingsBtn.innerHTML = PLACEHOLDERS.settingsLabel; settingsBtn.classList.remove('icon-only'); }
-      if (adminBtn)    { adminBtn.innerHTML    = PLACEHOLDERS.adminLabel;    adminBtn.classList.remove('icon-only'); }
-    } else {
+      // standard theme → SVG icons
       if (homeIcon)    homeIcon.innerHTML    = ICONS.home;
       if (searchIcon)  searchIcon.innerHTML  = ICONS.search;
       if (libraryIcon) libraryIcon.innerHTML = ICONS.library;
       if (settingsBtn) { settingsBtn.innerHTML = ICONS.settings; settingsBtn.classList.add('icon-only'); }
       if (adminBtn)    { adminBtn.innerHTML    = ICONS.admin;    adminBtn.classList.add('icon-only'); }
+    } else {
+      // codec theme → [] text icons
+      if (homeIcon)    homeIcon.textContent    = PLACEHOLDERS.home;
+      if (searchIcon)  searchIcon.textContent  = PLACEHOLDERS.search;
+      if (libraryIcon) libraryIcon.textContent = PLACEHOLDERS.library;
+      if (settingsBtn) { settingsBtn.innerHTML = PLACEHOLDERS.settingsLabel; settingsBtn.classList.remove('icon-only'); }
+      if (adminBtn)    { adminBtn.innerHTML    = PLACEHOLDERS.adminLabel;    adminBtn.classList.remove('icon-only'); }
     }
   }
 
+  // codec theme → fallbackText ([] icons), standard theme → SVG
   function themedIcon(name, fallbackText) {
-    return isStandardTheme() ? (fallbackText || '') : (ICONS[name] || '');
+    return isStandardTheme() ? (ICONS[name] || '') : (fallbackText || '');
   }
 
   const audioCapabilities = (function () {
