@@ -1,0 +1,603 @@
+/*
+ * public/css/theme-coddy.css
+ * Coddy Design — OpenCode TUI style per opencode.ai-DESIGN.md.
+ * 100% monospace, warm cream canvas, dark hero surface, hairline borders,
+ * ASCII bracket glyphs, no shadows, no gradients.
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+[data-theme="coddy"] {
+  /* ── Color Tokens (from opencode.ai-DESIGN.md) ───────────── */
+  --color-ink:              #201d1d;
+  --color-ink-deep:         #0f0000;
+  --color-charcoal:         #302c2c;
+  --color-body:             #424245;
+  --color-mute:             #646262;
+  --color-stone:            #6e6e73;
+  --color-ash:              #9a9898;
+  --color-canvas:           #fdfcfc;
+  --color-surface-soft:     #f8f7f7;
+  --color-surface-card:     #f1eeee;
+  --color-surface-dark:     #201d1d;
+  --color-surface-dark-el:  #302c2c;
+  --color-hairline:         rgba(15,0,0,0.12);
+  --color-hairline-strong:  #646262;
+  --color-on-dark:          #fdfcfc;
+  --color-on-dark-mute:     #9a9898;
+  --color-accent:           #007aff;
+  --color-danger:           #ff3b30;
+  --color-warning:          #ff9f0a;
+  --color-success:          #30d158;
+
+  /* ── Aliases for app compatibility ──────────────────────── */
+  --color-primary:          var(--color-ink);
+  --color-on-primary:       var(--color-canvas);
+  --color-bg:               var(--color-canvas);
+  --color-surface:          var(--color-canvas);
+  --color-border:           var(--color-hairline);
+  --color-text:             var(--color-ink);
+  --color-text-muted:       var(--color-mute);
+  --color-nav-bg:           var(--color-canvas);
+  --color-player-bg:        var(--color-canvas);
+  --color-input-bg:         var(--color-surface-soft);
+
+  /* ── Typography ─────────────────────────────────────────── */
+  --font-family:    'JetBrains Mono', 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Courier New', monospace;
+  --font-size-xs:   12px;
+  --font-size-sm:   14px;
+  --font-size-base: 16px;
+  --font-size-md:   16px;
+  --font-size-lg:   20px;
+  --font-size-xl:   38px;
+  --line-height:    1.5;
+
+  /* ── Spacing (from opencode.ai-DESIGN.md) ───────────────── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-section: 96px;
+
+  /* ── Shape ───────────────────────────────────────────────── */
+  --radius-sm: 4px;
+  --radius-md: 4px;
+  --radius-lg: 4px;
+  --radius-full: 9999px;
+
+  /* ── No shadows ──────────────────────────────────────────── */
+  --shadow-card: none;
+  --shadow-elevated: none;
+
+  /* ── Motion ──────────────────────────────────────────────── */
+  --duration-fast: 50ms;
+  --duration-base: 150ms;
+  --easing: ease-in-out;
+}
+
+/* ── Base ──────────────────────────────────────────────────── */
+[data-theme="coddy"] * {
+  font-family: var(--font-family) !important;
+  box-sizing: border-box;
+}
+
+[data-theme="coddy"] body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height);
+  margin: 0;
+}
+
+/* ── Top Navigation ─────────────────────────────────────────── */
+[data-theme="coddy"] .top-nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  height: 56px;
+  background: var(--color-canvas);
+  border-bottom: 1px solid var(--color-hairline);
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-6);
+  gap: var(--space-4);
+}
+
+[data-theme="coddy"] .wordmark-small {
+  font-size: var(--font-size-base);
+  font-weight: 700;
+  color: var(--color-ink);
+  letter-spacing: 0;
+  /* ASCII wordmark style */
+}
+
+[data-theme="coddy"] .wordmark-small::before {
+  content: '> ';
+  color: var(--color-mute);
+}
+
+[data-theme="coddy"] .nav-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+/* ── Bottom Navigation ──────────────────────────────────────── */
+[data-theme="coddy"] .bottom-nav {
+  position: fixed;
+  bottom: 72px;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  height: 40px;
+  background: var(--color-canvas);
+  border-top: 2px solid var(--color-hairline-strong);
+  display: flex;
+  align-items: stretch;
+}
+
+[data-theme="coddy"] .nav-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  background: none;
+  border: none;
+  border-right: 1px solid var(--color-hairline);
+  cursor: pointer;
+  color: var(--color-mute);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  font-family: var(--font-family);
+  transition: color var(--duration-fast);
+  padding: 0 var(--space-3);
+}
+
+[data-theme="coddy"] .nav-tab:last-child {
+  border-right: none;
+}
+
+[data-theme="coddy"] .nav-tab.active,
+[data-theme="coddy"] .nav-tab[data-active="true"] {
+  color: var(--color-ink);
+  border-bottom: 2px solid var(--color-ink);
+}
+
+[data-theme="coddy"] .icon-ascii {
+  font-size: var(--font-size-sm);
+  font-family: var(--font-family);
+}
+
+/* ── Content Area ───────────────────────────────────────────── */
+[data-theme="coddy"] .main-content {
+  margin-top: 56px;
+  margin-bottom: 128px;
+  padding: var(--space-6);
+  max-width: 960px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* ── Section Headings ───────────────────────────────────────── */
+[data-theme="coddy"] h1, [data-theme="coddy"] h2, [data-theme="coddy"] h3 {
+  font-weight: 700;
+  margin: 0 0 var(--space-3);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--color-hairline);
+}
+
+[data-theme="coddy"] h1 { font-size: var(--font-size-xl); }
+[data-theme="coddy"] h2 { font-size: var(--font-size-base); font-weight: 700; }
+[data-theme="coddy"] h3 { font-size: var(--font-size-base); }
+
+/* ── Buttons ────────────────────────────────────────────────── */
+[data-theme="coddy"] .btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 4px 20px;
+  height: 36px;
+  background: var(--color-ink);
+  color: var(--color-canvas);
+  border: 1px solid var(--color-ink);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-family);
+  font-size: var(--font-size-base);
+  font-weight: 500;
+  line-height: 2;
+  cursor: pointer;
+  transition: background var(--duration-fast);
+  white-space: nowrap;
+}
+
+[data-theme="coddy"] .btn-primary:hover,
+[data-theme="coddy"] .btn-primary:active {
+  background: var(--color-ink-deep);
+  border-color: var(--color-ink-deep);
+}
+
+[data-theme="coddy"] .btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 4px 20px;
+  height: 36px;
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  border: 1px solid var(--color-hairline-strong);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-family);
+  font-size: var(--font-size-base);
+  font-weight: 500;
+  line-height: 2;
+  cursor: pointer;
+}
+
+[data-theme="coddy"] .btn-secondary:hover {
+  background: var(--color-surface-card);
+}
+
+[data-theme="coddy"] .btn-danger {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 20px;
+  height: 36px;
+  background: var(--color-danger);
+  color: #fff;
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-family);
+  font-size: var(--font-size-base);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+[data-theme="coddy"] .btn-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 4px 12px;
+  height: 32px;
+  background: none;
+  color: var(--color-mute);
+  border: 1px solid var(--color-hairline-strong);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-family);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+[data-theme="coddy"] .btn-icon:hover {
+  color: var(--color-ink);
+  background: var(--color-surface-card);
+}
+
+/* ── Inputs ─────────────────────────────────────────────────── */
+[data-theme="coddy"] input[type="text"],
+[data-theme="coddy"] input[type="password"],
+[data-theme="coddy"] input[type="email"],
+[data-theme="coddy"] input[type="search"],
+[data-theme="coddy"] input[type="number"],
+[data-theme="coddy"] select,
+[data-theme="coddy"] textarea {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  height: 40px;
+  background: var(--color-surface-soft);
+  color: var(--color-ink);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-family);
+  font-size: var(--font-size-base);
+  line-height: 1.5;
+  outline: none;
+  transition: border-color var(--duration-fast), background var(--duration-fast);
+}
+
+[data-theme="coddy"] textarea {
+  height: auto;
+  min-height: 80px;
+  resize: vertical;
+}
+
+[data-theme="coddy"] input:focus,
+[data-theme="coddy"] select:focus,
+[data-theme="coddy"] textarea:focus {
+  background: var(--color-canvas);
+  border-color: var(--color-ink);
+}
+
+[data-theme="coddy"] label {
+  display: block;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--color-mute);
+  margin-bottom: 4px;
+  font-family: var(--font-family);
+}
+
+[data-theme="coddy"] .form-row {
+  margin-bottom: var(--space-4);
+}
+
+/* ── Cards / Sections ───────────────────────────────────────── */
+[data-theme="coddy"] .card,
+[data-theme="coddy"] .settings-card {
+  background: var(--color-canvas);
+  border: 1px solid var(--color-hairline);
+  border-radius: 0;
+  padding: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+[data-theme="coddy"] .settings-card-title {
+  font-weight: 700;
+  font-size: var(--font-size-base);
+  margin-bottom: var(--space-2);
+}
+
+[data-theme="coddy"] .settings-card-desc {
+  font-size: var(--font-size-sm);
+  color: var(--color-mute);
+  margin-bottom: var(--space-4);
+}
+
+/* ── Song / Album list rows ─────────────────────────────────── */
+[data-theme="coddy"] .song-item,
+[data-theme="coddy"] .album-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 8px 0;
+  border-bottom: 1px solid var(--color-hairline);
+  cursor: pointer;
+  transition: background var(--duration-fast);
+}
+
+[data-theme="coddy"] .song-item::before {
+  content: '[+]';
+  color: var(--color-mute);
+  font-size: var(--font-size-sm);
+  flex-shrink: 0;
+  width: 32px;
+}
+
+[data-theme="coddy"] .song-item:hover,
+[data-theme="coddy"] .album-item:hover {
+  background: var(--color-surface-soft);
+}
+
+/* ── Hero TUI Panel (for "Now Playing" full view) ───────────── */
+[data-theme="coddy"] .tui-panel {
+  background: var(--color-surface-dark);
+  color: var(--color-on-dark);
+  padding: var(--space-8) var(--space-6);
+  border-radius: 0;
+  font-family: var(--font-family);
+}
+
+[data-theme="coddy"] .tui-prompt-row {
+  background: var(--color-surface-dark-el);
+  color: var(--color-on-dark);
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  margin: var(--space-4) 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+[data-theme="coddy"] .tui-prompt-row::before {
+  content: '|';
+  color: var(--color-ash);
+}
+
+/* ── Now Playing Bar ────────────────────────────────────────── */
+[data-theme="coddy"] .now-playing-bar {
+  position: fixed;
+  bottom: 40px;
+  left: 0;
+  right: 0;
+  z-index: 99;
+  height: 72px;
+  background: var(--color-surface-dark);
+  border-top: 1px solid var(--color-hairline-strong);
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  padding: 0 var(--space-6);
+  gap: var(--space-4);
+}
+
+[data-theme="coddy"] .np-info {
+  color: var(--color-on-dark);
+  font-size: var(--font-size-sm);
+}
+
+[data-theme="coddy"] .np-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+[data-theme="coddy"] .np-controls button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-on-dark);
+  font-family: var(--font-family);
+  font-size: var(--font-size-base);
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  transition: background var(--duration-fast);
+}
+
+[data-theme="coddy"] .np-controls button:hover {
+  background: var(--color-surface-dark-el);
+}
+
+[data-theme="coddy"] .np-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--color-ash);
+}
+
+[data-theme="coddy"] .np-progress input[type="range"] {
+  flex: 1;
+  height: 2px;
+  accent-color: var(--color-on-dark);
+  border: none;
+  background: var(--color-charcoal);
+  cursor: pointer;
+  padding: 0;
+}
+
+/* ── Modal / Login ──────────────────────────────────────────── */
+[data-theme="coddy"] .modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(32,29,29,0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+[data-theme="coddy"] .modal {
+  background: var(--color-canvas);
+  border: 1px solid var(--color-hairline-strong);
+  border-radius: 0;
+  padding: var(--space-8);
+  width: 100%;
+  max-width: 420px;
+}
+
+[data-theme="coddy"] .wordmark {
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+  color: var(--color-ink);
+  text-align: left;
+  margin: 0 0 var(--space-6);
+  font-family: var(--font-family);
+}
+
+[data-theme="coddy"] .wordmark::before { content: '> '; color: var(--color-mute); }
+
+/* ── Snippets / Code blocks ─────────────────────────────────── */
+[data-theme="coddy"] .snippet {
+  background: var(--color-surface-card);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-sm);
+  padding: 12px 16px;
+  font-family: var(--font-family);
+  font-size: var(--font-size-base);
+  color: var(--color-ink);
+}
+
+/* ── Error / Success ────────────────────────────────────────── */
+[data-theme="coddy"] .error-msg,
+[data-theme="coddy"] .settings-error-msg {
+  color: var(--color-danger);
+  font-size: var(--font-size-sm);
+  padding: var(--space-2) 0;
+}
+
+[data-theme="coddy"] .error-msg::before { content: '[!] '; }
+
+[data-theme="coddy"] .settings-success-msg {
+  color: var(--color-success);
+  font-size: var(--font-size-sm);
+  padding: var(--space-2) 0;
+}
+
+[data-theme="coddy"] .settings-success-msg::before { content: '[✓] '; }
+
+/* ── Muted text ─────────────────────────────────────────────── */
+[data-theme="coddy"] .mute,
+[data-theme="coddy"] .caption {
+  color: var(--color-mute);
+  font-size: var(--font-size-sm);
+}
+
+/* ── Context Menu ───────────────────────────────────────────── */
+[data-theme="coddy"] .context-menu {
+  position: fixed;
+  background: var(--color-canvas);
+  border: 1px solid var(--color-hairline-strong);
+  border-radius: 0;
+  padding: var(--space-1) 0;
+  z-index: 300;
+  min-width: 200px;
+}
+
+[data-theme="coddy"] .context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 8px 16px;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  color: var(--color-body);
+  font-family: var(--font-family);
+  border-bottom: 1px solid var(--color-hairline);
+}
+
+[data-theme="coddy"] .context-menu-item:hover {
+  background: var(--color-surface-soft);
+}
+
+/* ── Tables ─────────────────────────────────────────────────── */
+[data-theme="coddy"] table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+  font-family: var(--font-family);
+}
+
+[data-theme="coddy"] th {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 2px solid var(--color-hairline-strong);
+  font-weight: 700;
+  color: var(--color-mute);
+}
+
+[data-theme="coddy"] td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-hairline);
+  vertical-align: middle;
+}
+
+[data-theme="coddy"] tr:hover td {
+  background: var(--color-surface-soft);
+}
+
+/* ── Album/Song grids ───────────────────────────────────────── */
+[data-theme="coddy"] .album-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 1px;
+  border: 1px solid var(--color-hairline);
+}
+
+[data-theme="coddy"] .album-grid > * {
+  border: 1px solid var(--color-hairline);
+}
+
+[data-theme="coddy"] .cover-thumb {
+  width: 48px;
+  height: 48px;
+  border-radius: 0;
+  object-fit: cover;
+  background: var(--color-surface-card);
+  flex-shrink: 0;
+}

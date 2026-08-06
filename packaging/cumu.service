@@ -1,0 +1,25 @@
+[Unit]
+Description=cumu music streaming server
+Documentation=https://github.com/Wolfiku/cumu-music
+After=network.target
+
+[Service]
+Type=simple
+User=cumu
+WorkingDirectory=/opt/cumu
+EnvironmentFile=/opt/cumu/.env
+ExecStart=/usr/bin/node src/server.js
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cumu
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/cumu /var/lib/cumu
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

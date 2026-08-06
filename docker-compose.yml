@@ -1,0 +1,31 @@
+# cumu — docker-compose
+# Setup:
+#   cp .env.example .env   # und dann SESSION_SECRET + MUSIC_PATH anpassen
+#   docker compose up -d
+
+services:
+  cumu:
+    build: .                          # lokal bauen aus dem Dockerfile
+    # image: ghcr.io/wolfiku/cumu-music:latest  # oder fertiges Image nutzen
+    container_name: cumu
+    restart: unless-stopped
+    ports:
+      - "${CUMU_PORT:-3000}:3000"
+    env_file:
+      - .env                          # lädt alle Variablen aus .env
+    environment:
+      - NODE_ENV=production
+      - SESSION_SECRET=${SESSION_SECRET:-BITTE_AENDERN}
+    volumes:
+      - cumu_data:/app/data           # SQLite DB + Sessions
+      - ${MUSIC_PATH:-./music}:/music # dein Musikordner
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/auth/me"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  cumu_data:
+    driver: local

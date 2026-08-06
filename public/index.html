@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="coddy">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+  <title>cumu</title>
+  <meta name="description" content="cumu — your private music streaming server">
+  <meta name="theme-color" content="#fdfcfc">
+
+  <!-- Theme CSS — all three loaded, scoped by [data-theme] attribute -->
+  <link rel="stylesheet" href="/css/theme-klassik.css">
+  <link rel="stylesheet" href="/css/theme-coddy.css">
+  <link rel="stylesheet" href="/css/theme-material3.css">
+
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>&#127925;</text></svg>">
+
+  <!-- Apply saved theme instantly to avoid FOUC -->
+  <script>
+    (function () {
+      const t = localStorage.getItem('cumu_theme');
+      if (t && ['klassik', 'coddy', 'material3'].includes(t)) {
+        document.documentElement.setAttribute('data-theme', t);
+      }
+    })();
+  </script>
+
+  <style>
+    /* Minimal base shared across all themes */
+    *, *::before, *::after { box-sizing: border-box; }
+    body { margin: 0; }
+    .hidden { display: none !important; }
+    /* Loading spinner */
+    #appLoader {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: monospace;
+      font-size: 14px;
+      color: #888;
+      background: inherit;
+      z-index: 999;
+    }
+  </style>
+</head>
+<body>
+  <!-- ── App Loading indicator ────────────────────────────── -->
+  <div id="appLoader">loading cumu…</div>
+
+  <!-- ── Top Navigation ──────────────────────────────────── -->
+  <header class="top-nav" id="topNav">
+    <span class="wordmark-small">cumu</span>
+    <div class="nav-right">
+      <span id="navUser" class="mute caption"></span>
+      <button class="btn-icon" id="settingsBtn" onclick="navigate('settings')" aria-label="Settings">
+        <span class="nav-icon" data-icon="settings"></span>
+      </button>
+      <button class="btn-icon hidden" id="adminBtn" onclick="navigate('admin')" aria-label="Admin">
+        <span class="nav-icon" data-icon="admin"></span>
+      </button>
+      <button class="btn-secondary" id="logoutBtn" onclick="doLogout()">logout</button>
+    </div>
+  </header>
+
+  <!-- ── Main Content ─────────────────────────────────────── -->
+  <main id="mainContent" class="main-content" role="main"></main>
+
+  <!-- ── Now Playing Bar ──────────────────────────────────── -->
+  <div class="now-playing-bar hidden" id="nowPlayingBar" role="region" aria-label="Now Playing">
+    <div class="np-info" id="npInfo" style="cursor:pointer" onclick="navigate('nowplaying')" aria-label="Open full player"></div>
+    <div class="np-controls" id="npControls" role="group" aria-label="Playback controls"></div>
+    <div class="np-progress">
+      <span id="npCurrentTime">0:00</span>
+      <input type="range" id="npSeek" value="0" min="0" max="100" step="0.1" aria-label="Seek">
+      <span id="npDuration">0:00</span>
+    </div>
+  </div>
+
+  <!-- ── Bottom Navigation ─────────────────────────────────── -->
+  <nav class="bottom-nav" id="bottomNav" aria-label="Main navigation">
+    <button class="nav-tab" id="navHome" data-page="home" onclick="navigate('home')" aria-label="Home">
+      <div class="nav-icon-wrap"><span class="nav-icon" data-icon="home"></span></div>
+      <span>home</span>
+    </button>
+    <button class="nav-tab" id="navSearch" data-page="search" onclick="navigate('search')" aria-label="Search">
+      <div class="nav-icon-wrap"><span class="nav-icon" data-icon="search"></span></div>
+      <span>search</span>
+    </button>
+    <button class="nav-tab" id="navLibrary" data-page="library" onclick="navigate('library')" aria-label="Library">
+      <div class="nav-icon-wrap"><span class="nav-icon" data-icon="library"></span></div>
+      <span>library</span>
+    </button>
+  </nav>
+
+  <!-- ── Login Modal ─────────────────────────────────────── -->
+  <div class="modal-overlay" id="loginModal" role="dialog" aria-modal="true" aria-labelledby="loginHeading">
+    <div class="modal">
+      <h1 class="wordmark" id="loginHeading">cumu</h1>
+      <form id="loginForm" autocomplete="on">
+        <div class="form-row">
+          <label for="loginUsername">username</label>
+          <input type="text" id="loginUsername" name="username" autocomplete="username"
+                 required placeholder="username" autofocus>
+        </div>
+        <div class="form-row">
+          <label for="loginPassword">password</label>
+          <input type="password" id="loginPassword" name="password" autocomplete="current-password"
+                 required placeholder="password">
+        </div>
+        <div id="loginError" class="error-msg hidden" role="alert"></div>
+        <button type="submit" class="btn-primary" id="loginSubmitBtn" style="width:100%">
+          login &rarr;
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ── Context Menu ─────────────────────────────────────── -->
+  <div class="context-menu hidden" id="contextMenu" role="menu"></div>
+
+  <!-- ── Scripts ──────────────────────────────────────────── -->
+  <script src="/js/icons.js"></script>
+  <script src="/js/api-client.js"></script>
+  <script src="/js/settings.js"></script>
+  <script src="/js/admin.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>

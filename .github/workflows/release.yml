@@ -1,0 +1,177 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  # ── Build and publish Docker image to GHCR ─────────────────────────────────
+  docker:
+    name: Build & Push Docker image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ── Build .deb package ──────────────────────────────────────────────────────
+  deb:
+    name: Build .deb package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install npm deps
+        run: npm ci --omit=dev
+
+      - name: Build .deb
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          PKG="cumu_${VERSION}_all"
+          mkdir -p "${PKG}/DEBIAN"
+          mkdir -p "${PKG}/opt/cumu"
+          mkdir -p "${PKG}/etc/systemd/system"
+          mkdir -p "${PKG}/usr/local/bin"
+          mkdir -p "${PKG}/var/lib/cumu/music"
+
+          # Copy app files
+          rsync -a --exclude='.github' --exclude='packaging' --exclude='*.deb' \
+            --exclude='.git' --exclude='.dockerignore' \
+            . "${PKG}/opt/cumu/"
+
+          # DEBIAN/control
+          cat > "${PKG}/DEBIAN/control" << EOF
+          Package: cumu
+          Version: ${VERSION}
+          Section: web
+          Priority: optional
+          Architecture: all
+          Depends: nodejs (>= 18)
+          Maintainer: Wolfiku <noreply@github.com>
+          Description: Self-hosted music streaming server
+           cumu is a self-hosted Node.js music streaming application
+           with admin panel, playlists, audiobook mode, and more.
+          EOF
+
+          # DEBIAN/postinst
+          cat > "${PKG}/DEBIAN/postinst" << 'POSTINST'
+          #!/bin/bash
+          set -e
+          id cumu &>/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin cumu
+          chown -R cumu:cumu /opt/cumu /var/lib/cumu
+          ENV_FILE=/opt/cumu/.env
+          if [[ ! -f "$ENV_FILE" ]]; then
+            SECRET=$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 48)
+            printf "PORT=3000\nHOST=0.0.0.0\nMUSIC_PATH=/var/lib/cumu/music\nDATA_PATH=/var/lib/cumu\nSESSION_SECRET=%s\n" "$SECRET" > "$ENV_FILE"
+            chown cumu:cumu "$ENV_FILE"
+            chmod 600 "$ENV_FILE"
+          fi
+          cp /opt/cumu/packaging/cumu.service /etc/systemd/system/cumu.service
+          cp /opt/cumu/scripts/update.sh /usr/local/bin/cumu-update
+          chmod +x /usr/local/bin/cumu-update
+          systemctl daemon-reload
+          systemctl enable cumu
+          systemctl restart cumu || true
+          echo ""
+          echo "[cumu] Installed! Open http://$(hostname -I | awk '{print $1}'):3000 to start setup."
+          echo "[cumu] Logs: journalctl -u cumu -f"
+          POSTINST
+
+          chmod 755 "${PKG}/DEBIAN/postinst"
+
+          # DEBIAN/prerm
+          cat > "${PKG}/DEBIAN/prerm" << 'PRERM'
+          #!/bin/bash
+          systemctl stop cumu 2>/dev/null || true
+          systemctl disable cumu 2>/dev/null || true
+          PRERM
+          chmod 755 "${PKG}/DEBIAN/prerm"
+
+          # systemd service file for packaging
+          cat > "${PKG}/etc/systemd/system/cumu.service" << 'SVC'
+          [Unit]
+          Description=cumu music streaming server
+          After=network.target
+
+          [Service]
+          Type=simple
+          User=cumu
+          WorkingDirectory=/opt/cumu
+          EnvironmentFile=/opt/cumu/.env
+          ExecStart=/usr/bin/node src/server.js
+          Restart=on-failure
+          RestartSec=5
+          NoNewPrivileges=yes
+          ProtectSystem=strict
+          ReadWritePaths=/opt/cumu /var/lib/cumu
+          PrivateTmp=yes
+
+          [Install]
+          WantedBy=multi-user.target
+          SVC
+
+          # update script symlink
+          cp scripts/update.sh "${PKG}/usr/local/bin/cumu-update"
+          chmod +x "${PKG}/usr/local/bin/cumu-update"
+
+          dpkg-deb --build --root-owner-group "${PKG}"
+          echo "DEB_FILE=${PKG}.deb" >> $GITHUB_ENV
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            cumu_*.deb
+          generate_release_notes: true
+          body: |
+            ## Install
+
+            **Docker:**
+            ```bash
+            docker pull ghcr.io/wolfiku/cumu-music:${{ github.ref_name }}
+            ```
+
+            **APT / .deb:**
+            ```bash
+            wget https://github.com/Wolfiku/cumu-music/releases/download/${{ github.ref_name }}/$(ls cumu_*.deb)
+            sudo dpkg -i cumu_*.deb
+            ```
+
+            **One-line installer:**
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/Wolfiku/cumu-music/main/scripts/install.sh | sudo bash
+            ```

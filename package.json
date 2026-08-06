@@ -1,0 +1,33 @@
+{
+  "name": "cumu",
+  "version": "1.0.0",
+  "description": "Self-hosted music streaming application",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "setup": "node src/setup.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "express-session": "^1.17.3",
+    "bcryptjs": "^2.4.3",
+    "multer": "^1.4.5-lts.1",
+    "music-metadata": "^7.13.4",
+    "better-sqlite3": "^12.2.0",
+    "connect-sqlite3": "^0.9.13",
+    "uuid": "^9.0.0",
+    "dotenv": "^16.3.1",
+    "cors": "^2.8.5",
+    "helmet": "^7.1.0",
+    "morgan": "^1.10.0",
+    "readline-sync": "^1.4.10",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

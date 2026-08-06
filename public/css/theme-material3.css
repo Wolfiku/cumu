@@ -1,0 +1,646 @@
+/*
+ * public/css/theme-material3.css
+ * Google Material 3 Design — per google-DESIGN.md.
+ * Roboto typography, M3 color system, tonal elevation, pill shapes.
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;600&display=swap');
+
+[data-theme="material3"] {
+  /* ── M3 Color Tokens (from google-DESIGN.md) ─────────────── */
+  --color-primary:        #0b57d0;
+  --color-primary-dark:   #1a0dab;
+  --color-on-primary:     #ffffff;
+  --color-bg:             #ffffff;
+  --color-surface:        #f8f9fa;
+  --color-surface-elevated: #f3f5f6;
+  --color-border:         #f8f9fa;
+  --color-border-strong:  #e0e0e0;
+  --color-text:           #1f1f1f;
+  --color-text-muted:     #444746;
+  --color-text-secondary: #1a0dab;
+  --color-accent:         #1a0dab;
+  --color-danger:         #b3261e;
+  --color-danger-bg:      #fceeee;
+  --color-success:        #146c2e;
+  --color-success-bg:     #e8f5e9;
+  --color-warning:        #7c5700;
+  --color-warning-bg:     #fdf4e7;
+  --color-nav-bg:         #ffffff;
+  --color-nav-border:     #f8f9fa;
+  --color-player-bg:      #f3f5f6;
+  --color-player-border:  #e0e0e0;
+  --color-card-hover:     #f3f5f6;
+  --color-input-bg:       #f3f5f6;
+  --color-tonal-container: #dbeafe;
+
+  /* ── Typography (Roboto, M3 scale) ──────────────────────── */
+  --font-family:    'Roboto', Arial, sans-serif;
+  --font-size-xs:   11px;
+  --font-size-sm:   12px;
+  --font-size-base: 14px;
+  --font-size-md:   16px;
+  --font-size-lg:   23px;
+  --font-size-xl:   32px;
+  --line-height:    1.5;
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+
+  /* ── Spacing (4px base, M3 scale) ───────────────────────── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-section: 96px;
+
+  /* ── Shape (M3 — rounded corners, pill for FAB/chips) ────── */
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 24px;
+  --radius-lg: 26px;
+  --radius-full: 9999px;
+
+  /* ── M3 Elevation via tonal surfaces + subtle shadow ─────── */
+  --shadow-card: rgba(60, 64, 67, 0.16) 0px 2px 6px 0px;
+  --shadow-elevated: rgba(60, 64, 67, 0.16) 0px 2px 6px 0px;
+
+  /* ── Motion (M3 deceleration curve) ─────────────────────── */
+  --duration-fast: 50ms;
+  --duration-base: 300ms;
+  --duration-slow: 300ms;
+  --easing: cubic-bezier(0.38, 0.72, 0, 1);
+}
+
+/* ── Base ──────────────────────────────────────────────────── */
+[data-theme="material3"] * {
+  font-family: var(--font-family);
+  box-sizing: border-box;
+}
+
+[data-theme="material3"] body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height);
+  margin: 0;
+}
+
+/* ── Top Navigation ─────────────────────────────────────────── */
+[data-theme="material3"] .top-nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  height: 64px;
+  background: var(--color-nav-bg);
+  border-bottom: 1px solid var(--color-border-strong);
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-6);
+  gap: var(--space-4);
+  box-shadow: var(--shadow-card);
+}
+
+[data-theme="material3"] .wordmark-small {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-primary);
+  letter-spacing: 0.02em;
+}
+
+[data-theme="material3"] .nav-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* ── Bottom Navigation (M3 Navigation Bar) ───────────────────── */
+[data-theme="material3"] .bottom-nav {
+  position: fixed;
+  bottom: 80px;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  height: 80px;
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-border-strong);
+  display: flex;
+  align-items: stretch;
+  box-shadow: 0 -1px 3px rgba(0,0,0,0.08);
+}
+
+[data-theme="material3"] .nav-tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  transition: color var(--duration-fast);
+  padding: var(--space-2) var(--space-1);
+  position: relative;
+}
+
+[data-theme="material3"] .nav-tab.active,
+[data-theme="material3"] .nav-tab[data-active="true"] {
+  color: var(--color-primary);
+}
+
+/* M3 active indicator: tonal pill behind icon */
+[data-theme="material3"] .nav-tab.active .nav-icon-wrap,
+[data-theme="material3"] .nav-tab[data-active="true"] .nav-icon-wrap {
+  background: var(--color-tonal-container);
+  border-radius: var(--radius-full);
+  padding: 4px 20px;
+}
+
+[data-theme="material3"] .nav-icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  min-width: 48px;
+  border-radius: var(--radius-full);
+  transition: background var(--duration-base) var(--easing);
+}
+
+[data-theme="material3"] .nav-tab svg {
+  width: 24px;
+  height: 24px;
+}
+
+/* ── Content Area ───────────────────────────────────────────── */
+[data-theme="material3"] .main-content {
+  margin-top: 64px;
+  margin-bottom: 160px;
+  padding: var(--space-6);
+  max-width: 960px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* ── Buttons ────────────────────────────────────────────────── */
+/* M3 Filled Button */
+[data-theme="material3"] .btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 10px var(--space-6);
+  height: 40px;
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  border: none;
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  font-family: var(--font-family);
+  cursor: pointer;
+  letter-spacing: 0.01em;
+  transition: box-shadow var(--duration-base) var(--easing), background var(--duration-fast);
+  white-space: nowrap;
+  box-shadow: var(--shadow-card);
+}
+
+[data-theme="material3"] .btn-primary:hover {
+  background: var(--color-primary-dark);
+  box-shadow: var(--shadow-elevated);
+}
+
+/* M3 Outlined Button */
+[data-theme="material3"] .btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 10px var(--space-6);
+  height: 40px;
+  background: transparent;
+  color: var(--color-primary);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  font-family: var(--font-family);
+  cursor: pointer;
+  transition: background var(--duration-fast);
+}
+
+[data-theme="material3"] .btn-secondary:hover {
+  background: var(--color-tonal-container);
+}
+
+[data-theme="material3"] .btn-danger {
+  background: var(--color-danger);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-full);
+  padding: 10px var(--space-6);
+  height: 40px;
+  font-family: var(--font-family);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+}
+
+[data-theme="material3"] .btn-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 6px 16px;
+  height: 40px;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-family: var(--font-family);
+  cursor: pointer;
+  transition: background var(--duration-fast), color var(--duration-fast);
+}
+
+[data-theme="material3"] .btn-icon:hover {
+  background: var(--color-tonal-container);
+  color: var(--color-primary);
+}
+
+/* ── Inputs ─────────────────────────────────────────────────── */
+/* M3 Filled Text Field */
+[data-theme="material3"] input[type="text"],
+[data-theme="material3"] input[type="password"],
+[data-theme="material3"] input[type="email"],
+[data-theme="material3"] input[type="search"],
+[data-theme="material3"] input[type="number"],
+[data-theme="material3"] select {
+  display: block;
+  width: 100%;
+  padding: 8px 16px;
+  height: 56px;
+  background: var(--color-input-bg);
+  color: var(--color-text);
+  border: none;
+  border-bottom: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  font-size: var(--font-size-base);
+  font-family: var(--font-family);
+  line-height: var(--line-height);
+  outline: none;
+  transition: border-color var(--duration-base) var(--easing);
+}
+
+[data-theme="material3"] input:focus,
+[data-theme="material3"] select:focus {
+  border-bottom: 2px solid var(--color-primary);
+}
+
+[data-theme="material3"] textarea {
+  display: block;
+  width: 100%;
+  padding: 16px;
+  background: var(--color-input-bg);
+  color: var(--color-text);
+  border: none;
+  border-bottom: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  font-size: var(--font-size-base);
+  font-family: var(--font-family);
+  line-height: var(--line-height);
+  outline: none;
+  resize: vertical;
+  min-height: 100px;
+}
+
+[data-theme="material3"] textarea:focus {
+  border-bottom: 2px solid var(--color-primary);
+}
+
+[data-theme="material3"] label {
+  display: block;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-muted);
+  margin-bottom: var(--space-1);
+}
+
+[data-theme="material3"] .form-row {
+  margin-bottom: var(--space-5);
+}
+
+/* ── Cards (M3 Elevated Card) ───────────────────────────────── */
+[data-theme="material3"] .card,
+[data-theme="material3"] .settings-card,
+[data-theme="material3"] .song-card {
+  background: var(--color-bg);
+  border-radius: var(--radius-sm);
+  padding: var(--space-5);
+  box-shadow: var(--shadow-card);
+  margin-bottom: var(--space-4);
+}
+
+[data-theme="material3"] .settings-card-title {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  margin-bottom: var(--space-1);
+  color: var(--color-text);
+}
+
+[data-theme="material3"] .settings-card-desc {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  margin-bottom: var(--space-4);
+}
+
+/* ── Song/Album List Rows ───────────────────────────────────── */
+[data-theme="material3"] .song-item,
+[data-theme="material3"] .album-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--duration-base) var(--easing);
+}
+
+[data-theme="material3"] .song-item:hover,
+[data-theme="material3"] .album-item:hover {
+  background: var(--color-surface);
+}
+
+/* ── Now Playing Bar (M3 Navigation Bar style) ───────────────── */
+[data-theme="material3"] .now-playing-bar {
+  position: fixed;
+  bottom: 80px;
+  left: 0;
+  right: 0;
+  z-index: 98;
+  height: 80px;
+  background: var(--color-player-bg);
+  border-top: 1px solid var(--color-player-border);
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  padding: 0 var(--space-6);
+  gap: var(--space-4);
+  box-shadow: 0 -2px 6px rgba(60, 64, 67, 0.08);
+}
+
+[data-theme="material3"] .np-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+[data-theme="material3"] .np-controls button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text);
+  padding: 8px;
+  border-radius: var(--radius-full);
+  transition: background var(--duration-base) var(--easing);
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+[data-theme="material3"] .np-controls button:hover {
+  background: var(--color-surface);
+}
+
+/* M3 Play button — filled tonal */
+[data-theme="material3"] .np-controls .btn-play {
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  border-radius: var(--radius-full);
+  width: 56px;
+  height: 56px;
+}
+
+[data-theme="material3"] .np-controls .btn-play:hover {
+  background: var(--color-primary-dark);
+}
+
+[data-theme="material3"] .np-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+[data-theme="material3"] .np-progress input[type="range"] {
+  flex: 1;
+  height: 4px;
+  accent-color: var(--color-primary);
+  border: none;
+  border-radius: var(--radius-full);
+  background: var(--color-border-strong);
+  cursor: pointer;
+  padding: 0;
+}
+
+/* ── Modal / Login ──────────────────────────────────────────── */
+[data-theme="material3"] .modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(31, 31, 31, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+[data-theme="material3"] .modal {
+  background: var(--color-bg);
+  border-radius: var(--radius-lg);
+  padding: var(--space-8);
+  width: 100%;
+  max-width: 400px;
+  box-shadow: rgba(60, 64, 67, 0.3) 0px 8px 16px 0px;
+}
+
+[data-theme="material3"] .wordmark {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-primary);
+  text-align: center;
+  margin: 0 0 var(--space-6);
+  letter-spacing: 0.01em;
+}
+
+/* ── Section Headings ───────────────────────────────────────── */
+[data-theme="material3"] h1 {
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: -0.01em;
+  margin: 0 0 var(--space-4);
+  color: var(--color-text);
+  line-height: 1.25;
+}
+
+[data-theme="material3"] h2 {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  margin: 0 0 var(--space-3);
+  color: var(--color-text);
+  line-height: 1.25;
+}
+
+[data-theme="material3"] h3 {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
+  margin: 0 0 var(--space-2);
+}
+
+/* ── Error / Success (M3 semantic colors) ───────────────────── */
+[data-theme="material3"] .error-msg,
+[data-theme="material3"] .settings-error-msg {
+  color: var(--color-danger);
+  background: var(--color-danger-bg);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--font-size-base);
+}
+
+[data-theme="material3"] .settings-success-msg {
+  color: var(--color-success);
+  background: var(--color-success-bg);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--font-size-base);
+}
+
+/* ── Chips / Badges (M3 Assist Chips) ──────────────────────── */
+[data-theme="material3"] .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 4px 12px;
+  height: 32px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  color: var(--color-text);
+  background: transparent;
+  transition: background var(--duration-fast);
+}
+
+[data-theme="material3"] .chip:hover {
+  background: var(--color-surface);
+}
+
+[data-theme="material3"] .chip-active {
+  background: var(--color-tonal-container);
+  color: var(--color-primary);
+  border-color: transparent;
+}
+
+/* ── Muted / Caption ────────────────────────────────────────── */
+[data-theme="material3"] .mute,
+[data-theme="material3"] .caption {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+/* ── Context Menu ───────────────────────────────────────────── */
+[data-theme="material3"] .context-menu {
+  position: fixed;
+  background: var(--color-bg);
+  border-radius: var(--radius-md);
+  padding: var(--space-1) 0;
+  box-shadow: rgba(60, 64, 67, 0.2) 0px 4px 12px 0px;
+  z-index: 300;
+  min-width: 200px;
+}
+
+[data-theme="material3"] .context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--font-size-base);
+  cursor: pointer;
+  color: var(--color-text);
+  transition: background var(--duration-fast);
+}
+
+[data-theme="material3"] .context-menu-item:hover {
+  background: var(--color-surface);
+}
+
+/* ── Tables ─────────────────────────────────────────────────── */
+[data-theme="material3"] table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-base);
+}
+
+[data-theme="material3"] th {
+  text-align: left;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-border-strong);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+[data-theme="material3"] td {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: middle;
+}
+
+[data-theme="material3"] tr:hover td {
+  background: var(--color-surface);
+}
+
+/* ── Album Grid ─────────────────────────────────────────────── */
+[data-theme="material3"] .album-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: var(--space-4);
+}
+
+[data-theme="material3"] .cover-thumb {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+  background: var(--color-surface);
+  flex-shrink: 0;
+}
+
+/* ── Scrollbar (subtle M3 style) ────────────────────────────── */
+[data-theme="material3"] ::-webkit-scrollbar {
+  width: 4px;
+}
+
+[data-theme="material3"] ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+[data-theme="material3"] ::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: var(--radius-full);
+}
+
+/* ── Focus ring (M3 AAA standard: 2px outline) ──────────────── */
+[data-theme="material3"] :focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}

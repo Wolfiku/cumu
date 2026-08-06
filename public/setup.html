@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>cumu — Setup</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body class="setup-page">
+  <div class="setup-container">
+    <div class="setup-header">
+      <pre class="wordmark">cumu</pre>
+      <p class="mute">first-time setup</p>
+    </div>
+    <form id="setupForm" class="setup-form">
+      <div class="form-section">
+        <label class="section-label">[+] admin account</label>
+        <div class="form-row">
+          <label>username</label>
+          <input type="text" name="username" required placeholder="admin" />
+        </div>
+        <div class="form-row">
+          <label>password</label>
+          <input type="password" name="password" required placeholder="strong password" />
+        </div>
+      </div>
+      <div class="form-section">
+        <label class="section-label">[+] server settings</label>
+        <div class="form-row">
+          <label>port</label>
+          <input type="number" name="port" value="3000" placeholder="3000" />
+        </div>
+        <div class="form-row">
+          <label>host</label>
+          <input type="text" name="host" value="0.0.0.0" placeholder="0.0.0.0" />
+        </div>
+      </div>
+      <div class="form-section">
+        <label class="section-label">[+] music library</label>
+        <div class="form-row">
+          <label>music path</label>
+          <input type="text" name="musicPath" required placeholder="/home/user/music" />
+        </div>
+        <div class="form-row">
+          <label>max storage (GB)</label>
+          <input type="number" name="maxStorageGb" value="50" placeholder="50" step="0.1" />
+        </div>
+      </div>
+      <div id="setupError" class="error-msg" style="display:none"></div>
+      <button type="submit" class="btn-primary">complete setup &rarr;</button>
+    </form>
+  </div>
+  <script>
+    document.getElementById('setupForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const data = Object.fromEntries(new FormData(e.target));
+      const errEl = document.getElementById('setupError');
+      errEl.style.display = 'none';
+      const res = await fetch('/auth/setup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+      const json = await res.json();
+      if (json.success) {
+        window.location.href = '/';
+      } else {
+        errEl.textContent = json.error || 'Setup failed';
+        errEl.style.display = 'block';
+      }
+    });
+  </script>
+</body>
+</html>
