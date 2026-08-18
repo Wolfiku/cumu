@@ -1,12 +1,11 @@
 # cumu — docker-compose
-# Setup:
-#   cp .env.example .env   # und dann SESSION_SECRET + MUSIC_PATH anpassen
+# Quickstart:
 #   docker compose up -d
 
 services:
   cumu:
-    build: .                          # lokal bauen aus dem Dockerfile
-    # image: ghcr.io/wolfiku/cumu-music:latest  # oder fertiges Image nutzen
+    build: .
+    image: ghcr.io/wolfiku/cumu:latest
     container_name: cumu
     restart: unless-stopped
     ports:
@@ -23,13 +22,26 @@ services:
       - MUSIC_PATH=/music
     volumes:
       - cumu_data:/app/data           # SQLite DB + Sessions
-      - ${MUSIC_PATH:-./music}:/music # dein Musikordner
+      - ${MUSIC_PATH:-./music}:/music # Musikordner
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/auth/me"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 15s
+
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: cumu_watchtower
+    restart: unless-stopped
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_POLL_INTERVAL=300
+      - WATCHTOWER_LABEL_ENABLE=true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
 
 volumes:
   cumu_data:
