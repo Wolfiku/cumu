@@ -190,11 +190,11 @@ router.delete('/users/:id', requireAdmin, (req, res) => {
 
 // ── LIBRARY — UPLOAD ──────────────────────────────────────────────────────────
 
-router.post('/upload', requireAdmin, handleUpload, async (req, res) => {
+async function processUpload(req, res) {
   try {
     const db        = getDB();
     const cfg       = getConfig();
-    const musicPath = cfg.musicPath || path.join(process.cwd(), 'music');
+    const musicPath = process.env.MUSIC_PATH || cfg.musicPath || path.join(process.cwd(), 'music');
     const coverFile = req.files?.cover?.[0];
     const songFiles = (req.files?.files || []).filter(f => AUDIO_EXTS.includes(path.extname(f.originalname).toLowerCase()));
 
@@ -209,8 +209,11 @@ router.post('/upload', requireAdmin, handleUpload, async (req, res) => {
       const artistName  = req.body.artist      || meta.artist;
       const albumTitle  = req.body.album       || meta.album;
       const songTitle   = req.body.title       || meta.title;
+      const genreName   = req.body.genre       || meta.genre;
       const isAudiobook = (req.body.isAudiobook === 'true' || req.body.isAudiobook === true) ? 1 : 0;
       const mime        = mimeForExt(ext);
+
+      meta.genre = genreName; // override meta for getOrCreateAlbum
 
       const artistId = getOrCreateArtist(db, artistName);
       const albumId  = getOrCreateAlbum(db, albumTitle, artistId, meta);
@@ -232,7 +235,7 @@ router.post('/upload', requireAdmin, handleUpload, async (req, res) => {
       insertSong(db, {
         id: songId, title: songTitle, artist_id: artistId, album_id: albumId,
         filename: file.filename, duration: meta.duration, track_number: meta.track,
-        genre: meta.genre, year: meta.year, is_audiobook: isAudiobook,
+        genre: genreName, year: meta.year, is_audiobook: isAudiobook,
         file_size: fileSize, cover: coverFilename, mime_type: mime,
       });
 
@@ -245,43 +248,81 @@ router.post('/upload', requireAdmin, handleUpload, async (req, res) => {
     console.error('[cumu] upload error:', err);
     res.status(500).json({ error: 'Upload processing failed: ' + (err.message || 'unknown error') });
   }
-});
+}
+
+router.post('/upload', requireAdmin, handleUpload, processUpload);
 
 // ── LIBRARY — SCAN ────────────────────────────────────────────────────────────
 
-router.post('/scan', requireAdmin, async (req, res) => {
+function scanDirectoryRecursive(dirPath, baseDir = dirPath) {
+  let results = [];
+  if (!fs.existsSync(dirPath)) return results;
+  const list = fs.readdirSync(dirPath, { withFileTypes: true });
+  for (const entry of list) {
+    const fullPath = path.join(dirPath, entry.name);
+    if (entry.isDirectory()) {
+      results = results.concat(scanDirectoryRecursive(fullPath, baseDir));
+    } else if (entry.isFile()) {
+      const ext = path.extname(entry.name).toLowerCase();
+      if (AUDIO_EXTS.includes(ext)) {
+        const relativePath = path.relative(baseDir, fullPath).replace(/\\/g, '/');
+        results.push({ fullPath, relativePath });
+      }
+    }
+  }
+  return results;
+}
+
+async function runLibraryScan() {
   const cfg       = getConfig();
-  const musicPath = cfg.musicPath || path.join(process.cwd(), 'music');
+  const musicPath = process.env.MUSIC_PATH || cfg.musicPath || path.join(process.cwd(), 'music');
 
   if (!fs.existsSync(musicPath)) {
-    return res.status(400).json({ error: 'Music path does not exist: ' + musicPath });
+    try { fs.mkdirSync(musicPath, { recursive: true }); } catch {}
+  }
+  if (!fs.existsSync(musicPath)) {
+    return { scanned: 0, added: 0, musicPath };
   }
 
-  const db      = getDB();
-  const files   = fs.readdirSync(musicPath).filter(f => AUDIO_EXTS.includes(path.extname(f).toLowerCase()));
-  const known   = new Set(db.prepare('SELECT filename FROM songs').all().map(r => r.filename));
-  const newFiles = files.filter(f => !known.has(f));
+  const db           = getDB();
+  const allAudioFiles = scanDirectoryRecursive(musicPath, musicPath);
+  const known        = new Set(db.prepare('SELECT filename FROM songs').all().map(r => r.filename));
+  const newFiles     = allAudioFiles.filter(item => !known.has(item.relativePath));
 
   let added = 0;
-  for (const filename of newFiles) {
-    const filePath = path.join(musicPath, filename);
-    const meta     = await extractMeta(filePath);
-    const ext      = path.extname(filename).toLowerCase();
-    const artistId = getOrCreateArtist(db, meta.artist);
-    const albumId  = getOrCreateAlbum(db, meta.album, artistId, meta);
-    const fileSize = fs.statSync(filePath).size;
-    const songId   = uuidv4();
-    insertSong(db, {
-      id: songId, title: meta.title, artist_id: artistId, album_id: albumId,
-      filename, duration: meta.duration, track_number: meta.track,
-      genre: meta.genre, year: meta.year, is_audiobook: 0,
-      file_size: fileSize, cover: null, mime_type: mimeForExt(ext),
-    });
-    added++;
+  for (const item of newFiles) {
+    try {
+      const meta     = await extractMeta(item.fullPath);
+      const ext      = path.extname(item.relativePath).toLowerCase();
+      const artistId = getOrCreateArtist(db, meta.artist);
+      const albumId  = getOrCreateAlbum(db, meta.album, artistId, meta);
+      const fileSize = fs.statSync(item.fullPath).size;
+      const songId   = uuidv4();
+      insertSong(db, {
+        id: songId, title: meta.title, artist_id: artistId, album_id: albumId,
+        filename: item.relativePath, duration: meta.duration, track_number: meta.track,
+        genre: meta.genre, year: meta.year, is_audiobook: 0,
+        file_size: fileSize, cover: null, mime_type: mimeForExt(ext),
+      });
+      added++;
+    } catch (e) {
+      console.error(`[cumu] Scan error for ${item.relativePath}:`, e.message);
+    }
   }
 
-  log('info', 'admin', `Library scan: ${added} new songs added`);
-  res.json({ success: true, scanned: files.length, added, musicPath });
+  if (added > 0) {
+    log('info', 'admin', `Library scan: ${added} new songs added`);
+  }
+  return { scanned: allAudioFiles.length, added, musicPath };
+}
+
+router.post('/scan', requireAdmin, async (req, res) => {
+  try {
+    const result = await runLibraryScan();
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ error: 'Scan failed: ' + err.message });
+  }
 });
 
 // ── LIBRARY — EDIT ────────────────────────────────────────────────────────────
@@ -365,19 +406,38 @@ router.delete('/albums/:id', requireAdmin, (req, res) => {
 router.get('/config', requireAdmin, (req, res) => {
   const cfg = getConfig();
   res.json({
-    port:        cfg.port || 3000,
-    host:        cfg.host || '0.0.0.0',
-    musicPath:   cfg.musicPath || '',
-    maxStorageGb: cfg.maxStorageGb || 50,
+    port:                   cfg.port || 3000,
+    host:                   cfg.host || '0.0.0.0',
+    musicPath:              cfg.musicPath || '',
+    maxStorageGb:           cfg.maxStorageGb || 50,
+    enablePodcasts:         cfg.enablePodcasts !== false,
+    enablePublicPodcasts:   cfg.enablePublicPodcasts === true,
+    podcastApiSource:       cfg.podcastApiSource || 'itunes',
+    podcastIndexKey:        cfg.podcastIndexKey || '',
+    podcastIndexSecret:     cfg.podcastIndexSecret || '',
+    customPodcastFeeds:     cfg.customPodcastFeeds || []
   });
 });
 
 router.put('/config', requireAdmin, (req, res) => {
-  const { musicPath, maxStorageGb, port, host } = req.body;
+  const {
+    musicPath, maxStorageGb, port, host, enablePodcasts,
+    enablePublicPodcasts, podcastApiSource, podcastIndexKey,
+    podcastIndexSecret, customPodcastFeeds
+  } = req.body;
+
   if (musicPath !== undefined) setConfig('musicPath', musicPath);
   if (maxStorageGb !== undefined) setConfig('maxStorageGb', maxStorageGb);
   if (port !== undefined) setConfig('port', port);
   if (host !== undefined) setConfig('host', host);
+  if (enablePodcasts !== undefined) setConfig('enablePodcasts', !!enablePodcasts);
+  
+  if (enablePublicPodcasts !== undefined) setConfig('enablePublicPodcasts', !!enablePublicPodcasts);
+  if (podcastApiSource !== undefined) setConfig('podcastApiSource', podcastApiSource);
+  if (podcastIndexKey !== undefined) setConfig('podcastIndexKey', podcastIndexKey);
+  if (podcastIndexSecret !== undefined) setConfig('podcastIndexSecret', podcastIndexSecret);
+  if (customPodcastFeeds !== undefined) setConfig('customPodcastFeeds', customPodcastFeeds);
+
   log('info', 'admin', 'Server config updated');
   res.json({ ok: true });
 });
@@ -443,5 +503,9 @@ router.delete('/oauth/clients/:id', requireAdmin, (req, res) => {
   log('info', 'admin', `OAuth client deactivated: ${req.params.id}`);
   res.json({ success: true });
 });
+
+router.runLibraryScan = runLibraryScan;
+router.handleUpload   = handleUpload;
+router.processUpload   = processUpload;
 
 module.exports = router;

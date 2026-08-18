@@ -33,14 +33,26 @@ router.post('/login', async (req, res) => {
 
   req.session.save(err => {
     if (err) return res.status(500).json({ error: 'Session error' });
-    res.json({ ok: true, username: user.username, role: user.role, theme: user.theme || 'coddy' });
+    const cfg = getConfig();
+    res.json({ ok: true, username: user.username, role: user.role, theme: user.theme || 'coddy', enablePodcasts: cfg.enablePodcasts !== false });
   });
 });
 
 // GET /auth/me
 router.get('/me', (req, res) => {
-  if (!req.session?.userId) return res.status(401).json({ error: 'Not logged in' });
   const db = getDB();
+  if (!req.session?.userId) {
+    if (process.env.AUTO_LOGIN !== 'false') {
+      const firstAdmin = db.prepare("SELECT id, username, role, theme FROM users WHERE role IN ('admin', 'creator') LIMIT 1").get();
+      if (firstAdmin) {
+        req.session.userId   = firstAdmin.id;
+        req.session.username = firstAdmin.username;
+        req.session.role     = firstAdmin.role;
+        return res.json({ userId: firstAdmin.id, username: firstAdmin.username, role: firstAdmin.role, theme: firstAdmin.theme || 'coddy' });
+      }
+    }
+    return res.status(401).json({ error: 'Not logged in' });
+  }
   const user = db.prepare('SELECT id, username, role, theme FROM users WHERE id = ?').get(req.session.userId);
   if (!user) return res.status(401).json({ error: 'User not found' });
   res.json({ userId: user.id, username: user.username, role: user.role, theme: user.theme || 'coddy' });

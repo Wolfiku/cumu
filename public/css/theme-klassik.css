@@ -116,7 +116,7 @@
 /* ── Bottom Navigation ──────────────────────────────────────── */
 [data-theme="klassik"] .bottom-nav {
   position: fixed;
-  bottom: 72px;
+  bottom: 0;
   left: 0;
   right: 0;
   z-index: 100;
@@ -314,61 +314,30 @@
   background: var(--color-card-hover);
 }
 
-/* ── Now Playing Bar ────────────────────────────────────────── */
+/* ── Now Playing Bar — theme defers to global style.additions.css ────────── */
 [data-theme="klassik"] .now-playing-bar {
-  position: fixed;
-  bottom: 56px;
-  left: 0;
-  right: 0;
-  z-index: 99;
-  height: 72px;
-  background: var(--color-player-bg);
-  border-top: 1px solid var(--color-player-border);
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-  padding: 0 var(--space-4);
-  gap: var(--space-4);
-  box-shadow: 0 -1px 3px rgba(0,0,0,0.07);
+  /* Defer geometry, backdrop, border-radius, shadow to style.additions.css   */
+  /* Only theme-level tokens override below                                   */
+  background: rgba(255, 255, 255, 0.92) !important;
 }
 
 [data-theme="klassik"] .np-controls {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
 }
 
 [data-theme="klassik"] .np-controls button {
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: var(--color-text);
-  padding: 6px;
-  border-radius: var(--radius-sm);
-  transition: background var(--duration-fast);
+  background: transparent !important;
+  border: none !important;
+  cursor: pointer !important;
+  color: var(--color-text) !important;
+  border-radius: 50% !important;
+  transition: background 0.15s cubic-bezier(0.4, 0, 0.2, 1), transform 0.15s cubic-bezier(0.4, 0, 0.2, 1) !important;
 }
 
 [data-theme="klassik"] .np-controls button:hover {
-  background: var(--color-surface-elevated);
-}
-
-[data-theme="klassik"] .np-progress {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
-}
-
-[data-theme="klassik"] .np-progress input[type="range"] {
-  flex: 1;
-  height: 4px;
-  accent-color: var(--color-primary);
-  border: none;
-  border-radius: var(--radius-full);
-  background: var(--color-border);
-  cursor: pointer;
-  padding: 0;
+  background: rgba(0, 0, 0, 0.05) !important;
 }
 
 /* ── Modal / Login ──────────────────────────────────────────── */

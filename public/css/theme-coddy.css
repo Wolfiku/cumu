@@ -130,7 +130,7 @@
 /* ── Bottom Navigation ──────────────────────────────────────── */
 [data-theme="coddy"] .bottom-nav {
   position: fixed;
-  bottom: 72px;
+  bottom: 0;
   left: 0;
   right: 0;
   z-index: 100;
@@ -406,12 +406,12 @@
   left: 0;
   right: 0;
   z-index: 99;
-  height: 72px;
+  height: 64px;
   background: var(--color-surface-dark);
   border-top: 1px solid var(--color-hairline-strong);
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  display: flex;
   align-items: center;
+  justify-content: space-between;
   padding: 0 var(--space-6);
   gap: var(--space-4);
 }

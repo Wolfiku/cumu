@@ -1,129 +1,268 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="coddy">
+<html lang="en" class="h-full">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
-  <title>cumu</title>
-  <meta name="description" content="cumu — your private music streaming server">
-  <meta name="theme-color" content="#fdfcfc">
-
-  <!-- Theme CSS — all three loaded, scoped by [data-theme] attribute -->
-  <link rel="stylesheet" href="/css/theme-klassik.css">
-  <link rel="stylesheet" href="/css/theme-coddy.css">
-  <link rel="stylesheet" href="/css/theme-material3.css">
-
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>&#127925;</text></svg>">
-
-  <!-- Apply saved theme instantly to avoid FOUC -->
-  <script>
-    (function () {
-      const t = localStorage.getItem('cumu_theme');
-      if (t && ['klassik', 'coddy', 'material3'].includes(t)) {
-        document.documentElement.setAttribute('data-theme', t);
+  <meta charset="utf-8">
+  <meta content="width=device-width, initial-scale=1.0" name="viewport">
+  <title>cumu - Studio Environment</title>
+  <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+  <script id="tailwind-config">
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          "colors": {
+            "outline-variant": "#c8c5cc",
+            "surface-container-high": "#e8e8e8",
+            "text-high-contrast": "#000000",
+            "tertiary-fixed": "#f1e1c2",
+            "on-tertiary-fixed": "#221b08",
+            "secondary": "#5e5e5e",
+            "on-surface": "#1a1c1c",
+            "on-tertiary-container": "#fffbff",
+            "on-primary": "#ffffff",
+            "inverse-primary": "#c5c5d8",
+            "inverse-surface": "#2f3131",
+            "on-secondary-fixed": "#1b1b1b",
+            "error-container": "#ffdad6",
+            "surface-tint": "#5c5d6e",
+            "on-secondary-fixed-variant": "#474747",
+            "on-tertiary": "#ffffff",
+            "surface-dim": "#dadada",
+            "on-error": "#ffffff",
+            "primary-fixed": "#e2e1f5",
+            "border-subtle": "#ececf1",
+            "surface": "#f9f9f9",
+            "on-error-container": "#93000a",
+            "on-primary-fixed": "#191a28",
+            "tertiary-fixed-dim": "#d4c5a7",
+            "error": "#ba1a1a",
+            "secondary-fixed-dim": "#c6c6c6",
+            "outline": "#77767d",
+            "surface-container-highest": "#e2e2e2",
+            "on-secondary-container": "#646464",
+            "on-secondary": "#ffffff",
+            "surface-variant": "#e2e2e2",
+            "on-primary-container": "#fffbff",
+            "on-surface-variant": "#47464c",
+            "background": "#ffffff",
+            "surface-bright": "#f9f9f9",
+            "tertiary": "#665b43",
+            "secondary-container": "#e2e2e2",
+            "primary": "#5a5b6b",
+            "secondary-fixed": "#e2e2e2",
+            "on-background": "#1a1c1c",
+            "inverse-on-surface": "#f0f1f1",
+            "primary-container": "#737384",
+            "surface-container-low": "#f3f3f4",
+            "text-muted": "#8e8ea0",
+            "on-primary-fixed-variant": "#454655",
+            "surface-container-lowest": "#ffffff",
+            "tertiary-container": "#7f735a",
+            "primary-fixed-dim": "#c5c5d8",
+            "interactive-hover": "#7a7a8c",
+            "on-tertiary-fixed-variant": "#50462f",
+            "surface-container": "#eeeeee"
+          },
+          "borderRadius": {
+            "DEFAULT": "0.25rem",
+            "lg": "0.5rem",
+            "xl": "0.75rem",
+            "full": "9999px"
+          },
+          "spacing": {
+            "xl": "64px",
+            "xs": "4px",
+            "sm": "8px",
+            "lg": "32px",
+            "gutter": "24px",
+            "md": "16px",
+            "base": "8px",
+            "margin-desktop": "48px"
+          },
+          "fontFamily": {
+            "headline-lg": ["Inter"],
+            "headline-lg-mobile": ["Inter"],
+            "display-xl": ["Inter"],
+            "body-lg": ["Inter"],
+            "label-caps": ["Inter"],
+            "title-md": ["Inter"],
+            "body-sm": ["Inter"]
+          },
+          "fontSize": {
+            "headline-lg": ["32px", { "lineHeight": "1.3", "letterSpacing": "-0.01em", "fontWeight": "600" }],
+            "headline-lg-mobile": ["24px", { "lineHeight": "1.3", "fontWeight": "600" }],
+            "display-xl": ["48px", { "lineHeight": "1.2", "letterSpacing": "-0.02em", "fontWeight": "600" }],
+            "body-lg": ["16px", { "lineHeight": "1.6", "fontWeight": "400" }],
+            "label-caps": ["12px", { "lineHeight": "1", "letterSpacing": "0.05em", "fontWeight": "700" }],
+            "title-md": ["20px", { "lineHeight": "1.4", "fontWeight": "500" }],
+            "body-sm": ["14px", { "lineHeight": "1.5", "fontWeight": "400" }]
+          }
+        }
       }
-    })();
-  </script>
-
-  <style>
-    /* Minimal base shared across all themes */
-    *, *::before, *::after { box-sizing: border-box; }
-    body { margin: 0; }
-    .hidden { display: none !important; }
-    /* Loading spinner */
-    #appLoader {
-      position: fixed;
-      inset: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-family: monospace;
-      font-size: 14px;
-      color: #888;
-      background: inherit;
-      z-index: 999;
     }
+  </script>
+  <style>
+    body { font-family: 'Inter', sans-serif; }
   </style>
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="/css/style.additions.css">
+  <link rel="stylesheet" href="/css/settings.css">
+  <link rel="stylesheet" href="/css/theme-coddy.css">
+  <link rel="stylesheet" href="/css/theme-klassik.css">
+  <link rel="stylesheet" href="/css/theme-material3.css">
+  <link rel="stylesheet" href="/css/theme-standard.css">
+  <link rel="stylesheet" href="/css/theme-standard.additions.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>&#127925;</text></svg>">
 </head>
-<body>
-  <!-- ── App Loading indicator ────────────────────────────── -->
-  <div id="appLoader">loading cumu…</div>
+<body class="bg-background text-on-surface h-screen flex overflow-hidden">
 
-  <!-- ── Top Navigation ──────────────────────────────────── -->
-  <header class="top-nav" id="topNav">
-    <span class="wordmark-small">cumu</span>
-    <div class="nav-right">
-      <span id="navUser" class="mute caption"></span>
-      <button class="btn-icon" id="settingsBtn" onclick="navigate('settings')" aria-label="Settings">
-        <span class="nav-icon" data-icon="settings"></span>
-      </button>
-      <button class="btn-icon hidden" id="adminBtn" onclick="navigate('admin')" aria-label="Admin">
-        <span class="nav-icon" data-icon="admin"></span>
-      </button>
-      <button class="btn-secondary" id="logoutBtn" onclick="doLogout()">logout</button>
-    </div>
-  </header>
-
-  <!-- ── Main Content ─────────────────────────────────────── -->
-  <main id="mainContent" class="main-content" role="main"></main>
-
-  <!-- ── Now Playing Bar ──────────────────────────────────── -->
-  <div class="now-playing-bar hidden" id="nowPlayingBar" role="region" aria-label="Now Playing">
-    <div class="np-info" id="npInfo" style="cursor:pointer" onclick="navigate('nowplaying')" aria-label="Open full player"></div>
-    <div class="np-controls" id="npControls" role="group" aria-label="Playback controls"></div>
-    <div class="np-progress">
-      <span id="npCurrentTime">0:00</span>
-      <input type="range" id="npSeek" value="0" min="0" max="100" step="0.1" aria-label="Seek">
-      <span id="npDuration">0:00</span>
-    </div>
+  <!-- ── App Loader ────────────────────────────────────────────────────────── -->
+  <div id="appLoader" class="fixed inset-0 flex items-center justify-center bg-background text-text-muted font-mono text-sm z-[9999]">
+    loading cumu…
   </div>
 
-  <!-- ── Bottom Navigation ─────────────────────────────────── -->
-  <nav class="bottom-nav" id="bottomNav" aria-label="Main navigation">
-    <button class="nav-tab" id="navHome" data-page="home" onclick="navigate('home')" aria-label="Home">
-      <div class="nav-icon-wrap"><span class="nav-icon" data-icon="home"></span></div>
-      <span>home</span>
-    </button>
-    <button class="nav-tab" id="navSearch" data-page="search" onclick="navigate('search')" aria-label="Search">
-      <div class="nav-icon-wrap"><span class="nav-icon" data-icon="search"></span></div>
-      <span>search</span>
-    </button>
-    <button class="nav-tab" id="navLibrary" data-page="library" onclick="navigate('library')" aria-label="Library">
-      <div class="nav-icon-wrap"><span class="nav-icon" data-icon="library"></span></div>
-      <span>library</span>
-    </button>
+  <!-- ── TopNavBar (Mobile Only - Settings Page Design) ───────────────────── -->
+  <nav class="md:hidden flex justify-between items-center w-full px-gutter h-16 bg-background border-b border-border-subtle fixed top-0 z-50">
+    <span class="font-headline-lg-mobile text-headline-lg-mobile text-on-surface lowercase font-bold cursor-pointer" onclick="navigate('discover')">cumu</span>
+    <div class="flex gap-md">
+      <span class="material-symbols-outlined hover:scale-105 transition-transform duration-200 active:scale-95 text-text-muted cursor-pointer" data-icon="search" onclick="navigate('discover')">search</span>
+      <span class="material-symbols-outlined hover:scale-105 transition-transform duration-200 active:scale-95 text-text-muted cursor-pointer" data-icon="settings" onclick="navigate('settings')">settings</span>
+    </div>
   </nav>
 
-  <!-- ── Login Modal ─────────────────────────────────────── -->
-  <div class="modal-overlay" id="loginModal" role="dialog" aria-modal="true" aria-labelledby="loginHeading">
-    <div class="modal">
-      <h1 class="wordmark" id="loginHeading">cumu</h1>
-      <form id="loginForm" autocomplete="on">
-        <div class="form-row">
-          <label for="loginUsername">username</label>
-          <input type="text" id="loginUsername" name="username" autocomplete="username"
-                 required placeholder="username" autofocus>
+  <!-- ── SideNavBar (Desktop Only - Settings Page Design) ──────────────────── -->
+  <nav class="hidden md:flex flex-col gap-base py-lg px-md bg-background fixed left-0 top-0 h-full w-64 border-r border-border-subtle z-40">
+    <div class="mb-xl px-sm cursor-pointer" onclick="navigate('discover')">
+      <h1 class="font-headline-lg text-headline-lg text-on-surface lowercase font-bold">cumu</h1>
+      <p class="font-label-caps text-label-caps text-text-muted">Self hosted music</p>
+    </div>
+    <div class="flex flex-col gap-sm" id="desktopNav">
+      <a id="navItem-library" href="#" onclick="navigate('library'); return false;" class="flex items-center gap-md px-md py-sm rounded-lg text-text-muted hover:scale-105 hover:bg-surface-bright transition-transform duration-200 active:scale-95 font-label-caps text-label-caps">
+        <span class="material-symbols-outlined" data-icon="subscriptions">subscriptions</span>
+        library
+      </a>
+      <a id="navItem-discover" href="#" onclick="navigate('discover'); return false;" class="flex items-center gap-md px-md py-sm rounded-lg text-text-muted hover:scale-105 hover:bg-surface-bright transition-transform duration-200 active:scale-95 font-label-caps text-label-caps">
+        <span class="material-symbols-outlined" data-icon="explore">explore</span>
+        discover
+      </a>
+      <a id="navItem-playlists" href="#" onclick="navigate('playlists'); return false;" class="flex items-center gap-md px-md py-sm rounded-lg text-text-muted hover:scale-105 hover:bg-surface-bright transition-transform duration-200 active:scale-95 font-label-caps text-label-caps">
+        <span class="material-symbols-outlined" data-icon="queue_music">queue_music</span>
+        playlists
+      </a>
+      <a id="navItem-favorites" href="#" onclick="navigate('favorites'); return false;" class="flex items-center gap-md px-md py-sm rounded-lg text-text-muted hover:scale-105 hover:bg-surface-bright transition-transform duration-200 active:scale-95 font-label-caps text-label-caps">
+        <span class="material-symbols-outlined" data-icon="favorite">favorite</span>
+        favorites
+      </a>
+      <a id="navItem-podcasts" href="#" onclick="navigate('podcasts'); return false;" class="flex items-center gap-md px-md py-sm rounded-lg text-text-muted hover:scale-105 hover:bg-surface-bright transition-transform duration-200 active:scale-95 font-label-caps text-label-caps">
+        <span class="material-symbols-outlined" data-icon="podcasts">podcasts</span>
+        podcasts
+      </a>
+      <a id="navItem-admin" href="#" onclick="navigate('admin'); return false;" class="flex items-center gap-md px-md py-sm rounded-lg text-text-muted hover:scale-105 hover:bg-surface-bright transition-transform duration-200 active:scale-95 font-label-caps text-label-caps">
+        <span class="material-symbols-outlined" data-icon="admin_panel_settings">admin_panel_settings</span>
+        admin
+      </a>
+      <div id="leftNavPinnedContainer" class="mt-md pt-md border-t border-border-subtle flex flex-col gap-xs"></div>
+    </div>
+    <div class="mt-auto flex flex-col gap-sm">
+      <a id="navItem-settings" href="#" onclick="navigate('settings'); return false;" class="flex items-center gap-md px-md py-sm rounded-lg text-text-muted hover:scale-105 hover:bg-surface-bright transition-transform duration-200 active:scale-95 font-label-caps text-label-caps">
+        <span class="material-symbols-outlined" data-icon="settings">settings</span>
+        settings
+      </a>
+      <button id="logoutBtn" onclick="doLogout()" class="w-full flex items-center gap-md px-md py-sm rounded-lg text-text-muted hover:scale-105 hover:bg-surface-bright transition-transform duration-200 active:scale-95 font-label-caps text-label-caps text-left">
+        <span class="material-symbols-outlined" data-icon="logout">logout</span>
+        logout
+      </button>
+    </div>
+  </nav>
+
+  <!-- ── Main Content Area ────────────────────────────────────────────────── -->
+  <main id="mainContent" class="flex-1 overflow-y-auto mt-16 md:mt-0 md:ml-64 xl:mr-80 mb-24 md:mb-24 px-gutter md:px-margin-desktop py-xl w-full" role="main"></main>
+
+  <!-- ── Desktop Permanent Right Queue Sidebar ────────────────────────────── -->
+  <aside id="desktopQueueSidebar" class="hidden xl:flex flex-col fixed right-0 top-0 h-full w-80 bg-background border-l border-border-subtle z-40 pb-24"></aside>
+
+  <!-- ── BottomNavBar (Global Now Playing Bar - Settings Page Design) ────── -->
+  <nav id="nowPlayingBar" class="fixed bottom-0 left-0 w-full z-50 h-24 bg-surface-container-lowest border-t border-border-subtle flex justify-between items-center px-xl" style="display:none;">
+    <div class="flex flex-col gap-xs w-1/3 min-w-0" id="npInfo">
+      <span class="font-body-sm text-body-sm text-on-surface truncate font-bold" id="npTitle">Now Playing</span>
+      <span class="font-label-caps text-label-caps text-text-muted truncate lowercase" id="npArtist">Artist Name</span>
+    </div>
+    <div class="flex items-center justify-center gap-md md:gap-lg flex-1" id="npControls">
+      <span class="material-symbols-outlined hover:scale-105 transition-transform duration-200 active:scale-95 text-text-muted cursor-pointer text-[22px]" id="npShuffleBtn" onclick="CumuApp.toggleShuffle()" title="Zufallswiedergabe">shuffle</span>
+      <span class="material-symbols-outlined hover:scale-105 transition-transform duration-200 active:scale-95 text-text-muted cursor-pointer" data-icon="skip_previous" id="npPrevBtn" onclick="CumuApp.prevTrack()">skip_previous</span>
+      <span class="material-symbols-outlined hover:scale-105 transition-transform duration-200 active:scale-95 text-on-surface cursor-pointer text-4xl" data-icon="play_circle" style="font-variation-settings: 'FILL' 1;" id="npPlayIcon" onclick="CumuApp.togglePlay()">play_circle</span>
+      <span class="material-symbols-outlined hover:scale-105 transition-transform duration-200 active:scale-95 text-text-muted cursor-pointer" data-icon="skip_next" id="npNextBtn" onclick="CumuApp.nextTrack()">skip_next</span>
+      <span class="material-symbols-outlined hover:scale-105 transition-transform duration-200 active:scale-95 text-text-muted cursor-pointer text-[22px]" id="npRepeatBtn" onclick="CumuApp.toggleRepeat()" title="Wiederholung">repeat</span>
+    </div>
+    <div class="flex justify-end gap-md w-1/3 text-text-muted">
+      <span class="material-symbols-outlined hover:scale-105 transition-transform duration-200 active:scale-95 text-text-muted cursor-pointer" data-icon="favorite_border" id="npFavIcon" onclick="if(window._currentSongId) CumuApp.toggleFavorite(window._currentSongId)">favorite_border</span>
+      <span class="material-symbols-outlined hover:scale-105 transition-transform duration-200 active:scale-95 text-text-muted cursor-pointer" data-icon="format_list_bulleted" id="npQueueBtn" onclick="CumuApp.toggleQueue()">format_list_bulleted</span>
+    </div>
+  </nav>
+
+  <!-- ── Login Modal ───────────────────────────────────────────────────────── -->
+  <div id="loginModal" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[9999]" role="dialog" aria-modal="true">
+    <div class="bg-background border border-border-subtle rounded-xl p-xl max-w-md w-full mx-md shadow-2xl">
+      <div class="mb-lg text-center">
+        <h1 class="font-headline-lg text-headline-lg lowercase text-on-surface font-bold mb-xs">cumu</h1>
+        <p class="font-body-sm text-body-sm text-text-muted">Self hosted music streaming</p>
+      </div>
+      <form id="loginForm" autocomplete="on" class="flex flex-col gap-md">
+        <div class="flex flex-col gap-xs">
+          <label for="loginUsername" class="font-label-caps text-label-caps text-text-muted lowercase">Username</label>
+          <input type="text" id="loginUsername" name="username" required placeholder="username" autofocus
+                 class="w-full px-md py-sm bg-background border border-border-subtle rounded-lg font-body-sm text-body-sm text-on-surface focus:outline-none focus:border-text-muted transition-colors">
         </div>
-        <div class="form-row">
-          <label for="loginPassword">password</label>
-          <input type="password" id="loginPassword" name="password" autocomplete="current-password"
-                 required placeholder="password">
+        <div class="flex flex-col gap-xs">
+          <label for="loginPassword" class="font-label-caps text-label-caps text-text-muted lowercase">Password</label>
+          <input type="password" id="loginPassword" name="password" required placeholder="password"
+                 class="w-full px-md py-sm bg-background border border-border-subtle rounded-lg font-body-sm text-body-sm text-on-surface focus:outline-none focus:border-text-muted transition-colors">
         </div>
-        <div id="loginError" class="error-msg hidden" role="alert"></div>
-        <button type="submit" class="btn-primary" id="loginSubmitBtn" style="width:100%">
-          login &rarr;
+        <div id="loginError" class="hidden font-body-sm text-body-sm text-error bg-error-container/30 border border-error/20 rounded-lg p-sm text-center" role="alert"></div>
+        <button type="submit" id="loginSubmitBtn" class="mt-sm w-full py-md px-lg bg-text-muted text-on-primary rounded-lg font-label-caps text-label-caps font-bold hover:scale-105 active:scale-95 transition-all">
+          Login &rarr;
         </button>
       </form>
     </div>
   </div>
 
-  <!-- ── Context Menu ─────────────────────────────────────── -->
-  <div class="context-menu hidden" id="contextMenu" role="menu"></div>
+  <!-- ── Context Menu ──────────────────────────────────────────────────────── -->
+  <div id="contextMenu" class="hidden fixed bg-background border border-border-subtle rounded-lg shadow-xl py-xs z-[9999] min-w-[180px]"></div>
 
-  <!-- ── Scripts ──────────────────────────────────────────── -->
+  <!-- ── Drag & Drop Overlay ────────────────────────────────────────────────── -->
+  <div id="dragDropOverlay" class="hidden fixed inset-0 bg-black/80 backdrop-blur-md z-[99999] flex flex-col items-center justify-center p-xl text-center pointer-events-none transition-all duration-300">
+    <div class="p-2xl border-2 border-dashed border-text-muted rounded-2xl bg-surface-bright/80 flex flex-col items-center gap-md max-w-lg shadow-2xl">
+      <span class="material-symbols-outlined text-6xl text-on-surface" style="font-variation-settings: 'FILL' 1;">cloud_upload</span>
+      <h2 class="font-headline-md text-headline-md text-on-surface font-bold">Musik hier ablegen</h2>
+      <p class="font-body-md text-body-md text-text-muted">Ziehe Audiodateien (MP3, FLAC, M4A, WAV, etc.) oder ganze Ordner hierher zum sofortigen Import.</p>
+    </div>
+  </div>
+
+  <!-- ── Upload Status Toast ────────────────────────────────────────────────── -->
+  <div id="uploadToast" class="hidden fixed bottom-24 right-6 bg-surface-bright border border-border-subtle p-md rounded-xl shadow-2xl z-[9999] flex items-center gap-md max-w-md">
+    <span class="material-symbols-outlined text-on-surface text-2xl animate-spin" id="uploadToastSpinner">sync</span>
+    <div class="flex flex-col gap-xs flex-1">
+      <span class="font-label-caps text-label-caps text-on-surface font-bold" id="uploadToastTitle">Upload läuft...</span>
+      <span class="font-body-sm text-body-sm text-text-muted" id="uploadToastStatus">Verarbeite Dateien...</span>
+    </div>
+  </div>
+
+  <!-- ── Scripts ───────────────────────────────────────────────────────────── -->
   <script src="/js/icons.js"></script>
+  <script src="/js/genres.js"></script>
   <script src="/js/api-client.js"></script>
+  <script src="/js/offline-store.js"></script>
   <script src="/js/settings.js"></script>
   <script src="/js/admin.js"></script>
   <script src="/js/app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').catch(err => console.warn('[SW] Registration failed:', err));
+      });
+    }
+  </script>
 </body>
 </html>

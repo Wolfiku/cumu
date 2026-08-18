@@ -9,6 +9,7 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const { getDB, getConfig } = require('../db');
 const { requireAuth } = require('../middleware/auth');
+const { fetchPodcastSearchResults } = require('./podcasts');
 
 const router = express.Router();
 
@@ -46,11 +47,37 @@ router.get('/home', requireAuth, (req, res) => {
 
   res.json({ recentlyPlayed, mostPlayed, newSongs });
 });
+// ── Genre Stats ────────────────────────────────────────────────────────────
+router.get('/genres/stats', requireAuth, (req, res) => {
+  const db = getDB();
+  const userId = req.user.id;
+
+  const topGenres = db.prepare(`
+    SELECT genre, COUNT(*) as count 
+    FROM songs 
+    WHERE genre IS NOT NULL AND genre != '' 
+    GROUP BY genre 
+    ORDER BY count DESC 
+    LIMIT 3
+  `).all();
+
+  const mostPlayed = db.prepare(`
+    SELECT s.genre, COUNT(*) as count
+    FROM play_history ph
+    JOIN songs s ON s.id = ph.song_id
+    WHERE ph.user_id = ? AND s.genre IS NOT NULL AND s.genre != ''
+    GROUP BY s.genre
+    ORDER BY count DESC
+    LIMIT 1
+  `).get(userId);
+
+  res.json({ topGenres, mostPlayedGenre: mostPlayed ? mostPlayed.genre : null });
+});
 
 // ── Search ─────────────────────────────────────────────────────────────────
-router.get('/search', requireAuth, (req, res) => {
+router.get('/search', requireAuth, async (req, res) => {
   const { q } = req.query;
-  if (!q) return res.json({ songs: [], albums: [], artists: [], playlists: [] });
+  if (!q) return res.json({ songs: [], albums: [], artists: [], playlists: [], podcasts: [] });
   const db = getDB();
   const like = `%${q}%`;
   const userId = req.user.id;
@@ -60,7 +87,23 @@ router.get('/search', requireAuth, (req, res) => {
   const artists   = db.prepare(`SELECT * FROM artists WHERE name LIKE ? LIMIT 10`).all(like);
   const playlists = db.prepare(`SELECT * FROM playlists WHERE user_id=? AND name LIKE ? LIMIT 10`).all(userId, like);
 
-  res.json({ songs, albums, artists, playlists });
+  let podcasts = [];
+  const userState = db.prepare('SELECT extra_settings FROM user_state WHERE user_id = ?').get(userId);
+  let podcastSearchEnabled = true;
+  if (userState && userState.extra_settings) {
+    try {
+      const extra = JSON.parse(userState.extra_settings);
+      if (extra.podcastSearchEnabled !== undefined) {
+        podcastSearchEnabled = !!extra.podcastSearchEnabled;
+      }
+    } catch (e) {}
+  }
+
+  if (podcastSearchEnabled) {
+    podcasts = await fetchPodcastSearchResults(q);
+  }
+
+  res.json({ songs, albums, artists, playlists, podcasts });
 });
 
 // ── Songs ──────────────────────────────────────────────────────────────────
@@ -83,6 +126,78 @@ router.post('/songs/:id/play', requireAuth, (req, res) => {
   db.prepare('UPDATE songs SET play_count = play_count + 1 WHERE id = ?').run(req.params.id);
   res.json({ success: true });
 });
+
+function getOrCreateArtist(db, name) {
+  if (!name) return null;
+  let row = db.prepare('SELECT id FROM artists WHERE name = ?').get(name);
+  if (!row) {
+    const id = uuidv4();
+    db.prepare('INSERT INTO artists (id, name) VALUES (?, ?)').run(id, name);
+    row = { id };
+  }
+  return row.id;
+}
+
+function getOrCreateAlbum(db, title, artistId, meta) {
+  if (!title) return null;
+  let row = db.prepare('SELECT id FROM albums WHERE title = ? AND artist_id = ?').get(title, artistId);
+  if (!row) {
+    const id = uuidv4();
+    db.prepare('INSERT INTO albums (id, title, artist_id, year, genre) VALUES (?, ?, ?, ?, ?)').run(id, title, artistId, meta?.year || null, meta?.genre || null);
+    row = { id };
+  }
+  return row.id;
+}
+
+const handleSongUpdate = (req, res) => {
+  try {
+    const db = getDB();
+    const { title, artist, album, genre, year, track_number, is_audiobook } = req.body;
+    const song = db.prepare('SELECT * FROM songs WHERE id=?').get(req.params.id);
+    if (!song) return res.status(404).json({ error: 'Song not found' });
+
+    let artistId = song.artist_id;
+    if (artist !== undefined) artistId = artist ? getOrCreateArtist(db, artist) : null;
+    let albumId = song.album_id;
+    if (album !== undefined) albumId = album ? getOrCreateAlbum(db, album, artistId, { year, genre }) : null;
+
+    db.prepare(`
+      UPDATE songs 
+      SET title=COALESCE(?,title), 
+          artist_id=?, 
+          album_id=?, 
+          genre=COALESCE(?,genre), 
+          year=COALESCE(?,year), 
+          track_number=COALESCE(?,track_number), 
+          is_audiobook=COALESCE(?,is_audiobook) 
+      WHERE id=?
+    `).run(
+      title || null, 
+      artistId, 
+      albumId, 
+      genre || null, 
+      year || null, 
+      track_number || null, 
+      is_audiobook != null ? (is_audiobook ? 1 : 0) : null, 
+      req.params.id
+    );
+
+    const updated = db.prepare(`
+      SELECT s.*, al.title as album_title, al.cover, ar.name as artist_name 
+      FROM songs s 
+      LEFT JOIN albums al ON al.id=s.album_id 
+      LEFT JOIN artists ar ON ar.id=s.artist_id 
+      WHERE s.id=?
+    `).get(req.params.id);
+
+    res.json({ success: true, song: updated });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update song: ' + err.message });
+  }
+};
+
+router.put('/songs/:id', requireAuth, handleSongUpdate);
+router.post('/songs/:id/edit', requireAuth, handleSongUpdate);
 
 // ── Albums ─────────────────────────────────────────────────────────────────
 router.get('/albums', requireAuth, (req, res) => {
@@ -183,5 +298,9 @@ router.post('/library/song', requireAuth, (req, res) => {
     res.json({ success: true });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
+
+// ── Upload Endpoint ─────────────────────────────────────────────────────────
+const adminRoutes = require('./admin');
+router.post('/upload', requireAuth, adminRoutes.handleUpload, adminRoutes.processUpload);
 
 module.exports = router;

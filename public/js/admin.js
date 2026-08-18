@@ -12,32 +12,41 @@ const CumuAdmin = (() => {
 
   function renderLayout() {
     return `
-      <div class="page-section">
-        <h1>admin panel</h1>
-        <p class="mute caption" style="margin-bottom:20px">manage music library, users, server settings, and oauth clients</p>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:24px;border-bottom:1px solid var(--color-border);padding-bottom:12px" id="adminTabs">
-          <button class="btn-secondary active" data-tab="upload" onclick="CumuAdmin.switchTab('upload')">upload</button>
-          <button class="btn-secondary" data-tab="scan" onclick="CumuAdmin.switchTab('scan')">scan library</button>
-          <button class="btn-secondary" data-tab="songs" onclick="CumuAdmin.switchTab('songs')">songs</button>
-          <button class="btn-secondary" data-tab="albums" onclick="CumuAdmin.switchTab('albums')">albums</button>
-          <button class="btn-secondary" data-tab="users" onclick="CumuAdmin.switchTab('users')">users</button>
-          <button class="btn-secondary" data-tab="oauth" onclick="CumuAdmin.switchTab('oauth')">oauth clients</button>
-          <button class="btn-secondary" data-tab="stats" onclick="CumuAdmin.switchTab('stats')">stats & config</button>
-          <button class="btn-secondary" data-tab="logs" onclick="CumuAdmin.switchTab('logs')">system logs</button>
-        </div>
-        <div id="adminTabContent"></div>
-      </div>`;
+      <header class="mb-xl">
+        <h1 class="font-display-xl text-display-xl text-on-surface">Admin Dashboard</h1>
+      </header>
+      <div class="flex gap-md border-b border-border-subtle pb-sm mb-xl overflow-x-auto no-scrollbar" id="adminTabs">
+        <button class="font-body-lg text-body-lg pb-sm text-text-muted hover:text-on-surface transition-colors whitespace-nowrap" data-tab="upload" onclick="CumuAdmin.switchTab('upload')">Upload Music</button>
+        <button class="font-body-lg text-body-lg pb-sm text-text-muted hover:text-on-surface transition-colors whitespace-nowrap" data-tab="stats" onclick="CumuAdmin.switchTab('stats')">Settings & Stats</button>
+        <button class="font-body-lg text-body-lg pb-sm text-text-muted hover:text-on-surface transition-colors whitespace-nowrap" data-tab="scan" onclick="CumuAdmin.switchTab('scan')">Scan Library</button>
+        <button class="font-body-lg text-body-lg pb-sm text-text-muted hover:text-on-surface transition-colors whitespace-nowrap" data-tab="songs" onclick="CumuAdmin.switchTab('songs')">Songs</button>
+        <button class="font-body-lg text-body-lg pb-sm text-text-muted hover:text-on-surface transition-colors whitespace-nowrap" data-tab="albums" onclick="CumuAdmin.switchTab('albums')">Albums</button>
+        <button class="font-body-lg text-body-lg pb-sm text-text-muted hover:text-on-surface transition-colors whitespace-nowrap" data-tab="users" onclick="CumuAdmin.switchTab('users')">Users</button>
+        <button class="font-body-lg text-body-lg pb-sm text-text-muted hover:text-on-surface transition-colors whitespace-nowrap" data-tab="oauth" onclick="CumuAdmin.switchTab('oauth')">OAuth Clients</button>
+        <button class="font-body-lg text-body-lg pb-sm text-text-muted hover:text-on-surface transition-colors whitespace-nowrap" data-tab="podcasts" onclick="CumuAdmin.switchTab('podcasts')">Podcasts</button>
+        <button class="font-body-lg text-body-lg pb-sm text-text-muted hover:text-on-surface transition-colors whitespace-nowrap" data-tab="logs" onclick="CumuAdmin.switchTab('logs')">System Logs</button>
+      </div>
+      <div id="adminTabContent" class="flex flex-col gap-xl"></div>
+    `;
   }
 
   async function switchTab(tabName) {
     activeTab = tabName;
     const buttons = document.querySelectorAll('#adminTabs button');
-    buttons.forEach(btn => btn.classList.toggle('active', btn.dataset.tab === tabName));
+    buttons.forEach(btn => {
+      if (btn.dataset.tab === tabName) {
+        btn.classList.add('border-b-2', 'border-primary', 'text-on-surface');
+        btn.classList.remove('text-text-muted');
+      } else {
+        btn.classList.remove('border-b-2', 'border-primary', 'text-on-surface');
+        btn.classList.add('text-text-muted');
+      }
+    });
 
     const content = document.getElementById('adminTabContent');
     if (!content) return;
 
-    content.innerHTML = '<div class="spinner">loading…</div>';
+    content.innerHTML = '<div class="text-text-muted text-body-lg font-body-lg">Lade...</div>';
 
     if      (tabName === 'upload') renderUploadTab(content);
     else if (tabName === 'scan')   renderScanTab(content);
@@ -45,6 +54,7 @@ const CumuAdmin = (() => {
     else if (tabName === 'albums') renderAlbumsTab(content);
     else if (tabName === 'users')  renderUsersTab(content);
     else if (tabName === 'oauth')  renderOAuthTab(content);
+    else if (tabName === 'podcasts') renderPodcastsTab(content);
     else if (tabName === 'stats')  renderStatsTab(content);
     else if (tabName === 'logs')   renderLogsTab(content);
   }
@@ -52,57 +62,108 @@ const CumuAdmin = (() => {
   // ── 1. Upload Tab ─────────────────────────────────────────────────────────
   function renderUploadTab(container) {
     container.innerHTML = `
-      <div class="card">
-        <h2>upload music & audiobooks</h2>
-        <p class="mute caption" style="margin-bottom:16px">upload MP3, M4A, FLAC, AAC, WAV, or OGG audio files. ID3 tags are extracted automatically.</p>
-        <form id="adminUploadForm" enctype="multipart/form-data">
-          <div class="form-row">
-            <label for="uploadFiles">select audio files (up to 200)</label>
-            <input type="file" id="uploadFiles" name="files" multiple accept="audio/*" required />
+      <section class="flex flex-col gap-md">
+        <h2 class="font-title-md text-title-md text-on-surface border-b border-border-subtle pb-sm">Musik & Audiobooks hochladen</h2>
+        
+        <div id="adminDropzone" class="border-2 border-dashed border-border-subtle hover:border-text-muted rounded-xl p-xl flex flex-col items-center justify-center gap-xs cursor-pointer transition-colors text-center bg-surface-bright/50 hover:bg-surface-bright">
+          <span class="material-symbols-outlined text-4xl text-text-muted">cloud_upload</span>
+          <span class="font-body-lg text-body-lg text-on-surface font-bold">Dateien hierher ziehen oder klicken</span>
+          <span class="font-body-sm text-body-sm text-text-muted">MP3, M4A, FLAC, WAV, AAC, OGG (Max 200 Dateien)</span>
+        </div>
+
+        <form id="adminUploadForm" enctype="multipart/form-data" class="flex flex-col gap-md">
+          
+          <div class="flex justify-between items-center p-md rounded-lg hover:bg-surface-bright transition-colors">
+            <div class="flex flex-col gap-xs">
+              <span class="font-body-lg text-body-lg text-on-surface">Audio Dateien (Max 200)</span>
+              <span class="font-body-sm text-body-sm text-text-muted">Unterstützte Formate: MP3, M4A, FLAC, AAC, WAV, OGG.</span>
+            </div>
+            <input type="file" id="uploadFiles" name="files" multiple accept="audio/*" class="font-body-sm text-body-sm text-on-surface bg-transparent max-w-[200px]" />
           </div>
-          <div class="form-row">
-            <label for="uploadCover">optional cover art (JPG / PNG)</label>
-            <input type="file" id="uploadCover" name="cover" accept="image/*" />
+
+          <div class="flex justify-between items-center p-md rounded-lg hover:bg-surface-bright transition-colors">
+            <div class="flex flex-col gap-xs">
+              <span class="font-body-lg text-body-lg text-on-surface">Cover Art (Optional)</span>
+              <span class="font-body-sm text-body-sm text-text-muted">Unterstützte Formate: JPG, PNG.</span>
+            </div>
+            <input type="file" id="uploadCover" name="cover" accept="image/*" class="font-body-sm text-body-sm text-on-surface bg-transparent max-w-[200px]" />
           </div>
-          <div class="form-row">
-            <label for="uploadArtist">override artist name (optional)</label>
-            <input type="text" id="uploadArtist" name="artist" placeholder="leave blank to read from tags" />
+
+          <div class="flex justify-between items-center p-md rounded-lg hover:bg-surface-bright transition-colors">
+            <div class="flex flex-col gap-xs">
+              <span class="font-body-lg text-body-lg text-on-surface">Interpret (Optional)</span>
+              <span class="font-body-sm text-body-sm text-text-muted">Überschreibt ID3 Tags.</span>
+            </div>
+            <input type="text" id="uploadArtist" name="artist" placeholder="Interpret" class="font-body-lg text-body-lg text-on-surface bg-transparent border-0 border-b border-border-subtle focus:border-text-muted focus:ring-0 p-0 text-right w-48" />
           </div>
-          <div class="form-row">
-            <label for="uploadAlbum">override album title (optional)</label>
-            <input type="text" id="uploadAlbum" name="album" placeholder="leave blank to read from tags" />
+
+          <div class="flex justify-between items-center p-md rounded-lg hover:bg-surface-bright transition-colors">
+            <div class="flex flex-col gap-xs">
+              <span class="font-body-lg text-body-lg text-on-surface">Album (Optional)</span>
+              <span class="font-body-sm text-body-sm text-text-muted">Überschreibt ID3 Tags.</span>
+            </div>
+            <input type="text" id="uploadAlbum" name="album" placeholder="Album" class="font-body-lg text-body-lg text-on-surface bg-transparent border-0 border-b border-border-subtle focus:border-text-muted focus:ring-0 p-0 text-right w-48" />
           </div>
-          <div style="margin-bottom:16px">
-            <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer">
-              <input type="checkbox" name="isAudiobook" value="true" />
-              <span>mark as audiobook / spoken word</span>
+
+          <div class="flex justify-between items-center p-md rounded-lg hover:bg-surface-bright transition-colors">
+            <div class="flex flex-col gap-xs">
+              <span class="font-body-lg text-body-lg text-on-surface">Genre (Optional)</span>
+              <span class="font-body-sm text-body-sm text-text-muted">Überschreibt ID3 Tags. (Z.B. Ambient, Podcast)</span>
+            </div>
+            <input type="text" id="uploadGenre" name="genre" placeholder="Genre" class="font-body-lg text-body-lg text-on-surface bg-transparent border-0 border-b border-border-subtle focus:border-text-muted focus:ring-0 p-0 text-right w-48" />
+          </div>
+
+          <div class="flex justify-between items-center p-md rounded-lg hover:bg-surface-bright transition-colors">
+            <div class="flex flex-col gap-xs">
+              <span class="font-body-lg text-body-lg text-on-surface">Als Audiobook markieren</span>
+              <span class="font-body-sm text-body-sm text-text-muted">Kategorisiert als Spoken Word/Podcast.</span>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer hover:scale-105 active:scale-95 transition-transform duration-200">
+              <input type="checkbox" name="isAudiobook" value="true" class="sr-only peer" />
+              <div class="w-11 h-6 bg-surface-container-high peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-text-muted"></div>
             </label>
           </div>
-          <div id="uploadStatus" class="mute caption" style="margin-top:8px"></div>
-          <div style="margin-top:16px">
-            <button type="submit" class="btn-primary" id="uploadSubmitBtn">upload files</button>
+
+          <div class="flex items-center gap-md mt-sm px-md">
+            <button type="submit" id="uploadSubmitBtn" class="px-md py-sm bg-text-muted text-on-primary font-body-sm text-body-sm rounded hover:scale-105 active:scale-95 transition-all duration-200">Dateien hochladen</button>
+            <span id="uploadStatus" class="font-body-sm text-body-sm text-text-muted"></span>
           </div>
         </form>
-      </div>`;
+      </section>`;
+
+    const dropzone = document.getElementById('adminDropzone');
+    const fileInput = document.getElementById('uploadFiles');
+
+    dropzone.addEventListener('click', () => fileInput.click());
+    dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('border-primary'); });
+    dropzone.addEventListener('dragleave', () => dropzone.classList.remove('border-primary'));
+    dropzone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropzone.classList.remove('border-primary');
+      if (e.dataTransfer.files?.length) {
+        fileInput.files = e.dataTransfer.files;
+        document.getElementById('uploadStatus').textContent = `${e.dataTransfer.files.length} Datei(en) ausgewählt. Klicke auf 'Dateien hochladen'.`;
+      }
+    });
 
     document.getElementById('adminUploadForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       const statusEl = document.getElementById('uploadStatus');
       const submitBtn = document.getElementById('uploadSubmitBtn');
-      statusEl.textContent = 'uploading and extracting metadata…';
+      statusEl.textContent = 'Upload läuft... Metadata wird extrahiert...';
       submitBtn.disabled = true;
 
       const formData = new FormData(e.target);
       try {
         const res = await CumuApi.postForm('/admin/upload', formData);
         if (res.success) {
-          statusEl.textContent = `✅ Successfully uploaded ${res.uploaded} song(s)!`;
+          statusEl.textContent = `✅ Erfolgreich hochgeladen: ${res.uploaded} Song(s)!`;
           e.target.reset();
         } else {
-          statusEl.textContent = `❌ ${res.error || 'Upload failed'}`;
+          statusEl.textContent = `❌ ${res.error || 'Upload fehlgeschlagen'}`;
         }
       } catch (err) {
-        statusEl.textContent = `❌ ${err.message || 'Network error'}`;
+        statusEl.textContent = `❌ ${err.message || 'Netzwerkfehler'}`;
       } finally {
         submitBtn.disabled = false;
       }
@@ -112,25 +173,33 @@ const CumuAdmin = (() => {
   // ── 2. Scan Tab ───────────────────────────────────────────────────────────
   function renderScanTab(container) {
     container.innerHTML = `
-      <div class="card">
-        <h2>scan music directory</h2>
-        <p class="mute caption" style="margin-bottom:16px">scans the server's music folder for any audio files that were manually copied to disk.</p>
-        <button class="btn-primary" id="btnScanLibrary">start library scan</button>
-        <div id="scanResult" style="margin-top:16px"></div>
-      </div>`;
+      <section class="flex flex-col gap-md">
+        <h2 class="font-title-md text-title-md text-on-surface border-b border-border-subtle pb-sm">Bibliothek Scannen</h2>
+        <div class="flex flex-col gap-sm p-md rounded-lg bg-surface-container-low">
+          <p class="font-body-sm text-body-sm text-text-muted">Scannt den Musikordner des Servers nach manuell kopierten Audiodateien.</p>
+          <div class="flex items-center gap-md mt-sm">
+            <button id="btnScanLibrary" class="px-md py-sm bg-text-muted text-on-primary font-body-sm text-body-sm rounded hover:scale-105 active:scale-95 transition-all duration-200">Scan Starten</button>
+            <span id="scanResult" class="font-body-sm text-body-sm"></span>
+          </div>
+        </div>
+      </section>`;
 
     document.getElementById('btnScanLibrary').addEventListener('click', async () => {
       const resEl = document.getElementById('scanResult');
-      resEl.textContent = 'scanning files on server…';
+      resEl.textContent = 'Scan läuft auf dem Server…';
+      resEl.className = 'font-body-sm text-body-sm text-text-muted';
       try {
         const res = await CumuApi.post('/admin/scan', {});
         if (res.success) {
-          resEl.innerHTML = `<div class="settings-success-msg">✅ Scan complete! Scanned ${res.scanned} files, added ${res.added} new songs.</div>`;
+          resEl.innerHTML = `✅ Scan abgeschlossen! ${res.scanned} Dateien gescannt, ${res.added} neue Songs hinzugefügt.`;
+          resEl.className = 'font-body-sm text-body-sm text-on-surface';
         } else {
-          resEl.innerHTML = `<div class="error-msg">❌ ${res.error || 'Scan failed'}</div>`;
+          resEl.innerHTML = `❌ ${res.error || 'Scan fehlgeschlagen'}`;
+          resEl.className = 'font-body-sm text-body-sm text-danger';
         }
       } catch (err) {
-        resEl.innerHTML = `<div class="error-msg">❌ ${err.message || 'Error running scan'}</div>`;
+        resEl.innerHTML = `❌ ${err.message || 'Fehler beim Scan'}`;
+        resEl.className = 'font-body-sm text-body-sm text-danger';
       }
     });
   }
@@ -139,38 +208,45 @@ const CumuAdmin = (() => {
   async function renderSongsTab(container) {
     const songs = await CumuApi.get('/api/songs');
     if (!songs.length) {
-      container.innerHTML = '<div class="card"><p class="mute">no songs in library</p></div>';
+      container.innerHTML = '<section class="flex flex-col gap-md"><div class="p-md rounded-lg bg-surface-container-low font-body-sm text-body-sm text-text-muted">Keine Songs gefunden</div></section>';
       return;
     }
     container.innerHTML = `
-      <div class="card">
-        <h2>manage songs (${songs.length})</h2>
-        <div style="overflow-x:auto">
-          <table>
+      <section class="flex flex-col gap-md">
+        <h2 class="font-title-md text-title-md text-on-surface border-b border-border-subtle pb-sm">Songs (${songs.length})</h2>
+        <div class="w-full overflow-x-auto rounded-lg border border-border-subtle">
+          <table class="w-full text-left border-collapse whitespace-nowrap">
             <thead>
-              <tr><th>Title</th><th>Artist</th><th>Album</th><th>Duration</th><th>Plays</th><th>Actions</th></tr>
+              <tr class="border-b border-border-subtle bg-surface-bright">
+                <th class="p-sm font-label-caps text-label-caps text-text-muted font-normal">Titel</th>
+                <th class="p-sm font-label-caps text-label-caps text-text-muted font-normal">Interpret</th>
+                <th class="p-sm font-label-caps text-label-caps text-text-muted font-normal">Album</th>
+                <th class="p-sm font-label-caps text-label-caps text-text-muted font-normal">Dauer</th>
+                <th class="p-sm font-label-caps text-label-caps text-text-muted font-normal">Plays</th>
+                <th class="p-sm font-label-caps text-label-caps text-text-muted font-normal">Aktionen</th>
+              </tr>
             </thead>
-            <tbody>
+            <tbody class="font-body-sm text-body-sm text-on-surface">
               ${songs.map(s => `
-                <tr>
-                  <td><strong>${esc(s.title)}</strong> ${s.is_audiobook ? '<span class="mute">(spoken)</span>' : ''}</td>
-                  <td>${esc(s.artist_name || '—')}</td>
-                  <td>${esc(s.album_title || '—')}</td>
-                  <td>${formatTime(s.duration)}</td>
-                  <td>${s.play_count || 0}</td>
-                  <td>
-                    <button class="btn-icon" onclick="navigate('song','edit:${s.id}')">edit</button>
-                    <button class="btn-danger" style="padding:2px 8px;font-size:12px" onclick="CumuAdmin.deleteSong('${s.id}')">delete</button>
+                <tr class="border-b border-border-subtle hover:bg-surface-bright transition-colors last:border-0">
+                  <td class="p-sm"><strong class="font-bold text-on-surface">${esc(s.title)}</strong> ${s.is_audiobook ? '<span class="text-text-muted ml-1">(Spoken)</span>' : ''}</td>
+                  <td class="p-sm text-text-muted">${esc(s.artist_name || '—')}</td>
+                  <td class="p-sm text-text-muted">${esc(s.album_title || '—')}</td>
+                  <td class="p-sm text-text-muted">${formatTime(s.duration)}</td>
+                  <td class="p-sm text-text-muted">${s.play_count || 0}</td>
+                  <td class="p-sm">
+                    <button class="text-text-muted hover:text-on-surface transition-colors mr-sm" onclick="navigate('song','edit:${s.id}')">Bearbeiten</button>
+                    <button class="text-red-400 hover:text-red-300 transition-colors" onclick="CumuAdmin.deleteSong('${s.id}')">Löschen</button>
                   </td>
                 </tr>`).join('')}
             </tbody>
           </table>
         </div>
-      </div>`;
+      </section>`;
   }
 
   async function deleteSong(songId) {
-    if (!confirm('Are you sure you want to delete this song?')) return;
+    if (!confirm('Bist du sicher, dass du diesen Song löschen willst?')) return;
     await CumuApi.del(`/admin/songs/${songId}`);
     switchTab('songs');
   }
@@ -179,37 +255,43 @@ const CumuAdmin = (() => {
   async function renderAlbumsTab(container) {
     const albums = await CumuApi.get('/api/albums');
     if (!albums.length) {
-      container.innerHTML = '<div class="card"><p class="mute">no albums in library</p></div>';
+      container.innerHTML = '<section class="flex flex-col gap-md"><div class="p-md rounded-lg bg-surface-container-low font-body-sm text-body-sm text-text-muted">Keine Alben gefunden</div></section>';
       return;
     }
     container.innerHTML = `
-      <div class="card">
-        <h2>manage albums (${albums.length})</h2>
-        <div style="overflow-x:auto">
-          <table>
+      <section class="flex flex-col gap-md">
+        <h2 class="font-title-md text-title-md text-on-surface border-b border-border-subtle pb-sm">Alben (${albums.length})</h2>
+        <div class="w-full overflow-x-auto rounded-lg border border-border-subtle">
+          <table class="w-full text-left border-collapse whitespace-nowrap">
             <thead>
-              <tr><th>Title</th><th>Artist</th><th>Year</th><th>Genre</th><th>Actions</th></tr>
+              <tr class="border-b border-border-subtle bg-surface-bright">
+                <th class="p-sm font-label-caps text-label-caps text-text-muted font-normal">Titel</th>
+                <th class="p-sm font-label-caps text-label-caps text-text-muted font-normal">Interpret</th>
+                <th class="p-sm font-label-caps text-label-caps text-text-muted font-normal">Jahr</th>
+                <th class="p-sm font-label-caps text-label-caps text-text-muted font-normal">Genre</th>
+                <th class="p-sm font-label-caps text-label-caps text-text-muted font-normal">Aktionen</th>
+              </tr>
             </thead>
-            <tbody>
+            <tbody class="font-body-sm text-body-sm text-on-surface">
               ${albums.map(a => `
-                <tr>
-                  <td><strong>${esc(a.title)}</strong></td>
-                  <td>${esc(a.artist_name || '—')}</td>
-                  <td>${a.year || '—'}</td>
-                  <td>${esc(a.genre || '—')}</td>
-                  <td>
-                    <button class="btn-icon" onclick="navigate('album','edit:${a.id}')">edit</button>
-                    <button class="btn-danger" style="padding:2px 8px;font-size:12px" onclick="CumuAdmin.deleteAlbum('${a.id}')">delete</button>
+                <tr class="border-b border-border-subtle hover:bg-surface-bright transition-colors last:border-0">
+                  <td class="p-sm"><strong class="font-bold text-on-surface">${esc(a.title)}</strong></td>
+                  <td class="p-sm text-text-muted">${esc(a.artist_name || '—')}</td>
+                  <td class="p-sm text-text-muted">${a.year || '—'}</td>
+                  <td class="p-sm text-text-muted">${esc(a.genre || '—')}</td>
+                  <td class="p-sm">
+                    <button class="text-text-muted hover:text-on-surface transition-colors mr-sm" onclick="navigate('album','edit:${a.id}')">Bearbeiten</button>
+                    <button class="text-red-400 hover:text-red-300 transition-colors" onclick="CumuAdmin.deleteAlbum('${a.id}')">Löschen</button>
                   </td>
                 </tr>`).join('')}
             </tbody>
           </table>
         </div>
-      </div>`;
+      </section>`;
   }
 
   async function deleteAlbum(albumId) {
-    if (!confirm('Delete album and all its songs?')) return;
+    if (!confirm('Album und alle enthaltenen Songs löschen?')) return;
     await CumuApi.del(`/admin/albums/${albumId}`);
     switchTab('albums');
   }
@@ -218,53 +300,63 @@ const CumuAdmin = (() => {
   async function renderUsersTab(container) {
     const users = await CumuApi.get('/admin/users');
     container.innerHTML = `
-      <div class="card" style="margin-bottom:24px">
-        <h2>add new user</h2>
-        <form id="addUserForm" style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
-          <div style="flex:1;min-width:140px">
-            <label for="newUsername">username</label>
-            <input type="text" id="newUsername" name="username" required placeholder="username" />
+      <section class="flex flex-col gap-md mb-xl">
+        <h2 class="font-title-md text-title-md text-on-surface border-b border-border-subtle pb-sm">Neuen User anlegen</h2>
+        <form id="addUserForm" class="flex flex-col gap-md">
+          <div class="flex flex-wrap gap-md">
+            <div class="flex-1 min-w-[140px]">
+              <label for="newUsername" class="font-body-sm text-body-sm text-text-muted block mb-xs">Username</label>
+              <input type="text" id="newUsername" name="username" required placeholder="Username" class="w-full font-body-lg text-body-lg text-on-surface bg-transparent border-0 border-b border-border-subtle focus:border-text-muted focus:ring-0 p-0" />
+            </div>
+            <div class="flex-1 min-w-[140px]">
+              <label for="newPassword" class="font-body-sm text-body-sm text-text-muted block mb-xs">Passwort</label>
+              <input type="password" id="newPassword" name="password" required placeholder="Passwort" class="w-full font-body-lg text-body-lg text-on-surface bg-transparent border-0 border-b border-border-subtle focus:border-text-muted focus:ring-0 p-0" />
+            </div>
+            <div class="w-[120px]">
+              <label for="newRole" class="font-body-sm text-body-sm text-text-muted block mb-xs">Rolle</label>
+              <select id="newRole" name="role" class="w-full font-body-lg text-body-lg text-on-surface bg-transparent border-0 border-b border-border-subtle focus:border-text-muted focus:ring-0 p-0">
+                <option value="user" class="bg-surface-container-low text-on-surface">User</option>
+                <option value="admin" class="bg-surface-container-low text-on-surface">Admin</option>
+              </select>
+            </div>
           </div>
-          <div style="flex:1;min-width:140px">
-            <label for="newPassword">password</label>
-            <input type="password" id="newPassword" name="password" required placeholder="password" />
+          <div class="mt-sm">
+            <button type="submit" class="px-md py-sm bg-text-muted text-on-primary font-body-sm text-body-sm rounded hover:scale-105 active:scale-95 transition-all duration-200">User anlegen</button>
           </div>
-          <div style="width:120px">
-            <label for="newRole">role</label>
-            <select id="newRole" name="role">
-              <option value="user">user</option>
-              <option value="admin">admin</option>
-            </select>
-          </div>
-          <button type="submit" class="btn-primary">create user</button>
         </form>
-      </div>
+      </section>
 
-      <div class="card">
-        <h2>users (${users.length})</h2>
-        <div style="overflow-x:auto">
-          <table>
+      <section class="flex flex-col gap-md">
+        <h2 class="font-title-md text-title-md text-on-surface border-b border-border-subtle pb-sm">User (${users.length})</h2>
+        <div class="w-full overflow-x-auto rounded-lg border border-border-subtle">
+          <table class="w-full text-left border-collapse whitespace-nowrap">
             <thead>
-              <tr><th>Username</th><th>Role</th><th>Status</th><th>Theme</th><th>Actions</th></tr>
+              <tr class="border-b border-border-subtle bg-surface-bright">
+                <th class="p-sm font-label-caps text-label-caps text-text-muted font-normal">Username</th>
+                <th class="p-sm font-label-caps text-label-caps text-text-muted font-normal">Rolle</th>
+                <th class="p-sm font-label-caps text-label-caps text-text-muted font-normal">Status</th>
+                <th class="p-sm font-label-caps text-label-caps text-text-muted font-normal">Theme</th>
+                <th class="p-sm font-label-caps text-label-caps text-text-muted font-normal">Aktionen</th>
+              </tr>
             </thead>
-            <tbody>
+            <tbody class="font-body-sm text-body-sm text-on-surface">
               ${users.map(u => `
-                <tr>
-                  <td><strong>${esc(u.username)}</strong></td>
-                  <td><span class="chip">${u.role}</span></td>
-                  <td>${u.is_blocked ? '<span style="color:var(--color-danger)">BLOCKED</span>' : '<span style="color:var(--color-success)">Active</span>'}</td>
-                  <td>${u.theme || 'coddy'}</td>
-                  <td>
-                    <button class="btn-secondary" style="padding:2px 8px;font-size:12px" onclick="CumuAdmin.toggleUserBlock('${u.id}', ${!u.is_blocked})">
-                      ${u.is_blocked ? 'unblock' : 'block'}
+                <tr class="border-b border-border-subtle hover:bg-surface-bright transition-colors last:border-0">
+                  <td class="p-sm"><strong class="font-bold text-on-surface">${esc(u.username)}</strong></td>
+                  <td class="p-sm text-text-muted">${u.role}</td>
+                  <td class="p-sm">${u.is_blocked ? '<span class="text-red-400">Blockiert</span>' : '<span class="text-green-400">Aktiv</span>'}</td>
+                  <td class="p-sm text-text-muted">${u.theme || 'coddy'}</td>
+                  <td class="p-sm">
+                    <button class="text-text-muted hover:text-on-surface transition-colors mr-sm" onclick="CumuAdmin.toggleUserBlock('${u.id}', ${!u.is_blocked})">
+                      ${u.is_blocked ? 'Entblocken' : 'Blockieren'}
                     </button>
-                    <button class="btn-danger" style="padding:2px 8px;font-size:12px" onclick="CumuAdmin.deleteUser('${u.id}')">delete</button>
+                    <button class="text-red-400 hover:text-red-300 transition-colors" onclick="CumuAdmin.deleteUser('${u.id}')">Löschen</button>
                   </td>
                 </tr>`).join('')}
             </tbody>
           </table>
         </div>
-      </div>`;
+      </section>`;
 
     document.getElementById('addUserForm').addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -273,7 +365,7 @@ const CumuAdmin = (() => {
         await CumuApi.post('/admin/users', body);
         switchTab('users');
       } catch (err) {
-        alert(err.message || 'Could not create user');
+        alert(err.message || 'Konnte User nicht anlegen');
       }
     });
   }
@@ -284,7 +376,7 @@ const CumuAdmin = (() => {
   }
 
   async function deleteUser(userId) {
-    if (!confirm('Delete user?')) return;
+    if (!confirm('User löschen?')) return;
     await CumuApi.del(`/admin/users/${userId}`);
     switchTab('users');
   }
@@ -293,49 +385,65 @@ const CumuAdmin = (() => {
   async function renderOAuthTab(container) {
     const clients = await CumuApi.get('/admin/oauth/clients');
     container.innerHTML = `
-      <div class="card" style="margin-bottom:24px">
-        <h2>register new oauth client</h2>
-        <p class="mute caption" style="margin-bottom:12px">register external or custom applications (mobile app, desktop client) to authenticate via OAuth2.</p>
-        <form id="addClientForm">
-          <div class="form-row">
-            <label for="clientName">client name</label>
-            <input type="text" id="clientName" name="name" required placeholder="e.g. Cumu Mobile App" />
+      <section class="flex flex-col gap-md mb-xl">
+        <h2 class="font-title-md text-title-md text-on-surface border-b border-border-subtle pb-sm">Neuen OAuth Client registrieren</h2>
+        <form id="addClientForm" class="flex flex-col gap-md">
+          <div class="flex justify-between items-center p-md rounded-lg hover:bg-surface-bright transition-colors">
+            <div class="flex flex-col gap-xs">
+              <span class="font-body-lg text-body-lg text-on-surface">Client Name</span>
+              <span class="font-body-sm text-body-sm text-text-muted">z.B. Cumu Mobile App</span>
+            </div>
+            <input type="text" id="clientName" name="name" required placeholder="Name" class="font-body-lg text-body-lg text-on-surface bg-transparent border-0 border-b border-border-subtle focus:border-text-muted focus:ring-0 p-0 text-right w-64" />
           </div>
-          <div class="form-row">
-            <label for="clientUris">redirect URIs (JSON array or comma-separated)</label>
-            <input type="text" id="clientUris" name="redirect_uris" placeholder='["http://localhost:8080/callback"]' />
+          <div class="flex justify-between items-center p-md rounded-lg hover:bg-surface-bright transition-colors">
+            <div class="flex flex-col gap-xs">
+              <span class="font-body-lg text-body-lg text-on-surface">Redirect URIs</span>
+              <span class="font-body-sm text-body-sm text-text-muted">JSON Array oder kommagetrennt</span>
+            </div>
+            <input type="text" id="clientUris" name="redirect_uris" placeholder='["http://localhost:8080/callback"]' class="font-body-lg text-body-lg text-on-surface bg-transparent border-0 border-b border-border-subtle focus:border-text-muted focus:ring-0 p-0 text-right w-64" />
           </div>
-          <div class="form-row">
-            <label for="clientScopes">scopes</label>
-            <input type="text" id="clientScopes" name="scopes" value="read write" />
+          <div class="flex justify-between items-center p-md rounded-lg hover:bg-surface-bright transition-colors">
+            <div class="flex flex-col gap-xs">
+              <span class="font-body-lg text-body-lg text-on-surface">Scopes</span>
+              <span class="font-body-sm text-body-sm text-text-muted">read, write</span>
+            </div>
+            <input type="text" id="clientScopes" name="scopes" value="read write" class="font-body-lg text-body-lg text-on-surface bg-transparent border-0 border-b border-border-subtle focus:border-text-muted focus:ring-0 p-0 text-right w-64" />
           </div>
-          <button type="submit" class="btn-primary">register client</button>
+          <div class="flex items-center gap-md mt-sm px-md">
+            <button type="submit" class="px-md py-sm bg-text-muted text-on-primary font-body-sm text-body-sm rounded hover:scale-105 active:scale-95 transition-all duration-200">Client registrieren</button>
+            <div id="newClientSecretDisplay"></div>
+          </div>
         </form>
-        <div id="newClientSecretDisplay" style="margin-top:16px"></div>
-      </div>
+      </section>
 
-      <div class="card">
-        <h2>registered oauth clients (${clients.length})</h2>
-        <div style="overflow-x:auto">
-          <table>
+      <section class="flex flex-col gap-md">
+        <h2 class="font-title-md text-title-md text-on-surface border-b border-border-subtle pb-sm">Registrierte OAuth Clients (${clients.length})</h2>
+        <div class="w-full overflow-x-auto rounded-lg border border-border-subtle">
+          <table class="w-full text-left border-collapse whitespace-nowrap">
             <thead>
-              <tr><th>Name</th><th>Client ID</th><th>Scopes</th><th>Active</th><th>Actions</th></tr>
+              <tr class="border-b border-border-subtle bg-surface-bright">
+                <th class="p-sm font-label-caps text-label-caps text-text-muted font-normal">Name</th>
+                <th class="p-sm font-label-caps text-label-caps text-text-muted font-normal">Client ID</th>
+                <th class="p-sm font-label-caps text-label-caps text-text-muted font-normal">Scopes</th>
+                <th class="p-sm font-label-caps text-label-caps text-text-muted font-normal">Aktiv</th>
+                <th class="p-sm font-label-caps text-label-caps text-text-muted font-normal">Aktionen</th>
+              </tr>
             </thead>
-            <tbody>
+            <tbody class="font-body-sm text-body-sm text-on-surface">
               ${clients.map(c => `
-                <tr>
-                  <td><strong>${esc(c.name)}</strong></td>
-                  <td><code>${esc(c.client_id)}</code></td>
-                  <td>${esc(c.scopes)}</td>
-                  <td>${c.is_active ? '✅' : '❌'}</td>
-                  <td>
-                    ${c.is_active ? `<button class="btn-danger" style="padding:2px 8px;font-size:12px" onclick="CumuAdmin.deactivateClient('${c.id}')">deactivate</button>` : 'inactive'}
+                <tr class="border-b border-border-subtle hover:bg-surface-bright transition-colors last:border-0">
+                  <td class="p-sm"><strong class="font-bold text-on-surface">${esc(c.name)}</strong></td>
+                  <td class="p-sm font-mono text-xs text-text-muted">${esc(c.client_id)}</td>
+                  <td class="p-sm text-text-muted">${esc(c.scopes)}</td>
+                  <td class="p-sm">${c.is_active ? '✅' : '❌'}</td>
+                  <td class="p-sm">
+                    ${c.is_active ? `<button class="text-red-400 hover:text-red-300 transition-colors" onclick="CumuAdmin.deactivateClient('${c.id}')">Deaktivieren</button>` : '<span class="text-text-muted">Inaktiv</span>'}
                   </td>
                 </tr>`).join('')}
             </tbody>
           </table>
         </div>
-      </div>`;
+      </section>`;
 
     document.getElementById('addClientForm').addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -349,25 +457,176 @@ const CumuAdmin = (() => {
       try {
         const res = await CumuApi.post('/admin/oauth/clients', { name, redirect_uris, scopes });
         document.getElementById('newClientSecretDisplay').innerHTML = `
-          <div class="settings-success-msg" style="padding:16px">
-            <strong>Client Registered!</strong><br>
-            Client ID: <code>${res.clientId}</code><br>
-            Client Secret (save this now!): <code>${res.clientSecret}</code>
+          <div class="font-body-sm text-body-sm text-green-400 mt-md">
+            <strong>Client registriert!</strong> Client ID: <span class="font-mono">${res.clientId}</span>, Secret: <span class="font-mono">${res.clientSecret}</span> (Unbedingt speichern!)
           </div>`;
         e.target.reset();
       } catch (err) {
-        alert(err.message || 'Failed to register client');
+        alert(err.message || 'Client konnte nicht registriert werden');
       }
     });
   }
 
   async function deactivateClient(id) {
-    if (!confirm('Deactivate client? Existing tokens will be revoked.')) return;
+    if (!confirm('Client deaktivieren? Existierende Tokens werden widerrufen.')) return;
     await CumuApi.del(`/admin/oauth/clients/${id}`);
     switchTab('oauth');
   }
 
-  // ── 7. Stats & Server Config Tab ─────────────────────────────────────────
+  // ── 7. Podcasts Tab ───────────────────────────────────────────────────────
+  async function renderPodcastsTab(container) {
+    const config = await CumuApi.get('/admin/config');
+    const customFeeds = config.customPodcastFeeds || [];
+
+    container.innerHTML = `
+      <section class="flex flex-col gap-md mb-xl">
+        <h2 class="font-title-md text-title-md text-on-surface border-b border-border-subtle pb-sm">Podcasts Konfiguration</h2>
+        <form id="adminPodcastsForm" class="flex flex-col gap-md">
+          
+          <div class="flex justify-between items-center p-md rounded-lg hover:bg-surface-bright transition-colors">
+            <div class="flex flex-col gap-xs">
+              <span class="font-body-lg text-body-lg text-on-surface">Podcasts global aktivieren</span>
+              <span class="font-body-sm text-body-sm text-text-muted">Zeigt Live Sets & Podcasts auf der Startseite und in der Seitenleiste.</span>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer hover:scale-105 active:scale-95 transition-transform duration-200">
+              <input type="checkbox" name="enablePodcasts" class="sr-only peer" ${config.enablePodcasts !== false ? 'checked' : ''} />
+              <div class="w-11 h-6 bg-surface-container-high peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-text-muted"></div>
+            </label>
+          </div>
+
+          <div class="flex justify-between items-center p-md rounded-lg hover:bg-surface-bright transition-colors border-t border-border-subtle mt-sm pt-md">
+            <div class="flex flex-col gap-xs">
+              <span class="font-body-lg text-body-lg text-on-surface">Öffentliche Podcasts (API) aktivieren</span>
+              <span class="font-body-sm text-body-sm text-text-muted">Lädt beliebte Podcasts aus externen Verzeichnissen.</span>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer hover:scale-105 active:scale-95 transition-transform duration-200">
+              <input type="checkbox" name="enablePublicPodcasts" class="sr-only peer" ${config.enablePublicPodcasts ? 'checked' : ''} />
+              <div class="w-11 h-6 bg-surface-container-high peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-text-muted"></div>
+            </label>
+          </div>
+
+          <div class="flex justify-between items-center p-md rounded-lg hover:bg-surface-bright transition-colors">
+            <div class="flex flex-col gap-xs">
+              <span class="font-body-lg text-body-lg text-on-surface">Podcast API Quelle</span>
+              <span class="font-body-sm text-body-sm text-text-muted">iTunes (Standard, kein Key) oder Podcast Index (Free/Open-Source).</span>
+            </div>
+            <select id="podcastApiSource" name="podcastApiSource" class="w-48 font-body-lg text-body-lg text-on-surface bg-transparent border-0 border-b border-border-subtle focus:border-text-muted focus:ring-0 p-0 text-right">
+              <option value="itunes" class="bg-surface-container-low text-on-surface" ${config.podcastApiSource === 'itunes' ? 'selected' : ''}>iTunes API</option>
+              <option value="podcastindex" class="bg-surface-container-low text-on-surface" ${config.podcastApiSource === 'podcastindex' ? 'selected' : ''}>Podcast Index API</option>
+            </select>
+          </div>
+
+          <div id="piConfigBlock" class="flex flex-col gap-md pl-xl border-l-2 border-primary ${config.podcastApiSource === 'podcastindex' ? '' : 'hidden'}">
+            <div class="flex justify-between items-center p-md rounded-lg hover:bg-surface-bright transition-colors">
+              <div class="flex flex-col gap-xs">
+                <span class="font-body-lg text-body-lg text-on-surface">Podcast Index API Key</span>
+              </div>
+              <input type="text" name="podcastIndexKey" value="${esc(config.podcastIndexKey || '')}" class="font-body-lg text-body-lg text-on-surface bg-transparent border-0 border-b border-border-subtle focus:border-text-muted focus:ring-0 p-0 text-right w-64" />
+            </div>
+            <div class="flex justify-between items-center p-md rounded-lg hover:bg-surface-bright transition-colors">
+              <div class="flex flex-col gap-xs">
+                <span class="font-body-lg text-body-lg text-on-surface">Podcast Index API Secret</span>
+              </div>
+              <input type="password" name="podcastIndexSecret" value="${esc(config.podcastIndexSecret || '')}" class="font-body-lg text-body-lg text-on-surface bg-transparent border-0 border-b border-border-subtle focus:border-text-muted focus:ring-0 p-0 text-right w-64" />
+            </div>
+          </div>
+
+          <div class="flex items-center gap-md mt-sm px-md">
+            <button type="submit" class="px-md py-sm bg-text-muted text-on-primary font-body-sm text-body-sm rounded hover:scale-105 active:scale-95 transition-all duration-200">Einstellungen speichern</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="flex flex-col gap-md">
+        <h2 class="font-title-md text-title-md text-on-surface border-b border-border-subtle pb-sm">Eigene RSS Feeds</h2>
+        <div class="w-full overflow-x-auto rounded-lg border border-border-subtle mb-sm">
+          <table class="w-full text-left border-collapse whitespace-nowrap" id="customFeedsTable">
+            <thead>
+              <tr class="border-b border-border-subtle bg-surface-bright">
+                <th class="p-sm font-label-caps text-label-caps text-text-muted font-normal">Titel</th>
+                <th class="p-sm font-label-caps text-label-caps text-text-muted font-normal">RSS URL</th>
+                <th class="p-sm font-label-caps text-label-caps text-text-muted font-normal">Aktionen</th>
+              </tr>
+            </thead>
+            <tbody class="font-body-sm text-body-sm text-on-surface">
+              ${customFeeds.map((feed, index) => `
+                <tr class="border-b border-border-subtle hover:bg-surface-bright transition-colors last:border-0" data-index="${index}">
+                  <td class="p-sm"><strong class="font-bold text-on-surface">${esc(feed.title)}</strong></td>
+                  <td class="p-sm text-text-muted truncate max-w-xs">${esc(feed.url)}</td>
+                  <td class="p-sm">
+                    <button class="text-red-400 hover:text-red-300 transition-colors remove-feed-btn" data-index="${index}">Entfernen</button>
+                  </td>
+                </tr>`).join('')}
+              ${customFeeds.length === 0 ? '<tr><td colspan="3" class="p-sm text-center text-text-muted">Keine eigenen RSS Feeds vorhanden.</td></tr>' : ''}
+            </tbody>
+          </table>
+        </div>
+        
+        <form id="addCustomFeedForm" class="flex gap-md mt-xs">
+          <input type="text" id="newFeedTitle" placeholder="Podcast Titel" required class="flex-1 font-body-sm text-body-sm text-on-surface bg-transparent border-0 border-b border-border-subtle focus:border-text-muted focus:ring-0 p-xs" />
+          <input type="url" id="newFeedUrl" placeholder="https://.../rss" required class="flex-2 font-body-sm text-body-sm text-on-surface bg-transparent border-0 border-b border-border-subtle focus:border-text-muted focus:ring-0 p-xs" />
+          <button type="submit" class="px-md py-sm bg-surface-container-high text-on-surface font-body-sm text-body-sm rounded hover:scale-105 active:scale-95 transition-all duration-200">+ Hinzufügen</button>
+        </form>
+      </section>
+    `;
+
+    // Dynamic show/hide of PI config
+    document.getElementById('podcastApiSource').addEventListener('change', (e) => {
+      const block = document.getElementById('piConfigBlock');
+      if (e.target.value === 'podcastindex') block.classList.remove('hidden');
+      else block.classList.add('hidden');
+    });
+
+    // Save Settings
+    document.getElementById('adminPodcastsForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const body = Object.fromEntries(new FormData(e.target));
+      body.enablePodcasts = !!body.enablePodcasts;
+      body.enablePublicPodcasts = !!body.enablePublicPodcasts;
+      try {
+        await CumuApi.put('/admin/config', body);
+        if (window.currentUser) {
+          window.currentUser.enablePodcasts = body.enablePodcasts;
+          if (typeof window.updateNavigation === 'function') window.updateNavigation();
+        }
+        alert('Podcast-Einstellungen gespeichert!');
+      } catch (err) {
+        alert(err.message || 'Speichern fehlgeschlagen');
+      }
+    });
+
+    // Add Custom Feed
+    document.getElementById('addCustomFeedForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const title = document.getElementById('newFeedTitle').value.trim();
+      const url = document.getElementById('newFeedUrl').value.trim();
+      if (!title || !url) return;
+      
+      const updatedFeeds = [...customFeeds, { title, url }];
+      try {
+        await CumuApi.put('/admin/config', { customPodcastFeeds: updatedFeeds });
+        switchTab('podcasts');
+      } catch (err) {
+        alert(err.message || 'Speichern fehlgeschlagen');
+      }
+    });
+
+    // Remove Custom Feed
+    document.querySelectorAll('.remove-feed-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const idx = parseInt(e.target.dataset.index, 10);
+        const updatedFeeds = customFeeds.filter((_, i) => i !== idx);
+        try {
+          await CumuApi.put('/admin/config', { customPodcastFeeds: updatedFeeds });
+          switchTab('podcasts');
+        } catch (err) {
+          alert(err.message || 'Löschen fehlgeschlagen');
+        }
+      });
+    });
+  }
+
+  // ── 8. Stats & Server Config Tab ─────────────────────────────────────────
   async function renderStatsTab(container) {
     const stats  = await CumuApi.get('/admin/stats');
     const config = await CumuApi.get('/admin/config');
@@ -375,46 +634,58 @@ const CumuAdmin = (() => {
     const usedMb = (stats.storageUsedBytes / (1024 * 1024)).toFixed(1);
 
     container.innerHTML = `
-      <div class="card" style="margin-bottom:24px">
-        <h2>server statistics</h2>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:16px;margin-top:16px">
-          <div style="background:var(--color-surface-soft);padding:16px;border-radius:var(--radius-sm)">
-            <div class="mute caption">songs</div>
-            <div style="font-size:24px;font-weight:bold">${stats.songs}</div>
+      <section class="flex flex-col gap-md mb-xl">
+        <h2 class="font-title-md text-title-md text-on-surface border-b border-border-subtle pb-sm">Server Konfiguration</h2>
+        <form id="adminConfigForm" class="flex flex-col gap-md">
+          
+          <div class="flex justify-between items-center p-md rounded-lg hover:bg-surface-bright transition-colors">
+            <div class="flex flex-col gap-xs">
+              <span class="font-body-lg text-body-lg text-on-surface">Music Storage Path</span>
+              <span class="font-body-sm text-body-sm text-text-muted">Pfad auf dem Server (z.B. /home/user/music)</span>
+            </div>
+            <input type="text" id="cfgMusicPath" name="musicPath" value="${esc(config.musicPath || '')}" class="font-body-lg text-body-lg text-on-surface bg-transparent border-0 border-b border-border-subtle focus:border-text-muted focus:ring-0 p-0 text-right w-64" />
           </div>
-          <div style="background:var(--color-surface-soft);padding:16px;border-radius:var(--radius-sm)">
-            <div class="mute caption">albums</div>
-            <div style="font-size:24px;font-weight:bold">${stats.albums}</div>
+
+          <div class="flex justify-between items-center p-md rounded-lg hover:bg-surface-bright transition-colors">
+            <div class="flex flex-col gap-xs">
+              <span class="font-body-lg text-body-lg text-on-surface">Max Storage Limit</span>
+              <span class="font-body-sm text-body-sm text-text-muted">Speicherlimit in Gigabyte.</span>
+            </div>
+            <input type="number" id="cfgStorage" name="maxStorageGb" value="${config.maxStorageGb || 50}" class="font-body-lg text-body-lg text-on-surface bg-transparent border-0 border-b border-border-subtle focus:border-text-muted focus:ring-0 p-0 text-right w-32" />
           </div>
-          <div style="background:var(--color-surface-soft);padding:16px;border-radius:var(--radius-sm)">
-            <div class="mute caption">artists</div>
-            <div style="font-size:24px;font-weight:bold">${stats.artists}</div>
+
+          <div class="flex items-center gap-md mt-sm px-md">
+            <button type="submit" class="px-md py-sm bg-text-muted text-on-primary font-body-sm text-body-sm rounded hover:scale-105 active:scale-95 transition-all duration-200">Konfiguration speichern</button>
           </div>
-          <div style="background:var(--color-surface-soft);padding:16px;border-radius:var(--radius-sm)">
-            <div class="mute caption">users</div>
-            <div style="font-size:24px;font-weight:bold">${stats.users}</div>
+        </form>
+      </section>
+
+      <section class="flex flex-col gap-md">
+        <h2 class="font-title-md text-title-md text-on-surface border-b border-border-subtle pb-sm">Server Statistiken</h2>
+        <div class="grid grid-cols-2 md:grid-cols-5 gap-md">
+          <div class="bg-surface-container-low p-md rounded-lg">
+            <div class="font-body-sm text-body-sm text-text-muted">Songs</div>
+            <div class="font-display-xl text-[24px] text-on-surface">${stats.songs}</div>
           </div>
-          <div style="background:var(--color-surface-soft);padding:16px;border-radius:var(--radius-sm)">
-            <div class="mute caption">storage used</div>
-            <div style="font-size:24px;font-weight:bold">${usedMb} MB</div>
+          <div class="bg-surface-container-low p-md rounded-lg">
+            <div class="font-body-sm text-body-sm text-text-muted">Alben</div>
+            <div class="font-display-xl text-[24px] text-on-surface">${stats.albums}</div>
+          </div>
+          <div class="bg-surface-container-low p-md rounded-lg">
+            <div class="font-body-sm text-body-sm text-text-muted">Interpreten</div>
+            <div class="font-display-xl text-[24px] text-on-surface">${stats.artists}</div>
+          </div>
+          <div class="bg-surface-container-low p-md rounded-lg">
+            <div class="font-body-sm text-body-sm text-text-muted">User</div>
+            <div class="font-display-xl text-[24px] text-on-surface">${stats.users}</div>
+          </div>
+          <div class="bg-surface-container-low p-md rounded-lg">
+            <div class="font-body-sm text-body-sm text-text-muted">Speicher</div>
+            <div class="font-display-xl text-[24px] text-on-surface">${usedMb} MB</div>
           </div>
         </div>
-      </div>
-
-      <div class="card">
-        <h2>server configuration</h2>
-        <form id="adminConfigForm" style="margin-top:16px">
-          <div class="form-row">
-            <label for="cfgMusicPath">music storage directory</label>
-            <input type="text" id="cfgMusicPath" name="musicPath" value="${esc(config.musicPath || '')}" />
-          </div>
-          <div class="form-row">
-            <label for="cfgStorage">max storage limit (GB)</label>
-            <input type="number" id="cfgStorage" name="maxStorageGb" value="${config.maxStorageGb || 50}" />
-          </div>
-          <button type="submit" class="btn-primary">save configuration</button>
-        </form>
-      </div>`;
+      </section>
+    `;
 
     document.getElementById('adminConfigForm').addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -422,9 +693,9 @@ const CumuAdmin = (() => {
       body.maxStorageGb = parseInt(body.maxStorageGb, 10);
       try {
         await CumuApi.put('/admin/config', body);
-        alert('Configuration saved!');
+        alert('Konfiguration gespeichert!');
       } catch (err) {
-        alert(err.message || 'Save failed');
+        alert(err.message || 'Speichern fehlgeschlagen');
       }
     });
   }
@@ -433,25 +704,30 @@ const CumuAdmin = (() => {
   async function renderLogsTab(container) {
     const logs = await CumuApi.get('/admin/logs');
     container.innerHTML = `
-      <div class="card">
-        <h2>system logs (${logs.length})</h2>
-        <div style="overflow-x:auto;max-height:500px">
-          <table>
+      <section class="flex flex-col gap-md">
+        <h2 class="font-title-md text-title-md text-on-surface border-b border-border-subtle pb-sm">System Logs (${logs.length})</h2>
+        <div class="w-full overflow-x-auto rounded-lg border border-border-subtle max-h-[500px]">
+          <table class="w-full text-left border-collapse whitespace-nowrap">
             <thead>
-              <tr><th>Time</th><th>Level</th><th>Category</th><th>Message</th></tr>
+              <tr class="border-b border-border-subtle bg-surface-bright sticky top-0">
+                <th class="p-sm font-label-caps text-label-caps text-text-muted font-normal">Zeit</th>
+                <th class="p-sm font-label-caps text-label-caps text-text-muted font-normal">Level</th>
+                <th class="p-sm font-label-caps text-label-caps text-text-muted font-normal">Kategorie</th>
+                <th class="p-sm font-label-caps text-label-caps text-text-muted font-normal">Nachricht</th>
+              </tr>
             </thead>
-            <tbody>
+            <tbody class="font-body-sm text-body-sm text-on-surface">
               ${logs.map(l => `
-                <tr>
-                  <td class="mute caption" style="white-space:nowrap">${new Date(l.timestamp * 1000).toLocaleString()}</td>
-                  <td><span class="chip">${l.level}</span></td>
-                  <td><code>${l.category}</code></td>
-                  <td>${esc(l.message)}</td>
+                <tr class="border-b border-border-subtle hover:bg-surface-bright transition-colors last:border-0">
+                  <td class="p-sm text-text-muted">${new Date(l.timestamp * 1000).toLocaleString()}</td>
+                  <td class="p-sm"><span class="px-xs py-[2px] rounded text-xs bg-surface-container-high text-text-muted">${l.level}</span></td>
+                  <td class="p-sm font-mono text-xs text-text-muted">${l.category}</td>
+                  <td class="p-sm whitespace-normal break-all">${esc(l.message)}</td>
                 </tr>`).join('')}
             </tbody>
           </table>
         </div>
-      </div>`;
+      </section>`;
   }
 
   return {

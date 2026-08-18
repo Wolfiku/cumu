@@ -9,8 +9,10 @@ const helmet   = require('helmet');
 const morgan   = require('morgan');
 const cors     = require('cors');
 
-const { initDB, getConfig } = require('./db');
+const { initDB, getDB, getConfig, setConfig } = require('./db');
 const { createWsServer }    = require('./websocket');
+const bcrypt = require('bcryptjs');
+const { v4: uuidv4 } = require('uuid');
 
 const authRoutes  = require('./routes/auth');
 const oauthRoutes = require('./routes/oauth');
@@ -19,6 +21,7 @@ const adminRoutes = require('./routes/admin');
 const streamRoutes = require('./routes/stream');
 const userRoutes  = require('./routes/user');
 const syncRoutes  = require('./routes/sync');
+const podcastRoutes = require('./routes/podcasts');
 
 const app = express();
 
@@ -86,6 +89,7 @@ app.use('/auth',   authRoutes);
 app.use('/oauth',  oauthRoutes);
 app.use('/api',    apiRoutes);
 app.use('/api/sync', syncRoutes);
+app.use('/api/podcasts', podcastRoutes);
 app.use('/admin',  adminRoutes);
 app.use('/stream', streamRoutes);
 app.use('/user',   userRoutes);
@@ -96,12 +100,53 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
+async function checkAutoSetup() {
+  const autoSetup = process.env.AUTO_SETUP;
+  const cfg = getConfig();
+  if ((autoSetup === 'true' || autoSetup === undefined || !cfg.setupDone) && !isSetupDone()) {
+    const db = getDB();
+    const existingUser = db.prepare('SELECT count(*) as count FROM users').get();
+    if (!existingUser || existingUser.count === 0) {
+      const adminUser = process.env.ADMIN_USER || 'admin';
+      const adminPass = process.env.ADMIN_PASS || 'admin';
+      const hash = await bcrypt.hash(adminPass, 12);
+      const id = uuidv4();
+      db.prepare('INSERT INTO users (id, username, password, role) VALUES (?, ?, ?, ?)').run(id, adminUser, hash, 'admin');
+      setConfig('setupDone', 'true');
+      console.log(`[cumu] Auto-setup complete: Created default admin user '${adminUser}'.`);
+    } else {
+      setConfig('setupDone', 'true');
+    }
+  }
+}
+
+function startBackgroundScanner() {
+  const musicPath = process.env.MUSIC_PATH || getConfig().musicPath || path.join(process.cwd(), 'music');
+  if (!fs.existsSync(musicPath)) {
+    try { fs.mkdirSync(musicPath, { recursive: true }); } catch {}
+  }
+  
+  adminRoutes.runLibraryScan().then(res => {
+    if (res.added > 0) {
+      console.log(`[cumu] Startup scan complete: ${res.added} new track(s) indexed.`);
+    }
+  }).catch(err => {
+    console.error('[cumu] Initial library scan error:', err.message);
+  });
+
+  setInterval(() => {
+    adminRoutes.runLibraryScan().catch(() => {});
+  }, 30000);
+}
+
 // ── HTTP + WebSocket Server ───────────────────────────────────────────────────
 
 const server = http.createServer(app);
 createWsServer(server);
 
-server.listen(PORT, HOST, () => {
+server.listen(PORT, HOST, async () => {
+  await checkAutoSetup();
+  startBackgroundScanner();
   console.log(`[cumu] Server running at http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
   console.log(`[cumu] WebSocket endpoint: ws://localhost:${PORT}/ws`);
   if (!isSetupDone()) {

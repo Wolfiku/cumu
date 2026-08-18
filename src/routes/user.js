@@ -8,7 +8,7 @@
 
 const express = require('express');
 const bcrypt  = require('bcryptjs');
-const { getDB } = require('../db');
+const { getDB, getConfig } = require('../db');
 const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
@@ -18,23 +18,27 @@ const ALLOWED_THEMES = ['klassik', 'coddy', 'material3'];
 // GET /user/settings
 router.get('/settings', requireAuth, (req, res) => {
   const db   = getDB();
+  const cfg  = getConfig();
   const user = db.prepare('SELECT id, username, role, theme, is_blocked FROM users WHERE id = ?').get(req.user.id);
   if (!user) return res.status(404).json({ error: 'User not found' });
   res.json({
-    username:  user.username,
-    role:      user.role,
-    theme:     user.theme || 'coddy',
-    isBlocked: !!user.is_blocked,
+    username:       user.username,
+    role:           user.role,
+    theme:          user.theme || 'coddy',
+    isBlocked:      !!user.is_blocked,
+    enablePodcasts: cfg.enablePodcasts !== false,
   });
 });
 
 // GET /user/me — alias for settings (used by login flow)
 router.get('/me', requireAuth, (req, res) => {
+  const cfg = getConfig();
   res.json({
-    userId:   req.user.id,
-    username: req.user.username,
-    role:     req.user.role,
-    theme:    req.user.theme || 'coddy',
+    userId:         req.user.id,
+    username:       req.user.username,
+    role:           req.user.role,
+    theme:          req.user.theme || 'coddy',
+    enablePodcasts: cfg.enablePodcasts !== false,
   });
 });
 
