@@ -1,6 +1,6 @@
 # cumu
 
-> A self-hosted music streaming application built with Node.js — own your music, own your data.
+> A lightweight, self-hosted music & podcast streaming server — own your music, own your data.
 
 ```
   ██████╗██╗   ██╗███╗   ███╗██╗   ██╗
@@ -13,337 +13,188 @@
 
 ---
 
-## Quick Install
+## 🚀 Quick Start (Docker)
+
+Get **cumu** up and running in seconds with zero manual setup required:
 
 ```bash
-# 1. Clone
+# 1. Clone repository
+git clone https://github.com/Wolfiku/cumu.git
+cd cumu
+
+# 2. Run with Docker Compose
+docker compose up -d
+```
+
+Open **`http://localhost:3000`** in your browser!
+- **Zero-Config**: Admin account (`admin` / `admin`) is created automatically on first run and auto-logged in.
+- **Drag & Drop Import**: Drop MP3, FLAC, M4A, WAV files or folders directly into your browser window or drop them into `./music` on your host.
+- **Auto-Updates**: Integrated **Watchtower** automatically checks for and applies new container releases in the background.
+
+---
+
+## ✨ Key Features
+
+```
+[+] Zero-Config Docker Container — pre-configured out-of-the-box with automatic setup
+[+] Instant Drag & Drop Import   — drop audio files or full folders into browser UI or ./music
+[+] Recursive Library Scanner    — auto-scans nested subdirectories (Artist/Album/Song.mp3)
+[+] Watchtower Auto-Updates      — background container updates from GitHub with zero downtime
+[+] Podcast Search & Player      — search millions of shows/episodes, manage feeds & progress
+[+] PWA & Offline Mode           — save playlists offline for playback without internet
+[+] Multi-Format Audio           — MP3, FLAC, M4A, AAC, WAV, OGG, OPUS, ALAC support
+[+] Embedded Artwork Extraction  — auto-extracts ID3 album covers or upload custom JPG/PNG
+[+] Audio Seeking & Range Stream — HTTP Range requests for instant scrubbing
+[+] Playlists & Library          — manage playlists, favorite songs, albums, and artists
+[+] Theme Engine                 — multiple built-in UI themes (Coddy, Material 3, Klassik)
+[+] 100% Self-Hosted & Private   — SQLite backend, no cloud dependency, no telemetry
+```
+
+---
+
+## 🐳 Docker Installation & Usage Guide
+
+### 1. Running with Docker Compose (Recommended)
+
+`docker-compose.yml` comes pre-configured with everything you need:
+
+```yaml
+services:
+  cumu:
+    build: .
+    image: ghcr.io/wolfiku/cumu:latest
+    container_name: cumu
+    restart: unless-stopped
+    ports:
+      - "${CUMU_PORT:-3000}:3000"
+    environment:
+      - NODE_ENV=production
+      - SESSION_SECRET=${SESSION_SECRET:-cumu-default-production-secret-change-me}
+      - AUTO_SETUP=${AUTO_SETUP:-true}
+      - ADMIN_USER=${ADMIN_USER:-admin}
+      - ADMIN_PASS=${ADMIN_PASS:-admin}
+      - MUSIC_PATH=/music
+    volumes:
+      - cumu_data:/app/data
+      - ${MUSIC_PATH:-./music}:/music
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: cumu_watchtower
+    restart: unless-stopped
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_POLL_INTERVAL=300
+      - WATCHTOWER_LABEL_ENABLE=true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  cumu_data:
+    driver: local
+```
+
+#### Launching the Container:
+```bash
+docker compose up -d
+```
+
+### 2. Default Login Credentials
+
+| Username | Default Password | Notes |
+|---|---|---|
+| `admin` | `admin` | Auto-created on first start. Change password anytime in **Settings**. |
+
+> **Single-User Auto-Login**: When accessing `http://localhost:3000` for the first time, cumu automatically authenticates your session as `admin` so you can start listening immediately.
+
+---
+
+### 3. Drag & Drop Music Import
+
+There are **two ways** to import music into cumu:
+
+1. **Browser Web UI (Any Device)**:
+   - Drag single audio files, multiple tracks, or entire folders directly onto the browser window.
+   - A drop overlay will appear automatically. Files will be uploaded, metadata extracted, and your library refreshed in real time.
+2. **Host Directory (`./music`)**:
+   - Copy or drop your audio files/folders directly into the `./music` directory on your host machine.
+   - The background scanner automatically indexes new files recursively every 30 seconds.
+
+---
+
+### 4. Automatic Container Updates (Watchtower)
+
+`cumu` includes **Watchtower** integration out of the box. Watchtower monitors GitHub for new container releases every 5 minutes and automatically updates your container without losing your database or session data.
+
+To trigger a manual update:
+```bash
+docker compose pull
+docker compose up -d --build
+```
+
+---
+
+## 💻 Manual Installation (Node.js)
+
+### Prerequisites
+
+| Requirement | Version |
+|---|---|
+| Node.js | >= 18.0.0 |
+| npm | >= 8.0.0 |
+| FFmpeg | Required for audio metadata extraction (`apk add ffmpeg` / `apt install ffmpeg`) |
+
+### Steps
+
+```bash
+# 1. Clone repository
 git clone https://github.com/Wolfiku/cumu.git
 cd cumu
 
 # 2. Install dependencies
 npm install
 
-# 3. Start
+# 3. (Optional) Copy environment template
+cp .env.example .env
+
+# 4. Start the server
 node src/server.js
 ```
 
-On first start, cumu binds to **http://localhost:3000** by default and redirects you straight to the setup wizard. No config files needed — everything is configured in the browser.
-
-> To change the port, set `PORT=XXXX` in a `.env` file before starting.
+App will start at **`http://localhost:3000`**.
 
 ---
 
-## Features
+## ⚙️ Environment Variables & Configuration
 
-```
-[+] First-time setup wizard          — configure everything in the browser
-[+] MP3 / AAC / ALAC / FLAC support  — broad audio format compatibility
-[+] Album upload (bulk)              — drop an entire album folder at once
-[+] Single song upload               — with manual metadata override
-[+] Embedded cover art extraction    — reads artwork directly from audio tags
-[+] External cover image upload      — attach a JPG/PNG as album artwork
-[+] Audio streaming with seek        — HTTP Range requests for instant scrubbing
-[+] Spoken word mode                 — 15-second forward/backward skip (audiobooks, podcasts)
-[+] Playlists                        — create, manage, add/remove songs
-[+] Library                          — save favourite songs and albums
-[+] Search                           — full-text across songs, albums, artists, playlists
-[+] Recommendations                  — recently played, most played, newest additions
-[+] Artist pages                     — all albums and songs per artist
-[+] Album pages                      — tracklist with cover art, play-all button
-[+] Now Playing page                 — full-screen view with 3-dot action menu
-[+] Song info / edit pages           — metadata detail and admin edit view
-[+] User management                  — admin can create/delete users and assign roles
-[+] Storage limit                    — configurable max library size with live progress bar
-[+] Responsive design                — works on mobile and desktop
-[+] No external services             — 100% self-hosted, no cloud dependency
-```
-
----
-
-## Requirements
-
-| Requirement | Version |
-|---|---|
-| Node.js | >= 18.0.0 |
-| npm | >= 8.0.0 |
-| OS | Linux, macOS, Windows |
-| Disk | Depends on your music library |
-
-> SQLite is used as the database — no separate database server needed.
-
----
-
-## Installation
-
-**1. Clone the repository**
-
-```bash
-git clone https://github.com/Wolfiku/cumu.git
-cd cumu
-```
-
-**2. Install dependencies**
-
-```bash
-npm install
-```
-
-**3. (Optional) Configure environment**
-
-```bash
-cp .env.example .env
-# edit .env if you want a different port or music path
-```
-
-**4. Start the server**
-
-```bash
-node src/server.js
-```
-
-Or with auto-reload during development:
-
-```bash
-npm run dev
-```
-
-**5. Open the app**
-
-```
-http://localhost:3000
-```
-
-On first start you will be redirected to the setup wizard automatically.
-
-> **Default port is 3000.** To use a different port, set `PORT=XXXX` in `.env`.
-
----
-
-## First-Time Setup
-
-When you open cumu for the first time, a setup wizard guides you through:
-
-```
-[+] Admin account     — choose a username and a strong password
-[+] Server settings   — port (default: 3000) and bind address (default: 0.0.0.0)
-[+] Music library     — absolute path where your audio files will be stored
-[+] Storage limit     — maximum total size of the music library in GB
-```
-
-After submitting, the server saves everything to the SQLite database and redirects you into the app. No restart required.
-
-> **Tip:** If you want to redo the setup, delete `data/cumu.db` and restart the server.
-
----
-
-## Usage
-
-### Navigation (bottom bar)
-
-| Tab | Description |
-|---|---|
-| `[~]` home | Recommendations: recently played, most played, new additions |
-| `[?]` search | Search across songs, albums, artists and playlists |
-| `[=]` library | Your saved songs, albums and playlists |
-
-### Playing music
-
-- **Click any song row** to start playing immediately.
-- The **Now Playing bar** appears at the bottom (above the nav).
-- **Click the Now Playing bar** to open the full-screen Now Playing view.
-- The **three-dot menu** (`…`) on any song or in the Now Playing view gives you:
-  - Add to playlist
-  - Save to library
-  - View song info
-  - View album / artist
-  - Edit (admin/creator only)
-
-### Spoken word mode (audiobooks & podcasts)
-
-Songs marked as *spoken word* use a different player layout:
-
-```
-  ◀15    [▶]    15▶
-```
-
-Instead of skip-to-next/previous, the buttons jump **15 seconds** forward or backward within the current track.
-
-Normal songs use the standard layout:
-
-```
-  [◀◀]   [▶]   [stop]   [▶▶]
-```
-
-### Playlists
-
-1. Go to **library** → click **[+] playlist**
-2. Enter a name and optional description
-3. Open any song's context menu (`…`) → **add to playlist**
-4. Open the playlist page to play or delete
-
----
-
-## Admin Panel
-
-Access via the **admin** button in the top navigation bar (visible to admin and creator roles only).
-
-### Upload
-
-```
-[+] drag & drop    — drop one or multiple audio files onto the upload zone
-[+] click to browse — standard file picker, supports multi-select
-[+] metadata override — manually set artist, album, title before uploading
-[+] cover image    — attach a JPG/PNG as album artwork
-[+] spoken word flag — mark the upload batch as audiobook/podcast
-```
-
-Supported audio formats: `.mp3` `.m4a` `.aac` `.flac` `.ogg` `.wav`
-
-Metadata is extracted automatically from ID3/Vorbis tags. Manual fields override the extracted values.
-
-### Songs tab
-
-- Lists every song in the library
-- **edit** — opens the song edit page (title, genre, year, track number, spoken word flag)
-- **del** — permanently deletes the song and removes the file from disk
-
-### Albums tab
-
-- Grid view of all albums with cover art
-- **delete album** — removes the album and all its songs from disk
-
-### Users tab *(admin only)*
-
-- Lists all registered users with their role
-- **[+] new user** — creates a user with a chosen role
-- **del** — removes a user (cannot delete yourself)
-
-### Stats tab
-
-```
-songs     albums     artists     users
-
-storage used: 2.31 / 50 GB  [████░░░░░░] 4%
-```
-
----
-
-## User Roles
-
-| Role | Permissions |
-|---|---|
-| `user` | Stream music, create playlists, save to library, view all pages |
-| `creator` | Everything a user can do + upload music, edit song metadata, delete songs/albums |
-| `admin` | Everything a creator can do + manage users, view stats, full admin panel |
-
----
-
-## API Reference
-
-All API endpoints require an active session (login first via `POST /auth/login`).
-
-### Auth
-
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/auth/setup` | Complete first-time setup |
-| `POST` | `/auth/login` | Log in |
-| `POST` | `/auth/logout` | Log out |
-| `GET`  | `/auth/me` | Get current user info |
-
-### Songs
-
-| Method | Path | Description |
-|---|---|---|
-| `GET`  | `/api/songs` | List all songs |
-| `GET`  | `/api/songs/:id` | Get a single song |
-| `POST` | `/api/songs/:id/play` | Record a play (increments counter) |
-| `PUT`  | `/admin/songs/:id` | Edit song metadata *(admin/creator)* |
-| `DELETE` | `/admin/songs/:id` | Delete song + file *(admin/creator)* |
-
-### Albums
-
-| Method | Path | Description |
-|---|---|---|
-| `GET`  | `/api/albums` | List all albums |
-| `GET`  | `/api/albums/:id` | Album detail + tracklist |
-| `DELETE` | `/admin/albums/:id` | Delete album + all songs *(admin/creator)* |
-
-### Artists
-
-| Method | Path | Description |
-|---|---|---|
-| `GET`  | `/api/artists` | List all artists |
-| `GET`  | `/api/artists/:id` | Artist detail + albums + songs |
-
-### Playlists
-
-| Method | Path | Description |
-|---|---|---|
-| `GET`  | `/api/playlists` | List user's playlists |
-| `POST` | `/api/playlists` | Create playlist |
-| `GET`  | `/api/playlists/:id` | Playlist detail + songs |
-| `POST` | `/api/playlists/:id/songs` | Add song to playlist |
-| `DELETE` | `/api/playlists/:id/songs/:songId` | Remove song from playlist |
-| `DELETE` | `/api/playlists/:id` | Delete playlist |
-
-### Upload & Stream
-
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/admin/upload` | Upload audio files (multipart/form-data) |
-| `GET`  | `/stream/:songId` | Stream audio (supports Range header) |
-| `GET`  | `/stream/cover/:filename` | Serve cover art image |
-
-### Home / Search / Library
-
-| Method | Path | Description |
-|---|---|---|
-| `GET`  | `/api/home` | Recommendations (recent, popular, new) |
-| `GET`  | `/api/search?q=...` | Search songs, albums, artists, playlists |
-| `GET`  | `/api/library` | User's saved songs, albums, playlists |
-| `POST` | `/api/library/song` | Save a song to library |
-
-### Admin
-
-| Method | Path | Description |
-|---|---|---|
-| `GET`  | `/api/stats` | Library statistics *(admin)* |
-| `GET`  | `/api/users` | List users *(admin)* |
-| `POST` | `/api/users` | Create user *(admin)* |
-| `DELETE` | `/api/users/:id` | Delete user *(admin)* |
-
----
-
-## Configuration
-
-All configuration is stored in the SQLite database after setup. You can also use a `.env` file to pre-set some values:
-
-```bash
-cp .env.example .env
-```
+You can customize runtime settings via `.env` or Docker environment variables:
 
 | Variable | Default | Description |
 |---|---|---|
-| `PORT` | `3000` | Port the server listens on |
-| `HOST` | `0.0.0.0` | Bind address |
-| `SESSION_SECRET` | *(auto-generated)* | Secret for session signing |
-| `MUSIC_PATH` | `./music` | Path to store audio files |
-| `MAX_STORAGE_GB` | `50` | Max library size in GB |
-| `DB_PATH` | `./data/cumu.db` | SQLite database path |
+| `CUMU_PORT` | `3000` | HTTP port server listens on |
+| `HOST` | `0.0.0.0` | Network interface binding address |
+| `AUTO_SETUP` | `true` | Auto-creates default admin user if database is empty |
+| `ADMIN_USER` | `admin` | Default admin username for auto-setup |
+| `ADMIN_PASS` | `admin` | Default admin password for auto-setup |
+| `SESSION_SECRET` | *(auto-generated)* | Secret key used for signing session cookies |
+| `MUSIC_PATH` | `./music` | Path to host music storage folder |
+| `MAX_STORAGE_GB` | `50` | Maximum library storage quota in GB |
+| `DB_PATH` | `./data/cumu.db` | Path to SQLite database file |
 
-> Values in `.env` are used as **fallback defaults** only. The setup wizard always takes precedence.
+---
 
-### Running on a VPS / behind a reverse proxy
+## 📡 Reverse Proxy Setup (Nginx Example)
 
-If you run cumu behind Nginx or Caddy, set `HOST=127.0.0.1` and proxy to the chosen port:
+If running behind Nginx, configure WebSocket support and client body limits:
 
 ```nginx
 server {
     listen 80;
     server_name music.example.com;
 
-    client_max_body_size 500M;
+    client_max_body_size 1000M;
 
     location / {
         proxy_pass http://127.0.0.1:3000;
@@ -356,63 +207,26 @@ server {
 }
 ```
 
-### Running with PM2 (auto-restart)
+---
 
-```bash
-npm install -g pm2
-pm2 start src/server.js --name cumu
-pm2 save
-pm2 startup
-```
+## 📖 API Reference
+
+### Auth
+- `POST /auth/login` — Session login
+- `POST /auth/logout` — Session logout
+- `GET /auth/me` — Get current authenticated user details
+
+### Music & Library
+- `GET /api/songs` — List all songs
+- `GET /api/albums` — List all albums
+- `GET /api/artists` — List all artists
+- `GET /api/playlists` — List user playlists
+- `POST /api/upload` — Upload audio files via Drag & Drop / Form
+- `GET /stream/:songId` — Stream audio with HTTP Range support
 
 ---
 
-## Project Structure
+## 📄 License
 
-```
-cumu/
-├── src/
-│   ├── server.js           # Express app, middleware, routing
-│   ├── db.js               # SQLite schema, getDB(), getConfig(), setConfig()
-│   └── routes/
-│       ├── auth.js         # /auth — login, logout, setup, /me
-│       ├── api.js          # /api  — songs, albums, artists, playlists, search, home
-│       ├── admin.js        # /admin — upload (multer), edit, delete
-│       └── stream.js       # /stream — audio range streaming, cover art serving
-├── public/
-│   ├── index.html          # SPA shell (nav, now-playing bar, login modal)
-│   ├── setup.html          # First-run setup wizard
-│   ├── css/
-│   │   └── style.css       # Full design system (OpenCode-inspired)
-│   └── js/
-│       └── app.js          # SPA logic (routing, audio engine, all views)
-├── data/                   # Auto-created — SQLite DB + session store
-├── music/                  # Default music storage (configurable)
-├── .env.example            # Environment variable template
-├── package.json
-├── LICENSE
-└── README.md
-```
+Distributed under the **MIT License**. See [`LICENSE`](./LICENSE) for more information.
 
----
-
-## Tech Stack
-
-| Layer | Technology |
-|---|---|
-| Runtime | Node.js 18+ |
-| Web framework | Express 4 |
-| Database | SQLite via `better-sqlite3` |
-| Session store | `connect-sqlite3` |
-| Audio metadata | `music-metadata` |
-| File upload | `multer` |
-| Auth | `bcryptjs` + session cookies |
-| Frontend | Vanilla JS SPA (no framework) |
-| Fonts | JetBrains Mono (Google Fonts) |
-| Design system | Based on OpenCode DESIGN.md |
-
----
-
-## License
-
-MIT — see [LICENSE](./LICENSE) for details.
