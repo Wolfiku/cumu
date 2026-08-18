@@ -17,7 +17,7 @@ NC="\033[0m"
 BOLD="\033[1m"
 
 INSTALL_DIR="/opt/cumu"
-REPO="https://github.com/Wolfiku/cumu-music"
+REPO="https://github.com/Wolfiku/cumu"
 ARCHIVE_URL="${REPO}/archive/refs/heads/main.tar.gz"
 FORCE_RESTART=false
 
@@ -40,7 +40,7 @@ if [[ -f "${INSTALL_DIR}/.installed_sha" ]]; then
   CURRENT_SHA=$(cat "${INSTALL_DIR}/.installed_sha")
 fi
 
-LATEST_SHA=$(curl -fsSL "https://api.github.com/repos/Wolfiku/cumu-music/commits/main" \
+LATEST_SHA=$(curl -fsSL "https://api.github.com/repos/Wolfiku/cumu/commits/main" \
   | grep '"sha"' | head -1 | cut -d'"' -f4 | cut -c1-12 || echo "unknown")
 
 log "Current: ${CURRENT_SHA}"

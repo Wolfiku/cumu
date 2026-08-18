@@ -2,7 +2,10 @@ name: Release
 
 on:
   push:
+    branches:
+      - main
     tags:
+      - 'v*'
       - 'v*.*.*'
 
 permissions:
@@ -162,16 +165,16 @@ jobs:
 
             **Docker:**
             ```bash
-            docker pull ghcr.io/wolfiku/cumu-music:${{ github.ref_name }}
+            docker pull ghcr.io/wolfiku/cumu:${{ github.ref_name }}
             ```
 
             **APT / .deb:**
             ```bash
-            wget https://github.com/Wolfiku/cumu-music/releases/download/${{ github.ref_name }}/$(ls cumu_*.deb)
+            wget https://github.com/Wolfiku/cumu/releases/download/${{ github.ref_name }}/$(ls cumu_*.deb)
             sudo dpkg -i cumu_*.deb
             ```
 
             **One-line installer:**
             ```bash
-            curl -fsSL https://raw.githubusercontent.com/Wolfiku/cumu-music/main/scripts/install.sh | sudo bash
+            curl -fsSL https://raw.githubusercontent.com/Wolfiku/cumu/main/scripts/install.sh | sudo bash
             ```
