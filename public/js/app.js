@@ -80,6 +80,8 @@ function showToast(msg) {
   let rightSidebarTab = 'pinned'; // 'pinned' | 'queue'
 
   const PIN_KEYS = {
+    PODCASTS: 'podcasts',
+    FAVORITES: 'favorites',
     playlist: (id) => `playlist:${id}`
   };
 
@@ -90,7 +92,7 @@ function showToast(msg) {
     }
     try {
       const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed.filter(k => typeof k === 'string' && k.startsWith('playlist:')) : [];
+      return Array.isArray(parsed) ? parsed.filter(k => typeof k === 'string' && (k.startsWith('playlist:') || k === 'podcasts' || k === 'favorites')) : [];
     } catch (_) {
       return [];
     }
@@ -120,6 +122,28 @@ function showToast(msg) {
             iconColor: 'text-primary'
           });
         }
+      } else if (key === 'podcasts' && currentUser?.enablePodcasts !== false) {
+        cards.push({
+          key,
+          title: 'Podcasts',
+          subtitle: 'Shows & Episoden',
+          typeLabel: 'Podcast',
+          icon: 'podcasts',
+          onClick: "navigate('podcasts')",
+          bgClass: 'bg-primary-fixed/30 text-primary',
+          iconColor: 'text-primary'
+        });
+      } else if (key === 'favorites') {
+        cards.push({
+          key,
+          title: 'Lieblingslieder',
+          subtitle: `${favorites.size} Titel`,
+          typeLabel: 'Kategorie',
+          icon: 'favorite',
+          onClick: "navigate('favorites')",
+          bgClass: 'bg-error-container/30 text-error',
+          iconColor: 'text-error'
+        });
       }
     }
     return cards;
@@ -194,16 +218,10 @@ function showToast(msg) {
       keys = keys.filter(k => k !== key);
     } else {
       keys.push(key);
-      rightSidebarTab = 'pinned';
     }
     localStorage.setItem('cumu_pinned_items', JSON.stringify(keys));
     syncPush();
 
-    if (window.innerWidth >= 1280 && !isQueueOpen) {
-      isQueueOpen = true;
-    }
-
-    updateQueueUI();
     updateLeftNavPinned();
 
     if (currentPage === 'library')       renderLibrary();
@@ -394,7 +412,9 @@ function showToast(msg) {
     CumuApi.onWsMessage(handleWsMessage);
 
     await syncRestore();
-    loadPlaylists();
+    await loadPlaylists();
+    updateLeftNavPinned();
+    updateQueueUI();
     navigate('discover');
   }
 
@@ -448,12 +468,13 @@ function showToast(msg) {
             localStorage.setItem('cumu_show_podcasts', state.extraSettings.showPodcasts ? 'true' : 'false');
           }
           updateNavigation();
+          updateLeftNavPinned();
         }
       }
     } catch (_) {}
   }
 
-  async function syncPush(updates = {}) {
+  async function syncPush(updates = {}, isRetry = false) {
     try {
       const res = await CumuApi.post('/api/sync', {
         volume: activeAudio.volume,
@@ -474,6 +495,9 @@ function showToast(msg) {
       if (res.conflict) {
         serverVersion = res.serverState.version;
         if (res.serverState.theme) applyTheme(res.serverState.theme);
+        if (!isRetry) {
+          await syncPush(updates, true);
+        }
       } else if (res.version) {
         serverVersion = res.version;
       }
@@ -491,6 +515,10 @@ function showToast(msg) {
       if (s.extraSettings) {
         if (s.extraSettings.crossfadeDuration !== undefined) crossfadeDuration = s.extraSettings.crossfadeDuration;
         if (s.extraSettings.gaplessEnabled !== undefined) gaplessEnabled = s.extraSettings.gaplessEnabled;
+        if (Array.isArray(s.extraSettings.pinnedItems)) {
+          localStorage.setItem('cumu_pinned_items', JSON.stringify(s.extraSettings.pinnedItems));
+          updateLeftNavPinned();
+        }
       }
     }
   }
@@ -1157,7 +1185,7 @@ function showToast(msg) {
       isQueueOpen = !isQueueOpen;
     }
 
-    applyQueueVisibility();
+    updateQueueUI();
   }
 
   function applyQueueVisibility() {
@@ -1201,68 +1229,6 @@ function showToast(msg) {
   function renderQueueContent(containerEl, isMobileModal = false) {
     if (!containerEl) return;
 
-    const pinnedCards = getPinnedCardsData();
-
-    // On Desktop Right Sidebar, support Tabbed switching (Angepinnt vs Queue)
-    if (!isMobileModal) {
-      const headerHTML = `
-        <div class="flex items-center justify-between p-sm md:p-md border-b border-border-subtle bg-surface-container-lowest flex-shrink-0">
-          <div class="flex items-center gap-xs">
-            <button class="flex items-center gap-xs px-md py-xs rounded-lg text-body-sm font-bold transition-all ${rightSidebarTab === 'pinned' ? 'bg-surface-container-high text-text-high-contrast shadow-xs' : 'text-text-muted hover:text-text-high-contrast'}" onclick="CumuApp.setRightSidebarTab('pinned')">
-              <span class="material-symbols-outlined text-[18px] text-primary" style="font-variation-settings: 'FILL' 1;">push_pin</span>
-              Angepinnt (${pinnedCards.length})
-            </button>
-            <button class="flex items-center gap-xs px-md py-xs rounded-lg text-body-sm font-bold transition-all ${rightSidebarTab === 'queue' ? 'bg-surface-container-high text-text-high-contrast shadow-xs' : 'text-text-muted hover:text-text-high-contrast'}" onclick="CumuApp.setRightSidebarTab('queue')">
-              <span class="material-symbols-outlined text-[18px]">queue_music</span>
-              Queue (${queue.length})
-            </button>
-          </div>
-          <button class="w-8 h-8 rounded-full bg-surface-container-low text-text-muted hover:text-text-high-contrast flex items-center justify-center transition-colors hover:scale-105 active:scale-95" onclick="CumuApp.toggleQueue()" title="Schließen">
-            <span class="material-symbols-outlined text-[18px]">close</span>
-          </button>
-        </div>`;
-
-      if (rightSidebarTab === 'pinned') {
-        let pinnedHTML = '';
-        if (!pinnedCards.length) {
-          pinnedHTML = `
-            <div class="flex flex-col items-center justify-center h-64 text-text-muted gap-sm text-center px-md">
-              <span class="material-symbols-outlined text-[48px] opacity-40">push_pin</span>
-              <p class="text-body-md font-bold text-text-high-contrast">Keine angepinnten Elemente</p>
-              <p class="text-body-sm">Klicke auf das Pin-Symbol bei einer Playlist, einem Podcast oder den Lieblingsliedern, um sie hier in der Sidebar zu verankern.</p>
-            </div>`;
-        } else {
-          pinnedHTML = pinnedCards.map(item => `
-            <div class="group flex items-center gap-md w-full p-xs rounded-xl hover:bg-surface-container-low border border-transparent hover:border-border-subtle cursor-pointer transition-all duration-200" onclick="${item.onClick}">
-              <div class="w-12 h-12 rounded-lg overflow-hidden ${item.bgClass} flex-shrink-0 flex items-center justify-center border border-border-subtle relative">
-                ${item.cover ? `<img src="${item.cover}" class="w-full h-full object-cover group-hover:scale-105 transition-transform" />` : `<span class="material-symbols-outlined text-[24px] ${item.iconColor}">${item.icon}</span>`}
-              </div>
-              <div class="flex-1 min-w-0">
-                <div class="text-[11px] font-bold uppercase tracking-wider text-text-muted mb-[1px]">${esc(item.typeLabel)}</div>
-                <div class="font-bold text-body-md truncate text-text-high-contrast group-hover:text-primary transition-colors">
-                  ${esc(item.title)}
-                </div>
-                <div class="text-body-sm text-text-muted truncate">
-                  ${esc(item.subtitle)}
-                </div>
-              </div>
-              <button class="w-8 h-8 rounded-full text-text-muted hover:text-red-500 hover:bg-red-500/10 flex items-center justify-center transition-colors flex-shrink-0 opacity-40 group-hover:opacity-100" onclick="CumuApp.togglePin('${item.key}', event)" title="Vom Dashboard abpinnen">
-                <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 1;">push_pin</span>
-              </button>
-            </div>
-          `).join('');
-        }
-
-        containerEl.innerHTML = `
-          ${headerHTML}
-          <div class="flex-1 overflow-y-auto p-md space-y-xs">
-            ${pinnedHTML}
-          </div>`;
-        return;
-      }
-    }
-
-    // Queue rendering
     let listHTML = '';
     if (!queue.length) {
       listHTML = `
@@ -1319,8 +1285,9 @@ function showToast(msg) {
       });
     }
 
-    const headerHTML = isMobileModal ? `
-      <div class="flex items-center justify-between p-md md:p-lg border-b border-border-subtle bg-surface-container-lowest flex-shrink-0">
+    containerEl.innerHTML = `
+      <!-- Header -->
+      <div class="flex items-center justify-between p-md border-b border-border-subtle bg-surface-container-lowest flex-shrink-0">
         <div class="flex items-center gap-xs">
           <span class="material-symbols-outlined text-primary text-[24px]">queue_music</span>
           <h2 class="text-title-md font-bold text-text-high-contrast">Warteschlange</h2>
@@ -1332,25 +1299,9 @@ function showToast(msg) {
             <span class="material-symbols-outlined text-[20px]">close</span>
           </button>
         </div>
-      </div>` : `
-      <div class="flex items-center justify-between p-sm md:p-md border-b border-border-subtle bg-surface-container-lowest flex-shrink-0">
-        <div class="flex items-center gap-xs">
-          <button class="flex items-center gap-xs px-md py-xs rounded-lg text-body-sm font-bold transition-all ${rightSidebarTab === 'pinned' ? 'bg-surface-container-high text-text-high-contrast shadow-xs' : 'text-text-muted hover:text-text-high-contrast'}" onclick="CumuApp.setRightSidebarTab('pinned')">
-            <span class="material-symbols-outlined text-[18px] text-primary" style="font-variation-settings: 'FILL' 1;">push_pin</span>
-            Angepinnt (${pinnedCards.length})
-          </button>
-          <button class="flex items-center gap-xs px-md py-xs rounded-lg text-body-sm font-bold transition-all ${rightSidebarTab === 'queue' ? 'bg-surface-container-high text-text-high-contrast shadow-xs' : 'text-text-muted hover:text-text-high-contrast'}" onclick="CumuApp.setRightSidebarTab('queue')">
-            <span class="material-symbols-outlined text-[18px]">queue_music</span>
-            Queue (${queue.length})
-          </button>
-        </div>
-        <button class="w-8 h-8 rounded-full bg-surface-container-low text-text-muted hover:text-text-high-contrast flex items-center justify-center transition-colors hover:scale-105 active:scale-95" onclick="CumuApp.toggleQueue()" title="Schließen">
-          <span class="material-symbols-outlined text-[18px]">close</span>
-        </button>
-      </div>`;
+      </div>
 
-    containerEl.innerHTML = `
-      ${headerHTML}
+      <!-- Scrollable List -->
       <div class="queue-items-list flex-1 overflow-y-auto p-md space-y-xs">
         ${listHTML}
       </div>`;
@@ -1451,6 +1402,7 @@ function showToast(msg) {
   async function loadPlaylists() {
     try {
       playlists = await CumuApi.get('/api/playlists');
+      updateLeftNavPinned();
     } catch (_) {}
   }
 
@@ -2847,11 +2799,6 @@ function showToast(msg) {
             <button class="w-12 h-12 rounded-full relative flex items-center justify-center transition-all duration-200 hover:scale-110 active:scale-95 ${repeatMode !== 'none' ? 'np-toggle-btn active bg-text-high-contrast text-background shadow-md' : 'bg-surface-container-low text-text-muted hover:text-text-high-contrast'}" onclick="CumuApp.toggleRepeat()" title="Wiederholung: ${repeatMode}">
               <span class="material-symbols-outlined text-[24px]">${repeatMode === 'one' ? 'repeat_one' : 'repeat'}</span>
             </button>
-            
-            <!-- Queue Toggle Button -->
-            <button class="w-10 h-10 rounded-full bg-surface-container-low text-text-muted hover:text-text-high-contrast transition-colors flex items-center justify-center hover:scale-105 active:scale-95" onclick="CumuApp.toggleQueue()" title="Warteschlange anzeigen/schließen">
-              <span class="material-symbols-outlined">queue_music</span>
-            </button>
           </div>
 
           <!-- 4. Secondary Action Bar -->
@@ -2861,8 +2808,8 @@ function showToast(msg) {
               <span class="material-symbols-outlined text-[22px]" style="${isFav ? "font-variation-settings: 'FILL' 1;" : ""}">${isFav ? 'favorite' : 'favorite'}</span>
             </button>
 
-            <!-- Queue -->
-            <button class="w-10 h-10 rounded-full bg-surface-container-low text-text-muted hover:text-text-high-contrast transition-colors flex items-center justify-center hover:scale-105 active:scale-95" onclick="CumuApp.showQueuePanel()" title="Warteschlange anzeigen">
+            <!-- Queue (Warteschlange) -->
+            <button class="w-10 h-10 rounded-full bg-surface-container-low text-text-muted hover:text-text-high-contrast transition-colors flex items-center justify-center hover:scale-105 active:scale-95" onclick="CumuApp.toggleQueue()" title="Warteschlange umschalten">
               <span class="material-symbols-outlined text-[22px]">queue_music</span>
             </button>
 

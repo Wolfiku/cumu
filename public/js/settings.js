@@ -105,6 +105,46 @@ function renderSettingsPage(user, audioSettings = {}) {
     </div>
   </div>
 
+  <!-- ── Section: Navigation & Sichtbarkeit ──────────────────────── -->
+  ${(() => {
+    const showFavoritesVal = window.CumuApp?.getShowFavorites ? window.CumuApp.getShowFavorites() : (localStorage.getItem('cumu_show_favorites') !== 'false');
+    const showPodcastsVal = window.CumuApp?.getShowPodcasts ? window.CumuApp.getShowPodcasts() : (localStorage.getItem('cumu_show_podcasts') !== 'false');
+    return `
+      <div class="bg-surface-bright border border-border-subtle rounded-xl p-xl mb-xl">
+        <h2 class="text-title-md font-title-md text-text-high-contrast font-bold mb-xs">Navigation & Menü-Sichtbarkeit</h2>
+        <p class="text-body-sm text-text-muted mb-lg">Pass an, welche Bereiche in der Sidebar und Mediathek angezeigt werden.</p>
+
+        <div class="flex flex-col gap-md">
+          <!-- Show Favorites Toggle -->
+          <div class="flex items-center justify-between gap-md p-md bg-background border border-border-subtle rounded-lg">
+            <div>
+              <div class="text-body-lg font-medium text-text-high-contrast">Lieblingslieder anzeigen</div>
+              <div class="text-body-sm text-text-muted mt-xs">Blendet "Lieblingslieder" in der linken Navigation und Mediathek ein.</div>
+            </div>
+            <label class="relative inline-block w-12 h-6 cursor-pointer flex-shrink-0">
+              <input type="checkbox" id="settingsShowFavoritesToggle" ${showFavoritesVal ? 'checked' : ''} class="opacity-0 w-0 h-0">
+              <span id="showFavoritesSliderBg" class="absolute inset-0 ${showFavoritesVal ? 'bg-text-high-contrast' : 'bg-border-subtle'} rounded-full transition-colors"></span>
+              <span id="showFavoritesSliderKnob" class="absolute top-1 ${showFavoritesVal ? 'left-7' : 'left-1'} w-4 h-4 bg-white rounded-full transition-all"></span>
+            </label>
+          </div>
+
+          <!-- Show Podcasts Toggle -->
+          <div class="flex items-center justify-between gap-md p-md bg-background border border-border-subtle rounded-lg">
+            <div>
+              <div class="text-body-lg font-medium text-text-high-contrast">Podcasts anzeigen</div>
+              <div class="text-body-sm text-text-muted mt-xs">Blendet "Podcasts" in der linken Navigation und Mediathek ein.</div>
+            </div>
+            <label class="relative inline-block w-12 h-6 cursor-pointer flex-shrink-0">
+              <input type="checkbox" id="settingsShowPodcastsToggle" ${showPodcastsVal ? 'checked' : ''} class="opacity-0 w-0 h-0">
+              <span id="showPodcastsSliderBg" class="absolute inset-0 ${showPodcastsVal ? 'bg-text-high-contrast' : 'bg-border-subtle'} rounded-full transition-colors"></span>
+              <span id="showPodcastsSliderKnob" class="absolute top-1 ${showPodcastsVal ? 'left-7' : 'left-1'} w-4 h-4 bg-white rounded-full transition-all"></span>
+            </label>
+          </div>
+        </div>
+      </div>
+    `;
+  })()}
+
   <!-- ── Section 4: Offline-Speicher & Downloads ──────────────────── -->
   <div class="bg-surface-bright border border-border-subtle rounded-xl p-xl mb-xl">
     <h2 class="text-title-md font-title-md text-text-high-contrast font-bold mb-xs">Offline-Speicher & Downloads</h2>
@@ -238,6 +278,46 @@ async function initSettingsPage() {
       }
 
       await saveAudioSettings({ podcastSearchEnabled: isEnabled });
+    });
+  }
+
+  // ── Show Favorites Toggle Handler ──────────────────────────────────
+  const showFavToggle = document.getElementById('settingsShowFavoritesToggle');
+  if (showFavToggle) {
+    showFavToggle.addEventListener('change', () => {
+      const isEnabled = showFavToggle.checked;
+      const bg = document.getElementById('showFavoritesSliderBg');
+      const knob = document.getElementById('showFavoritesSliderKnob');
+      if (bg) {
+        bg.classList.toggle('bg-text-high-contrast', isEnabled);
+        bg.classList.toggle('bg-border-subtle', !isEnabled);
+      }
+      if (knob) {
+        knob.style.left = isEnabled ? '28px' : '4px';
+      }
+      if (window.CumuApp?.setShowFavorites) {
+        window.CumuApp.setShowFavorites(isEnabled);
+      }
+    });
+  }
+
+  // ── Show Podcasts Toggle Handler ───────────────────────────────────
+  const showPodToggle = document.getElementById('settingsShowPodcastsToggle');
+  if (showPodToggle) {
+    showPodToggle.addEventListener('change', () => {
+      const isEnabled = showPodToggle.checked;
+      const bg = document.getElementById('showPodcastsSliderBg');
+      const knob = document.getElementById('showPodcastsSliderKnob');
+      if (bg) {
+        bg.classList.toggle('bg-text-high-contrast', isEnabled);
+        bg.classList.toggle('bg-border-subtle', !isEnabled);
+      }
+      if (knob) {
+        knob.style.left = isEnabled ? '28px' : '4px';
+      }
+      if (window.CumuApp?.setShowPodcasts) {
+        window.CumuApp.setShowPodcasts(isEnabled);
+      }
     });
   }
 
