@@ -76,25 +76,23 @@ function showToast(msg) {
   let savedVolume       = 1.0;
   let favorites         = new Set(JSON.parse(localStorage.getItem('cumu_favorites') || '[]'));
 
-  // ── Pinned Items Management ──────────────────────────────────────────────────
+  // ── Pinned Items Management (Playlists Only) ────────────────────────────────
   let rightSidebarTab = 'pinned'; // 'pinned' | 'queue'
 
   const PIN_KEYS = {
-    PODCASTS: 'special:podcasts',
-    FAVORITES: 'special:favorites',
     playlist: (id) => `playlist:${id}`
   };
 
   function getPinnedKeys() {
     const raw = localStorage.getItem('cumu_pinned_items');
     if (raw === null) {
-      return [PIN_KEYS.PODCASTS, PIN_KEYS.FAVORITES];
+      return [];
     }
     try {
       const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [PIN_KEYS.PODCASTS, PIN_KEYS.FAVORITES];
+      return Array.isArray(parsed) ? parsed.filter(k => typeof k === 'string' && k.startsWith('playlist:')) : [];
     } catch (_) {
-      return [PIN_KEYS.PODCASTS, PIN_KEYS.FAVORITES];
+      return [];
     }
   }
 
@@ -106,31 +104,7 @@ function showToast(msg) {
     const pinnedKeys = getPinnedKeys();
     const cards = [];
     for (const key of pinnedKeys) {
-      if (key === PIN_KEYS.PODCASTS) {
-        if (currentUser?.enablePodcasts !== false) {
-          cards.push({
-            key,
-            title: 'Podcasts',
-            subtitle: 'Shows & Episoden',
-            typeLabel: 'Podcast',
-            icon: 'podcasts',
-            onClick: "navigate('podcasts')",
-            bgClass: 'bg-primary-fixed/30 text-primary',
-            iconColor: 'text-primary'
-          });
-        }
-      } else if (key === PIN_KEYS.FAVORITES) {
-        cards.push({
-          key,
-          title: 'Lieblingslieder',
-          subtitle: `${favorites.size} Titel`,
-          typeLabel: 'Kategorie',
-          icon: 'favorite',
-          onClick: "navigate('favorites')",
-          bgClass: 'bg-error-container/30 text-error',
-          iconColor: 'text-error'
-        });
-      } else if (key.startsWith('playlist:')) {
+      if (typeof key === 'string' && key.startsWith('playlist:')) {
         const plId = key.replace('playlist:', '');
         const pl = playlists.find(p => p.id === plId);
         if (pl) {
@@ -149,6 +123,27 @@ function showToast(msg) {
       }
     }
     return cards;
+  }
+
+  // ── Navigation & Menu Visibility Preferences ──────────────────────────────
+  function getShowFavorites() {
+    return localStorage.getItem('cumu_show_favorites') !== 'false';
+  }
+
+  function setShowFavorites(show) {
+    localStorage.setItem('cumu_show_favorites', show ? 'true' : 'false');
+    updateNavigation();
+    syncPush();
+  }
+
+  function getShowPodcasts() {
+    return localStorage.getItem('cumu_show_podcasts') !== 'false';
+  }
+
+  function setShowPodcasts(show) {
+    localStorage.setItem('cumu_show_podcasts', show ? 'true' : 'false');
+    updateNavigation();
+    syncPush();
   }
 
   function setRightSidebarTab(tab) {
@@ -369,11 +364,16 @@ function showToast(msg) {
   }
 
   window.updateNavigation = function() {
-    if (currentUser?.enablePodcasts === false) {
-      document.getElementById('navItem-podcasts')?.classList.add('hidden');
-    } else {
-      document.getElementById('navItem-podcasts')?.classList.remove('hidden');
-    }
+    const showFav = getShowFavorites();
+    const showPod = getShowPodcasts() && currentUser?.enablePodcasts !== false;
+
+    const navFav = document.getElementById('navItem-favorites');
+    if (navFav) navFav.classList.toggle('hidden', !showFav);
+
+    const navPod = document.getElementById('navItem-podcasts');
+    if (navPod) navPod.classList.toggle('hidden', !showPod);
+
+    if (currentPage === 'library') renderLibrary();
   };
 
   async function onLoginSuccess() {
@@ -441,6 +441,13 @@ function showToast(msg) {
           if (Array.isArray(state.extraSettings.pinnedItems)) {
             localStorage.setItem('cumu_pinned_items', JSON.stringify(state.extraSettings.pinnedItems));
           }
+          if (state.extraSettings.showFavorites !== undefined) {
+            localStorage.setItem('cumu_show_favorites', state.extraSettings.showFavorites ? 'true' : 'false');
+          }
+          if (state.extraSettings.showPodcasts !== undefined) {
+            localStorage.setItem('cumu_show_podcasts', state.extraSettings.showPodcasts ? 'true' : 'false');
+          }
+          updateNavigation();
         }
       }
     } catch (_) {}
@@ -454,7 +461,13 @@ function showToast(msg) {
         lastPosition: activeAudio.currentTime || 0,
         theme: currentTheme,
         clientVersion: serverVersion,
-        extraSettings: { crossfadeDuration, gaplessEnabled, pinnedItems: getPinnedKeys() },
+        extraSettings: {
+          crossfadeDuration,
+          gaplessEnabled,
+          pinnedItems: getPinnedKeys(),
+          showFavorites: getShowFavorites(),
+          showPodcasts: getShowPodcasts(),
+        },
         ...updates,
       });
 
@@ -1836,43 +1849,35 @@ function showToast(msg) {
               <h2 class="text-title-md font-title-md text-text-high-contrast font-bold">Schnellzugriff</h2>
             </div>
             <div class="flex flex-col gap-md">
-              ${(() => {
-                const favPinned = pinnedKeys.includes(PIN_KEYS.FAVORITES);
-                return `
-                  <div class="group flex items-center justify-between p-sm rounded-lg hover:bg-surface-container-low cursor-pointer transition-colors" onclick="navigate('favorites')">
-                    <div class="flex items-center gap-md">
-                      <div class="w-10 h-10 rounded-lg bg-error-container/40 flex items-center justify-center text-error">
-                        <span class="material-symbols-outlined text-[24px]">favorite</span>
-                      </div>
-                      <div>
-                        <h3 class="text-body-lg font-medium text-text-high-contrast">Lieblingslieder</h3>
-                        <p class="text-body-sm text-text-muted">${favorites.size} Titel</p>
-                      </div>
+              ${getShowFavorites() ? `
+                <div class="group flex items-center justify-between p-sm rounded-lg hover:bg-surface-container-low cursor-pointer transition-colors" onclick="navigate('favorites')">
+                  <div class="flex items-center gap-md">
+                    <div class="w-10 h-10 rounded-lg bg-error-container/40 flex items-center justify-center text-error">
+                      <span class="material-symbols-outlined text-[24px]">favorite</span>
                     </div>
-                    <button class="w-8 h-8 rounded-full ${favPinned ? 'text-primary' : 'text-text-muted opacity-40 group-hover:opacity-100 hover:text-primary'} flex items-center justify-center transition-all" onclick="CumuApp.togglePin('${PIN_KEYS.FAVORITES}', event)" title="${favPinned ? 'Abpinnen' : 'Anpinnen'}">
-                      <span class="material-symbols-outlined text-[18px]" style="${favPinned ? "font-variation-settings: 'FILL' 1;" : ''}">push_pin</span>
-                    </button>
-                  </div>`;
-              })()}
+                    <div>
+                      <h3 class="text-body-lg font-medium text-text-high-contrast">Lieblingslieder</h3>
+                      <p class="text-body-sm text-text-muted">${favorites.size} Titel</p>
+                    </div>
+                  </div>
+                </div>` : ''}
 
-              ${currentUser?.enablePodcasts !== false ? (() => {
-                const podPinned = pinnedKeys.includes(PIN_KEYS.PODCASTS);
-                return `
-                  <div class="group flex items-center justify-between p-sm rounded-lg hover:bg-surface-container-low cursor-pointer transition-colors" onclick="navigate('podcasts')">
-                    <div class="flex items-center gap-md">
-                      <div class="w-10 h-10 rounded-lg bg-primary-fixed flex items-center justify-center text-primary">
-                        <span class="material-symbols-outlined text-[24px]">podcasts</span>
-                      </div>
-                      <div>
-                        <h3 class="text-body-lg font-medium text-text-high-contrast">Podcasts</h3>
-                        <p class="text-body-sm text-text-muted">Shows & Episoden</p>
-                      </div>
+              ${(getShowPodcasts() && currentUser?.enablePodcasts !== false) ? `
+                <div class="group flex items-center justify-between p-sm rounded-lg hover:bg-surface-container-low cursor-pointer transition-colors" onclick="navigate('podcasts')">
+                  <div class="flex items-center gap-md">
+                    <div class="w-10 h-10 rounded-lg bg-primary-fixed flex items-center justify-center text-primary">
+                      <span class="material-symbols-outlined text-[24px]">podcasts</span>
                     </div>
-                    <button class="w-8 h-8 rounded-full ${podPinned ? 'text-primary' : 'text-text-muted opacity-40 group-hover:opacity-100 hover:text-primary'} flex items-center justify-center transition-all" onclick="CumuApp.togglePin('${PIN_KEYS.PODCASTS}', event)" title="${podPinned ? 'Abpinnen' : 'Anpinnen'}">
-                      <span class="material-symbols-outlined text-[18px]" style="${podPinned ? "font-variation-settings: 'FILL' 1;" : ''}">push_pin</span>
-                    </button>
-                  </div>`;
-              })() : ''}
+                    <div>
+                      <h3 class="text-body-lg font-medium text-text-high-contrast">Podcasts</h3>
+                      <p class="text-body-sm text-text-muted">Shows & Episoden</p>
+                    </div>
+                  </div>
+                </div>` : ''}
+
+              ${(!getShowFavorites() && (!getShowPodcasts() || currentUser?.enablePodcasts === false)) ? `
+                <p class="text-body-sm text-text-muted py-md">Keine Elemente aktiviert. Aktiviere sie in den Einstellungen.</p>
+              ` : ''}
             </div>
           </section>
         </div>
@@ -1943,16 +1948,8 @@ function showToast(msg) {
       <div class="p-md md:p-margin-desktop w-full">
         <!-- Header -->
         <header class="mb-xl">
-          <div class="flex items-center justify-between mb-xs">
+          <div class="mb-xs">
             <h1 class="text-headline-lg-mobile md:text-headline-lg font-headline-lg-mobile md:font-headline-lg text-text-high-contrast font-bold">Podcasts</h1>
-            ${(() => {
-              const podPinned = isPinned(PIN_KEYS.PODCASTS);
-              return `
-                <button class="py-xs px-md rounded-lg border border-border-subtle bg-surface-bright text-text-high-contrast hover:bg-surface-container-low transition-all flex items-center gap-xs text-body-sm font-medium" onclick="CumuApp.togglePin('${PIN_KEYS.PODCASTS}', event)" title="${podPinned ? 'Vom Dashboard abpinnen' : 'An Mediathek anpinnen'}">
-                  <span class="material-symbols-outlined text-[18px] text-primary" style="${podPinned ? "font-variation-settings: 'FILL' 1;" : ''}">${podPinned ? 'push_pin' : 'push_pin'}</span>
-                  ${podPinned ? 'Angepinnt' : 'Anpinnen'}
-                </button>`;
-            })()}
           </div>
           <p class="text-body-lg font-body-lg text-text-muted mb-md">Entdecke neue Stimmen, Vorträge und Geschichten.</p>
 
@@ -2225,20 +2222,12 @@ function showToast(msg) {
   async function renderFavorites() {
     main.innerHTML = '<div class="p-margin-desktop text-center text-text-muted">Lade Favoriten…</div>';
     const favArray = Array.from(favorites);
-    const favPinned = isPinned(PIN_KEYS.FAVORITES);
-    const pinBtnHtml = `
-      <button class="py-xs px-md rounded-lg border border-border-subtle bg-surface-bright text-text-high-contrast hover:bg-surface-container-low transition-all flex items-center gap-xs text-body-sm font-medium" onclick="CumuApp.togglePin('${PIN_KEYS.FAVORITES}', event)" title="${favPinned ? 'Vom Dashboard abpinnen' : 'An Mediathek anpinnen'}">
-        <span class="material-symbols-outlined text-[18px] text-primary" style="${favPinned ? "font-variation-settings: 'FILL' 1;" : ''}">push_pin</span>
-        ${favPinned ? 'Angepinnt' : 'Anpinnen'}
-      </button>
-    `;
 
     if (!favArray.length) {
       main.innerHTML = `
         <div class="p-md md:p-margin-desktop max-w-[1280px] mx-auto w-full">
           <div class="flex items-center justify-between mb-lg">
             <h1 class="text-headline-lg font-headline-lg text-text-high-contrast font-bold">Favoriten</h1>
-            ${pinBtnHtml}
           </div>
           <div class="p-xl bg-surface-container-low border border-border-subtle rounded-xl text-center">
             <span class="material-symbols-outlined text-[48px] text-text-muted mb-md">favorite</span>
@@ -2259,7 +2248,6 @@ function showToast(msg) {
       <div class="p-md md:p-margin-desktop max-w-[1280px] mx-auto w-full">
         <div class="flex items-center justify-between mb-lg">
           <h1 class="text-headline-lg font-headline-lg text-text-high-contrast font-bold">Favoriten</h1>
-          ${pinBtnHtml}
         </div>
         <div class="flex flex-col gap-xs">
           ${songs.map((s, idx) => renderSongRow(s, idx + 1)).join('')}
@@ -3307,6 +3295,10 @@ function showToast(msg) {
     isPinned,
     togglePin,
     setRightSidebarTab,
+    getShowFavorites,
+    setShowFavorites,
+    getShowPodcasts,
+    setShowPodcasts,
     openPodcast,
     playPodcastEpisode,
     resumePodcastEpisode,
