@@ -1,72 +1,114 @@
 <!DOCTYPE html>
-<html lang="de" data-theme="standard">
+<html lang="de" class="h-full">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>cumu — Setup</title>
+  <title>cumu — First-Time Setup</title>
+  <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="/css/theme-standard.css">
+  <style>
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+  </style>
 </head>
-<body class="setup-page">
-  <div class="setup-container">
-    <div class="setup-header">
-      <pre class="wordmark">cumu</pre>
-      <p class="mute">first-time setup</p>
+<body class="bg-[#0f1117] text-white min-h-screen flex items-center justify-center p-4 sm:p-6 select-none">
+
+  <!-- Main Container -->
+  <div class="w-full max-w-md bg-[#161b22] border border-[#30363d] rounded-2xl p-6 sm:p-8 shadow-2xl space-y-6">
+
+    <!-- Header -->
+    <div class="text-center space-y-2">
+      <div class="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-blue-600/10 text-blue-500 mb-2 border border-blue-500/20">
+        <span class="material-symbols-outlined text-3xl">library_music</span>
+      </div>
+      <h1 class="text-3xl font-extrabold tracking-tight text-white lowercase">cumu</h1>
+      <p class="text-sm font-medium text-gray-400">Ersteinrichtung Ihres Musik-Servers</p>
     </div>
-    <form id="setupForm" class="setup-form">
-      <div class="form-section">
-        <label class="section-label">[+] admin account</label>
-        <div class="form-row">
-          <label>username</label>
-          <input type="text" name="username" required placeholder="admin" />
+
+    <!-- Setup Form -->
+    <form id="setupForm" class="space-y-5">
+
+      <!-- Section: Admin Account -->
+      <div class="space-y-3">
+        <h2 class="text-xs font-bold uppercase tracking-wider text-gray-400 flex items-center gap-1.5">
+          <span class="material-symbols-outlined text-sm text-blue-400">admin_panel_settings</span>
+          Administrator-Konto
+        </h2>
+        
+        <div>
+          <label class="block text-xs font-semibold text-gray-300 mb-1">Benutzername</label>
+          <input type="text" name="username" required placeholder="z. B. admin" value="admin"
+                 class="w-full px-3.5 py-2.5 bg-[#0d1117] border border-[#30363d] rounded-xl text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all">
         </div>
-        <div class="form-row">
-          <label>password</label>
-          <input type="password" name="password" required placeholder="strong password" />
-        </div>
-      </div>
-      <div class="form-section">
-        <label class="section-label">[+] server settings</label>
-        <div class="form-row">
-          <label>port</label>
-          <input type="number" name="port" value="3000" placeholder="3000" />
-        </div>
-        <div class="form-row">
-          <label>host</label>
-          <input type="text" name="host" value="0.0.0.0" placeholder="0.0.0.0" />
-        </div>
-      </div>
-      <div class="form-section">
-        <label class="section-label">[+] music library</label>
-        <div class="form-row">
-          <label>music path</label>
-          <input type="text" name="musicPath" value="/music" required placeholder="/music" />
-        </div>
-        <div class="form-row">
-          <label>max storage (GB)</label>
-          <input type="number" name="maxStorageGb" value="50" placeholder="50" step="0.1" />
+
+        <div>
+          <label class="block text-xs font-semibold text-gray-300 mb-1">Passwort</label>
+          <input type="password" name="password" required placeholder="Sicheres Passwort eingeben"
+                 class="w-full px-3.5 py-2.5 bg-[#0d1117] border border-[#30363d] rounded-xl text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all">
         </div>
       </div>
-      <div id="setupError" class="error-msg" style="display:none"></div>
-      <button type="submit" class="btn-primary">complete setup &rarr;</button>
+
+      <!-- Section: Library Config -->
+      <div class="space-y-3 pt-2 border-t border-[#30363d]">
+        <h2 class="text-xs font-bold uppercase tracking-wider text-gray-400 flex items-center gap-1.5">
+          <span class="material-symbols-outlined text-sm text-blue-400">folder_open</span>
+          Musikbibliothek
+        </h2>
+
+        <div>
+          <label class="block text-xs font-semibold text-gray-300 mb-1">Musikpfad (im Container)</label>
+          <input type="text" name="musicPath" value="/music" required placeholder="/music"
+                 class="w-full px-3.5 py-2.5 bg-[#0d1117] border border-[#30363d] rounded-xl text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all">
+          <p class="text-[11px] text-gray-500 mt-1">Host-Ordner ist standardmäßig über Docker gemappt (`./music`).</p>
+        </div>
+      </div>
+
+      <!-- Error Box -->
+      <div id="setupError" class="hidden p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs font-medium text-center"></div>
+
+      <!-- Submit Button -->
+      <button type="submit" id="submitBtn"
+              class="w-full py-3 px-4 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white text-sm font-semibold rounded-xl transition-all duration-200 shadow-lg shadow-blue-600/20 flex items-center justify-center gap-2 cursor-pointer">
+        <span>Einrichtung abschließen</span>
+        <span class="material-symbols-outlined text-sm">arrow_forward</span>
+      </button>
     </form>
   </div>
+
   <script>
     document.getElementById('setupForm').addEventListener('submit', async (e) => {
       e.preventDefault();
-      const data = Object.fromEntries(new FormData(e.target));
+      const form = e.target;
+      const data = Object.fromEntries(new FormData(form));
       const errEl = document.getElementById('setupError');
-      errEl.style.display = 'none';
-      const res = await fetch('/auth/setup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-      const json = await res.json();
-      if (json.ok || json.success) {
-        window.location.href = '/';
-      } else {
-        errEl.textContent = json.error || 'Setup failed';
-        errEl.style.display = 'block';
+      const btn = document.getElementById('submitBtn');
+
+      errEl.classList.add('hidden');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="material-symbols-outlined animate-spin text-sm">sync</span> <span>Richte Server ein...</span>';
+
+      try {
+        const res = await fetch('/auth/setup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data)
+        });
+        const json = await res.json();
+        if (json.ok || json.success) {
+          btn.innerHTML = '<span class="material-symbols-outlined text-sm">check</span> <span>Erfolgreich! Weiterleitung...</span>';
+          setTimeout(() => { window.location.href = '/'; }, 600);
+        } else {
+          throw new Error(json.error || 'Einrichtung fehlgeschlagen');
+        }
+      } catch (err) {
+        errEl.textContent = err.message || 'Einrichtung konnte nicht abgeschlossen werden.';
+        errEl.classList.remove('hidden');
+        btn.disabled = false;
+        btn.innerHTML = '<span>Einrichtung abschließen</span> <span class="material-symbols-outlined text-sm">arrow_forward</span>';
       }
     });
   </script>
