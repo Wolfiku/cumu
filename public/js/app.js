@@ -321,7 +321,7 @@ function showToast(msg) {
   // ── Theme Switching ────────────────────────────────────────────────────────
 
   function applyTheme(theme) {
-    if (!theme) theme = 'klassik';
+    if (!theme || theme === 'coddy') theme = 'standard';
     currentTheme = theme;
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('cumu_theme', theme);
@@ -421,18 +421,33 @@ function showToast(msg) {
   document.getElementById('loginForm')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const errEl = document.getElementById('loginError');
+    const submitBtn = document.getElementById('loginSubmitBtn');
     errEl.classList.add('hidden');
 
     const username = document.getElementById('loginUsername').value;
     const password = document.getElementById('loginPassword').value;
+
+    const originalBtnContent = submitBtn ? submitBtn.innerHTML : 'Login &rarr;';
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = 'Verbinde...';
+    }
 
     try {
       const res = await CumuApi.login(username, password);
       currentUser = { username: res.username, role: res.role, theme: res.theme, enablePodcasts: res.enablePodcasts };
       onLoginSuccess();
     } catch (err) {
-      errEl.textContent = err.message || 'Login failed';
+      const msg = err.message || 'Login fehlgeschlagen';
+      errEl.textContent = msg.includes('fetch') || msg.includes('NetworkError')
+        ? 'Server nicht erreichbar. Bitte stelle sicher, dass der Backend-Server läuft.'
+        : msg;
       errEl.classList.remove('hidden');
+    } finally {
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = originalBtnContent;
+      }
     }
   });
 

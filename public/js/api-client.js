@@ -46,6 +46,19 @@ const CumuApi = (() => {
     return Date.now() / 1000 >= exp - 30; // 30s buffer
   }
 
+  // ── Network Helper ──────────────────────────────────────────────────────────
+
+  async function safeFetch(url, opts) {
+    try {
+      return await fetch(url, opts);
+    } catch (err) {
+      if (err instanceof TypeError || (err.message && (err.message.includes('fetch') || err.message.includes('NetworkError') || err.message.includes('Failed to fetch')))) {
+        throw new Error('Server nicht erreichbar. Bitte stelle sicher, dass der Backend-Server läuft.');
+      }
+      throw err;
+    }
+  }
+
   // ── OAuth2 Flow ────────────────────────────────────────────────────────────
 
   /**
@@ -54,7 +67,7 @@ const CumuApi = (() => {
    */
   async function login(username, password) {
     // Step 1: Get authorization code
-    const authRes = await fetch('/oauth/authorize', {
+    const authRes = await safeFetch('/oauth/authorize', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -67,11 +80,16 @@ const CumuApi = (() => {
       }),
     });
 
-    const authData = await authRes.json();
-    if (!authRes.ok) throw new Error(authData.error_description || authData.error || 'Authorization failed');
+    let authData;
+    try {
+      authData = await authRes.json();
+    } catch {
+      throw new Error('Ungültige Antwort vom Server erhalten');
+    }
+    if (!authRes.ok) throw new Error(authData.error_description || authData.error || 'Autorisierung fehlgeschlagen');
 
     // Step 2: Exchange code for token
-    const tokenRes = await fetch('/oauth/token', {
+    const tokenRes = await safeFetch('/oauth/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -83,8 +101,13 @@ const CumuApi = (() => {
       }),
     });
 
-    const tokenData = await tokenRes.json();
-    if (!tokenRes.ok) throw new Error(tokenData.error_description || tokenData.error || 'Token exchange failed');
+    let tokenData;
+    try {
+      tokenData = await tokenRes.json();
+    } catch {
+      throw new Error('Ungültige Token-Antwort vom Server');
+    }
+    if (!tokenRes.ok) throw new Error(tokenData.error_description || tokenData.error || 'Token-Austausch fehlgeschlagen');
 
     saveTokens(tokenData);
 
@@ -97,7 +120,7 @@ const CumuApi = (() => {
     const refresh = getRefreshToken();
     if (!refresh) throw new Error('No refresh token');
 
-    const res = await fetch('/oauth/token', {
+    const res = await safeFetch('/oauth/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -108,10 +131,16 @@ const CumuApi = (() => {
       }),
     });
 
-    const data = await res.json();
+    let data;
+    try {
+      data = await res.json();
+    } catch {
+      clearTokens();
+      throw new Error('Server-Fehler beim Aktualisieren der Sitzung');
+    }
     if (!res.ok) {
       clearTokens();
-      throw new Error('Token refresh failed — please log in again');
+      throw new Error('Sitzung abgelaufen — bitte erneut anmelden');
     }
     saveTokens(data);
   }
@@ -120,7 +149,7 @@ const CumuApi = (() => {
     const token = getAccessToken();
     if (token) {
       try {
-        await fetch('/oauth/revoke', {
+        await safeFetch('/oauth/revoke', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ token, client_id: CUMU_CLIENT_ID, client_secret: CUMU_CLIENT_SECRET }),
@@ -152,14 +181,14 @@ const CumuApi = (() => {
     const opts = { method, headers };
     if (body !== undefined) opts.body = JSON.stringify(body);
 
-    const res = await fetch(url, opts);
+    const res = await safeFetch(url, opts);
 
     if (res.status === 401) {
       // Try refresh once
       try {
         await refreshTokens();
         const retryAuth = await getAuthHeader();
-        const res2 = await fetch(url, {
+        const res2 = await safeFetch(url, {
           method, headers: { 'Content-Type': 'application/json', ...retryAuth, ...extraHeaders },
           ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
         });
@@ -167,7 +196,7 @@ const CumuApi = (() => {
       } catch {
         clearTokens();
         window.dispatchEvent(new CustomEvent('cumu:unauthorized'));
-        throw new Error('Session expired');
+        throw new Error('Sitzung abgelaufen');
       }
     }
 

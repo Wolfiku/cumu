@@ -9,12 +9,13 @@ services:
     container_name: cumu
     restart: unless-stopped
     ports:
-      - "${PORT:-${CUMU_PORT:-3000}}:3000"
+      - "${CUMU_PORT:-${PORT:-3000}}:3000"
     env_file:
       - path: .env
         required: false
     environment:
       - NODE_ENV=production
+      - PORT=3000
       - SESSION_SECRET=${SESSION_SECRET:-cumu-default-production-secret-change-me}
       - MUSIC_PATH=/music
     volumes:
@@ -23,7 +24,7 @@ services:
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000/auth/me"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
       interval: 30s
       timeout: 10s
       retries: 3

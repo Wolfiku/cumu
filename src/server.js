@@ -61,13 +61,17 @@ app.use(session({
 
 // ── Setup Guard ───────────────────────────────────────────────────────────────
 
-const ALWAYS_ALLOWED = ['/css/', '/js/', '/fonts/', '/favicon'];
+const ALWAYS_ALLOWED = ['/css/', '/js/', '/fonts/', '/favicon', '/health'];
 const SETUP_ALLOWED  = ['/auth/setup', '/auth/login', '/auth/logout', '/auth/me', '/user/', '/oauth/token', '/oauth/authorize'];
 
 function isSetupDone() {
   const cfg = getConfig();
   return cfg.setupDone === true || cfg.setupDone === 'true';
 }
+
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', uptime: process.uptime() });
+});
 
 app.use((req, res, next) => {
   if (ALWAYS_ALLOWED.some(p => req.path.startsWith(p))) return next();
