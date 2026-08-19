@@ -161,7 +161,7 @@ function initDB() {
       volume REAL NOT NULL DEFAULT 1.0,
       last_song_id TEXT,
       last_position REAL NOT NULL DEFAULT 0,
-      theme TEXT NOT NULL DEFAULT 'coddy',
+      theme TEXT NOT NULL DEFAULT 'standard',
       extra_settings TEXT NOT NULL DEFAULT '{}',
       version INTEGER NOT NULL DEFAULT 0,
       updated_at INTEGER DEFAULT (unixepoch()),
@@ -182,7 +182,7 @@ function initDB() {
   // ── Migrations: add columns if missing ─────────────────────────────────────
 
   const userCols = db.prepare('PRAGMA table_info(users)').all().map(c => c.name);
-  if (!userCols.includes('theme'))      db.exec("ALTER TABLE users ADD COLUMN theme TEXT NOT NULL DEFAULT 'coddy'");
+  if (!userCols.includes('theme'))      db.exec("ALTER TABLE users ADD COLUMN theme TEXT NOT NULL DEFAULT 'standard'");
   if (!userCols.includes('is_blocked')) db.exec("ALTER TABLE users ADD COLUMN is_blocked INTEGER NOT NULL DEFAULT 0");
   if (!userCols.includes('updated_at')) db.exec("ALTER TABLE users ADD COLUMN updated_at INTEGER DEFAULT (unixepoch())");
 
