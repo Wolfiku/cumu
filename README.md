@@ -29,6 +29,20 @@ docker compose up -d
 PORT=3001 docker compose up -d
 ```
 
+---
+
+## 📦 One-Line Installer (Debian / Proxmox LXC / Ubuntu)
+
+For bare metal Linux installations without Docker:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Wolfiku/cumu/main/scripts/install.sh | bash
+```
+
+*(Note: As the root user, **do not** add `sudo` before the command!)*
+
+---
+
 Open **`http://localhost:3000`** (or your custom port) in your browser!
 - **First-Time Setup**: Enter your own custom admin username and password on first launch.
 - **Drag & Drop Import**: Drop MP3, FLAC, M4A, WAV files or folders directly into your browser window or drop them into `./music` on your host.
