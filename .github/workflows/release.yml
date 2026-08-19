@@ -13,7 +13,7 @@ permissions:
   packages: write
 
 jobs:
-  # ── Build and publish Docker image to GHCR ─────────────────────────────────
+  # ── Build & Publish Docker image (GHCR + Docker Image Tarball) ───────────────
   docker:
     name: Build & Push Docker image
     runs-on: ubuntu-latest
@@ -54,9 +54,22 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ── Build .deb package ──────────────────────────────────────────────────────
-  deb:
-    name: Build .deb package
+      - name: Build offline Docker image archive (.tar.gz) for GitHub Releases
+        run: |
+          docker build -t cumu:latest .
+          docker save cumu:latest | gzip > cumu_docker_image.tar.gz
+
+      - name: Upload Docker image archive artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image-archive
+          path: cumu_docker_image.tar.gz
+          retention-days: 1
+
+  # ── Build .deb package & Create GitHub Release ─────────────────────────────
+  release:
+    name: Build .deb & Publish Release
+    needs: docker
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -65,12 +78,18 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Download Docker image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image-archive
+
       - name: Install npm deps
         run: npm ci --omit=dev
 
-      - name: Build .deb
+      - name: Build .deb package
         run: |
           VERSION=${GITHUB_REF_NAME#v}
+          [[ "$VERSION" == "main" ]] && VERSION="1.0.0"
           PKG="cumu_${VERSION}_all"
           mkdir -p "${PKG}/DEBIAN"
           mkdir -p "${PKG}/opt/cumu"
@@ -166,22 +185,44 @@ jobs:
         with:
           files: |
             cumu_*.deb
+            cumu_docker_image.tar.gz
           generate_release_notes: true
           body: |
-            ## Install
+            ## 🚀 Installation Options
 
-            **Docker:**
+            ### 🐳 Option 1: Docker Container
+
+            **Via GHCR Registry (Online / Docker Compose):**
             ```bash
-            docker pull ghcr.io/wolfiku/cumu:${{ github.ref_name }}
+            docker pull ghcr.io/${{ github.repository }}:latest
+            docker compose up -d
             ```
 
-            **APT / .deb:**
+            **Via Offline Docker Image Tarball (`cumu_docker_image.tar.gz`):**
+            1. Download `cumu_docker_image.tar.gz` from the assets below.
+            2. Import into Docker:
+               ```bash
+               docker load -i cumu_docker_image.tar.gz
+               ```
+            3. Start container:
+               ```bash
+               docker run -d -p 3000:3000 --name cumu -v cumu_data:/app/data cumu:latest
+               ```
+
+            ---
+
+            ### 📦 Option 2: Debian / Ubuntu (.deb Package)
+            > ⚠️ **Note:** `.deb` is a Debian system package for host OS installation. Do **NOT** pass `.deb` files to `docker load`!
+
             ```bash
-            wget https://github.com/Wolfiku/cumu/releases/download/${{ github.ref_name }}/$(ls cumu_*.deb)
+            # Download cumu_*.deb from Assets below
             sudo dpkg -i cumu_*.deb
             ```
 
-            **One-line installer:**
+            ---
+
+            ### ⚡ Option 3: One-Line Installer
             ```bash
             curl -fsSL https://raw.githubusercontent.com/Wolfiku/cumu/main/scripts/install.sh | sudo bash
             ```
+

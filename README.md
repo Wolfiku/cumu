@@ -101,6 +101,22 @@ volumes:
 docker compose up -d
 ```
 
+### 1b. Offline Docker Image Import (From GitHub Release Assets)
+
+If you don't have internet access or want to install directly from a downloaded release asset:
+
+1. Download **`cumu_docker_image.tar.gz`** from the [GitHub Releases](https://github.com/Wolfiku/cumu/releases) assets. *(Do **not** use the `.deb` file with `docker load`!)*
+2. Load the Docker image archive:
+   ```bash
+   docker load -i cumu_docker_image.tar.gz
+   ```
+3. Run the container:
+   ```bash
+   docker run -d -p 3000:3000 --name cumu -v cumu_data:/app/data cumu:latest
+   ```
+
+---
+
 ### 2. Default Login Credentials
 
 | Username | Default Password | Notes |
