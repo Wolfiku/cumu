@@ -8,13 +8,17 @@
   --text-muted: #8e8ea0;
   --primary: #5a5b6b;
   --on-primary: #ffffff;
-  --border-subtle: #ececf1;
+  --border-subtle: transparent;
   --surface: #f9f9f9;
   --surface-bright: #f9f9f9;
   --surface-container-low: #f3f3f4;
   --surface-container: #eeeeee;
   --interactive-hover: #7a7a8c;
   --font: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+.border-border-subtle {
+  border-color: transparent !important;
 }
 
 *, *::before, *::after {

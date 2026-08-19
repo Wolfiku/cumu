@@ -124,7 +124,7 @@
   </div>
 
   <!-- ── TopNavBar (Mobile Only - Settings Page Design) ───────────────────── -->
-  <nav class="md:hidden flex justify-between items-center w-full px-gutter h-16 bg-background border-b border-border-subtle fixed top-0 z-50">
+  <nav class="md:hidden flex justify-between items-center w-full px-gutter h-16 bg-background fixed top-0 z-50">
     <span class="font-headline-lg-mobile text-headline-lg-mobile text-on-surface lowercase font-bold cursor-pointer" onclick="navigate('discover')">cumu</span>
     <div class="flex gap-md">
       <span class="material-symbols-outlined hover:scale-105 transition-transform duration-200 active:scale-95 text-text-muted cursor-pointer" data-icon="search" onclick="navigate('discover')">search</span>
@@ -133,7 +133,7 @@
   </nav>
 
   <!-- ── SideNavBar (Desktop Only - Settings Page Design) ──────────────────── -->
-  <nav class="hidden md:flex flex-col gap-base py-lg px-md bg-background fixed left-0 top-0 h-full w-64 border-r border-border-subtle z-40">
+  <nav class="hidden md:flex flex-col gap-base py-lg px-md bg-background fixed left-0 top-0 h-full w-64 z-40">
     <div class="mb-xl px-sm cursor-pointer" onclick="navigate('discover')">
       <h1 class="font-headline-lg text-headline-lg text-on-surface lowercase font-bold">cumu</h1>
       <p class="font-label-caps text-label-caps text-text-muted">Self hosted music</p>
@@ -163,7 +163,7 @@
         <span class="material-symbols-outlined" data-icon="admin_panel_settings">admin_panel_settings</span>
         admin
       </a>
-      <div id="leftNavPinnedContainer" class="mt-md pt-md border-t border-border-subtle flex flex-col gap-xs"></div>
+      <div id="leftNavPinnedContainer" class="mt-md pt-md flex flex-col gap-xs"></div>
     </div>
     <div class="mt-auto flex flex-col gap-sm">
       <a id="navItem-settings" href="#" onclick="navigate('settings'); return false;" class="flex items-center gap-md px-md py-sm rounded-lg text-text-muted hover:scale-105 hover:bg-surface-bright transition-transform duration-200 active:scale-95 font-label-caps text-label-caps">
