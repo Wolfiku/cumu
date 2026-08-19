@@ -68,7 +68,7 @@ function showToast(msg) {
   let currentSong       = null;
   let isPlaying         = false;
   let playlists         = [];
-  let currentTheme      = 'coddy';
+  let currentTheme      = 'standard';
   let serverVersion     = 0;
   let isShuffle         = false;
   let repeatMode        = 'none'; // 'none' | 'all' | 'one'

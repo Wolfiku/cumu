@@ -345,7 +345,7 @@ const CumuAdmin = (() => {
                   <td class="p-sm"><strong class="font-bold text-on-surface">${esc(u.username)}</strong></td>
                   <td class="p-sm text-text-muted">${u.role}</td>
                   <td class="p-sm">${u.is_blocked ? '<span class="text-red-400">Blockiert</span>' : '<span class="text-green-400">Aktiv</span>'}</td>
-                  <td class="p-sm text-text-muted">${u.theme || 'coddy'}</td>
+                  <td class="p-sm text-text-muted">${u.theme || 'standard'}</td>
                   <td class="p-sm">
                     <button class="text-text-muted hover:text-on-surface transition-colors mr-sm" onclick="CumuAdmin.toggleUserBlock('${u.id}', ${!u.is_blocked})">
                       ${u.is_blocked ? 'Entblocken' : 'Blockieren'}

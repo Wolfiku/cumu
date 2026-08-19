@@ -48,7 +48,7 @@ router.get('/me', (req, res) => {
         req.session.userId   = firstAdmin.id;
         req.session.username = firstAdmin.username;
         req.session.role     = firstAdmin.role;
-        return res.json({ userId: firstAdmin.id, username: firstAdmin.username, role: firstAdmin.role, theme: firstAdmin.theme || 'coddy' });
+        return res.json({ userId: firstAdmin.id, username: firstAdmin.username, role: firstAdmin.role, theme: firstAdmin.theme || 'standard' });
       }
     }
     return res.status(401).json({ error: 'Not logged in' });

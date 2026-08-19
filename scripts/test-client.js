@@ -152,7 +152,7 @@ async function run() {
 
   // ── 6. Theme Change for all 3 themes ──────────────────────────────────────
   console.log('\n── 6. Theme Switching ──');
-  for (const theme of ['klassik', 'coddy', 'material3']) {
+  for (const theme of ['klassik', 'standard', 'material3']) {
     const r = await req('POST', '/user/theme', { theme }, authHdr);
     ok(`POST /user/theme "${theme}" returns 200`, r.status === 200 && r.json.theme === theme);
   }
@@ -164,7 +164,7 @@ async function run() {
 
   const currentVersion = syncGet.json.version;
   const syncPost = await req('POST', '/api/sync', {
-    volume: 0.8, lastSongId: null, lastPosition: 42, theme: 'coddy',
+    volume: 0.8, lastSongId: null, lastPosition: 42, theme: 'standard',
     clientVersion: currentVersion,
   }, authHdr);
   ok('POST /api/sync updates state', syncPost.status === 200 && syncPost.json.version === currentVersion + 1);

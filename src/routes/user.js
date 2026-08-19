@@ -13,7 +13,7 @@ const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
 
-const ALLOWED_THEMES = ['klassik', 'coddy', 'material3'];
+const ALLOWED_THEMES = ['standard', 'klassik', 'material3'];
 
 // GET /user/settings
 router.get('/settings', requireAuth, (req, res) => {
@@ -24,7 +24,7 @@ router.get('/settings', requireAuth, (req, res) => {
   res.json({
     username:       user.username,
     role:           user.role,
-    theme:          user.theme || 'coddy',
+    theme:          user.theme || 'standard',
     isBlocked:      !!user.is_blocked,
     enablePodcasts: cfg.enablePodcasts !== false,
   });
@@ -37,7 +37,7 @@ router.get('/me', requireAuth, (req, res) => {
     userId:         req.user.id,
     username:       req.user.username,
     role:           req.user.role,
-    theme:          req.user.theme || 'coddy',
+    theme:          req.user.theme || 'standard',
     enablePodcasts: cfg.enablePodcasts !== false,
   });
 });

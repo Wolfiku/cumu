@@ -25,7 +25,7 @@ router.get('/', requireAuth, (req, res) => {
     // Initialize state on first access
     db.prepare(`
       INSERT INTO user_state (user_id, volume, last_song_id, last_position, theme, extra_settings, version, updated_at)
-      VALUES (?, 1.0, NULL, 0, 'coddy', '{}', 0, unixepoch())
+      VALUES (?, 1.0, NULL, 0, 'standard', '{}', 0, unixepoch())
     `).run(userId);
     state = db.prepare('SELECT * FROM user_state WHERE user_id = ?').get(userId);
   }
@@ -66,7 +66,7 @@ router.post('/', requireAuth, (req, res) => {
   if (!existing) {
     db.prepare(`
       INSERT INTO user_state (user_id, volume, last_song_id, last_position, theme, extra_settings, version, updated_at)
-      VALUES (?, 1.0, NULL, 0, 'coddy', '{}', 0, unixepoch())
+      VALUES (?, 1.0, NULL, 0, 'standard', '{}', 0, unixepoch())
     `).run(userId);
   }
 
