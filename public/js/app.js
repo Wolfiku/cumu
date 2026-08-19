@@ -405,7 +405,7 @@ function showToast(msg) {
       if (adminBtn) adminBtn.classList.add('hidden');
     }
 
-    applyTheme(currentUser.theme || 'coddy');
+    applyTheme(currentUser.theme || 'standard');
     updateNavigation();
 
     CumuApi.connectWs();

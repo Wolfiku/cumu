@@ -33,7 +33,7 @@ function initDB() {
       password TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'user',
       is_blocked INTEGER NOT NULL DEFAULT 0,
-      theme TEXT NOT NULL DEFAULT 'coddy',
+      theme TEXT NOT NULL DEFAULT 'standard',
       created_at INTEGER DEFAULT (unixepoch()),
       updated_at INTEGER DEFAULT (unixepoch())
     );
@@ -210,6 +210,11 @@ function initDB() {
     // Update redirect_uris if the entry was created before this patch
     db.prepare("UPDATE oauth_clients SET redirect_uris = ? WHERE client_id = 'cumu-web'").run(BUILTIN_URIS);
   }
+
+  // Migrate legacy default theme 'coddy' to clean 'standard' theme
+  try {
+    db.prepare("UPDATE users SET theme = 'standard' WHERE theme = 'coddy'").run();
+  } catch {}
 
   return db;
 }

@@ -34,7 +34,7 @@ router.post('/login', async (req, res) => {
   req.session.save(err => {
     if (err) return res.status(500).json({ error: 'Session error' });
     const cfg = getConfig();
-    res.json({ ok: true, username: user.username, role: user.role, theme: user.theme || 'coddy', enablePodcasts: cfg.enablePodcasts !== false });
+    res.json({ ok: true, username: user.username, role: user.role, theme: user.theme || 'standard', enablePodcasts: cfg.enablePodcasts !== false });
   });
 });
 
@@ -55,7 +55,7 @@ router.get('/me', (req, res) => {
   }
   const user = db.prepare('SELECT id, username, role, theme FROM users WHERE id = ?').get(req.session.userId);
   if (!user) return res.status(401).json({ error: 'User not found' });
-  res.json({ userId: user.id, username: user.username, role: user.role, theme: user.theme || 'coddy' });
+  res.json({ userId: user.id, username: user.username, role: user.role, theme: user.theme || 'standard' });
 });
 
 // POST /auth/logout
