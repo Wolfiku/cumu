@@ -188,41 +188,36 @@ jobs:
             cumu_docker_image.tar.gz
           generate_release_notes: true
           body: |
-            ## 🚀 Installation Options
+            ## 🚀 Installation Methods
 
-            ### 🐳 Option 1: Docker Container
+            ### ⚡ Option 1: One-Line Installer (Recommended for Linux / Bare Metal / LXC)
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/Wolfiku/cumu/main/scripts/install.sh | bash
+            ```
+            *(Note: If logged in as root, do not add `sudo`.)*
 
-            **Via GHCR Registry (Online / Docker Compose):**
+            ---
+
+            ### 🐳 Option 2: Docker Container (Docker Compose)
             ```bash
             docker pull ghcr.io/${{ github.repository }}:latest
             docker compose up -d
             ```
 
-            **Via Offline Docker Image Tarball (`cumu_docker_image.tar.gz`):**
-            1. Download `cumu_docker_image.tar.gz` from the assets below.
-            2. Import into Docker:
+            ---
+
+            ### 📦 Option 3: Debian / Ubuntu (.deb Package)
+            ```bash
+            dpkg -i cumu_*.deb
+            ```
+
+            ---
+
+            ### 💾 Option 4: Offline Docker Image Tarball (`cumu_docker_image.tar.gz`)
+            1. Download `cumu_docker_image.tar.gz` from Assets below.
+            2. Import and run:
                ```bash
                docker load -i cumu_docker_image.tar.gz
-               ```
-            3. Start container:
-               ```bash
                docker run -d -p 3000:3000 --name cumu -v cumu_data:/app/data cumu:latest
                ```
-
-            ---
-
-            ### 📦 Option 2: Debian / Ubuntu (.deb Package)
-            > ⚠️ **Note:** `.deb` is a Debian system package for host OS installation. Do **NOT** pass `.deb` files to `docker load`!
-
-            ```bash
-            # Download cumu_*.deb from Assets below
-            sudo dpkg -i cumu_*.deb
-            ```
-
-            ---
-
-            ### ⚡ Option 3: One-Line Installer
-            ```bash
-            curl -fsSL https://raw.githubusercontent.com/Wolfiku/cumu/main/scripts/install.sh | sudo bash
-            ```
 
