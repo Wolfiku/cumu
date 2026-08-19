@@ -419,6 +419,8 @@ router.get('/config', requireAdmin, (req, res) => {
   });
 });
 
+const { validateMusicPath } = require('../utils/pathValidator');
+
 router.put('/config', requireAdmin, (req, res) => {
   const {
     musicPath, maxStorageGb, port, host, enablePodcasts,
@@ -426,7 +428,13 @@ router.put('/config', requireAdmin, (req, res) => {
     podcastIndexSecret, customPodcastFeeds
   } = req.body;
 
-  if (musicPath !== undefined) setConfig('musicPath', musicPath);
+  if (musicPath !== undefined) {
+    const pathCheck = validateMusicPath(musicPath);
+    if (!pathCheck.ok) {
+      return res.status(400).json({ error: pathCheck.error });
+    }
+    setConfig('musicPath', pathCheck.path);
+  }
   if (maxStorageGb !== undefined) setConfig('maxStorageGb', maxStorageGb);
   if (port !== undefined) setConfig('port', port);
   if (host !== undefined) setConfig('host', host);

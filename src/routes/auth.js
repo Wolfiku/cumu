@@ -63,18 +63,25 @@ router.post('/logout', (req, res) => {
   req.session.destroy(() => res.json({ ok: true }));
 });
 
+const { validateMusicPath } = require('../utils/pathValidator');
+
 // POST /auth/setup — initial server setup (creates admin user)
 router.post('/setup', async (req, res) => {
   if (getConfig().setupDone) return res.status(400).json({ error: 'Setup already done' });
   const { username, password, musicDir, musicPath } = req.body;
-  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+  if (!username || !password) return res.status(400).json({ error: 'Benutzername und Passwort sind erforderlich' });
 
   const targetMusic = musicPath || musicDir || '/music';
+  const pathCheck = validateMusicPath(targetMusic);
+  if (!pathCheck.ok) {
+    return res.status(400).json({ error: pathCheck.error });
+  }
+
   const hash = await bcrypt.hash(password, 12);
   const db   = getDB();
   const id   = uuidv4();
   db.prepare('INSERT OR IGNORE INTO users (id, username, password, role) VALUES (?, ?, ?, ?)').run(id, username, hash, 'admin');
-  if (targetMusic) setConfig('musicPath', targetMusic);
+  setConfig('musicPath', pathCheck.path);
   setConfig('setupDone', 'true');
 
   const user = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
