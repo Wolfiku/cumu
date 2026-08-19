@@ -4,9 +4,9 @@
 # Updates cumu to the latest version while preserving data and config
 #
 # Usage:
-#   sudo cumu-update
-#   sudo cumu-update --restart         # restart even if already up-to-date
-#   sudo cumu-update --channel beta    # update to latest beta (future)
+#   cumu-update
+#   cumu-update --restart         # restart even if already up-to-date
+#   cumu-update --silent          # silent mode for background cronjobs
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -20,16 +20,18 @@ INSTALL_DIR="/opt/cumu"
 REPO="https://github.com/Wolfiku/cumu"
 ARCHIVE_URL="${REPO}/archive/refs/heads/main.tar.gz"
 FORCE_RESTART=false
+SILENT_MODE=false
 
-log()   { echo -e "${GREEN}[cumu-update]${NC} $*"; }
-warn()  { echo -e "${YELLOW}[warn]${NC} $*"; }
+log()   { [[ "$SILENT_MODE" == false ]] && echo -e "${GREEN}[cumu-update]${NC} $*" || true; }
+warn()  { [[ "$SILENT_MODE" == false ]] && echo -e "${YELLOW}[warn]${NC} $*" || true; }
 error() { echo -e "${RED}[error]${NC} $*" >&2; exit 1; }
 
-[[ $EUID -ne 0 ]] && error "Update script must run as root. Try: sudo cumu-update"
+[[ $EUID -ne 0 ]] && error "Update script must run as root. Try running without sudo if already root."
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --restart) FORCE_RESTART=true; shift ;;
+    --silent)  SILENT_MODE=true;  shift ;;
     *) warn "Unknown argument: $1"; shift ;;
   esac
 done
@@ -59,7 +61,12 @@ systemctl stop cumu 2>/dev/null || true
 BACKUP_DIR="/tmp/cumu-backup-$(date +%Y%m%d-%H%M%S)"
 log "Creating backup at ${BACKUP_DIR}..."
 mkdir -p "$BACKUP_DIR"
-rsync -a --exclude='node_modules/' --exclude='data/' "${INSTALL_DIR}/" "${BACKUP_DIR}/"
+
+if command -v rsync &>/dev/null; then
+  rsync -a --exclude='node_modules/' --exclude='data/' "${INSTALL_DIR}/" "${BACKUP_DIR}/"
+else
+  cp -rf "${INSTALL_DIR}"/* "${BACKUP_DIR}/" 2>/dev/null || true
+fi
 
 # ── Download latest ───────────────────────────────────────────────────────────
 log "Downloading latest cumu..."
@@ -70,12 +77,16 @@ wget -qO "${TMP_DIR}/cumu.tar.gz" "${ARCHIVE_URL}"
 tar -xzf "${TMP_DIR}/cumu.tar.gz" -C "$TMP_DIR" --strip-components=1
 
 # ── Apply update (preserve .env and data) ────────────────────────────────────
-rsync -a --delete \
-  --exclude='data/' \
-  --exclude='.env' \
-  --exclude='.installed_sha' \
-  --exclude='node_modules/' \
-  "${TMP_DIR}/" "${INSTALL_DIR}/"
+if command -v rsync &>/dev/null; then
+  rsync -a --delete \
+    --exclude='data/' \
+    --exclude='.env' \
+    --exclude='.installed_sha' \
+    --exclude='node_modules/' \
+    "${TMP_DIR}/" "${INSTALL_DIR}/"
+else
+  cp -rf "${TMP_DIR}"/* "${INSTALL_DIR}/"
+fi
 
 # ── Reinstall dependencies ────────────────────────────────────────────────────
 log "Updating npm dependencies..."
@@ -101,16 +112,20 @@ sleep 2
 
 if systemctl is-active --quiet cumu; then
   log "${BOLD}Update successful! cumu ${LATEST_SHA} is running.${NC}"
-  log "Backup kept at: ${BACKUP_DIR} (delete manually when confirmed working)"
+  log "Backup kept at: ${BACKUP_DIR}"
 else
   warn "Service failed to start after update. Rolling back..."
-  rsync -a --delete \
-    --exclude='data/' \
-    --exclude='.env' \
-    "${BACKUP_DIR}/" "${INSTALL_DIR}/"
+  if command -v rsync &>/dev/null; then
+    rsync -a --delete \
+      --exclude='data/' \
+      --exclude='.env' \
+      "${BACKUP_DIR}/" "${INSTALL_DIR}/"
+  else
+    cp -rf "${BACKUP_DIR}"/* "${INSTALL_DIR}/"
+  fi
   cd "$INSTALL_DIR"
   npm ci --omit=dev --silent
-  chown -R "${SERVICE_USER}:${SERVICE_USER}" "$INSTALL_DIR"
+  chown -R "${SERVICE_USER}:${SERVICE_USER}" "$INSTALL_DIR" 2>/dev/null || true
   systemctl restart cumu
   error "Rollback complete. Check logs with: journalctl -u cumu -f"
 fi

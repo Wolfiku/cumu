@@ -203,9 +203,18 @@ systemctl daemon-reload
 systemctl enable cumu
 systemctl restart cumu
 
-# ── Install update script ─────────────────────────────────────────────────────
+# ── Install update script & daily cronjob ─────────────────────────────────────
 cp "${INSTALL_DIR}/scripts/update.sh" /usr/local/bin/cumu-update
 chmod +x /usr/local/bin/cumu-update
+
+if [[ -d /etc/cron.daily ]]; then
+  log "Installing daily auto-update cronjob in /etc/cron.daily/cumu-update..."
+  cat > /etc/cron.daily/cumu-update << 'CRONEOF'
+#!/bin/sh
+/usr/local/bin/cumu-update --silent >/dev/null 2>&1
+CRONEOF
+  chmod +x /etc/cron.daily/cumu-update
+fi
 
 # ── Done ─────────────────────────────────────────────────────────────────────
 IP=$(hostname -I 2>/dev/null | awk '{print $1}')

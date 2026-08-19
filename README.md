@@ -13,33 +13,42 @@
 
 ---
 
-## 🚀 Quick Start (Docker)
+## 🚀 Quick Start (Recommended One-Line Installer)
 
-Get **cumu** up and running in seconds with zero manual setup required:
-
-```bash
-# 1. Clone repository
-git clone https://github.com/Wolfiku/cumu.git
-cd cumu
-
-# 2. Run with Docker Compose
-docker compose up -d
-
-# (Optional) If port 3000 is already in use, specify a custom port in terminal:
-PORT=3001 docker compose up -d
-```
-
----
-
-## 📦 One-Line Installer (Debian / Proxmox LXC / Ubuntu)
-
-For bare metal Linux installations without Docker:
+Get **cumu** installed and running on Linux (Debian, Ubuntu, Proxmox LXC, Fedora, Arch) in seconds:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Wolfiku/cumu/main/scripts/install.sh | bash
 ```
 
-*(Note: As the root user, **do not** add `sudo` before the command!)*
+*(Note: If you are logged in as `root`, do not add `sudo` before the command.)*
+
+---
+
+## 📦 Alternative Installation Methods
+
+### 1. Docker Compose
+
+```bash
+git clone https://github.com/Wolfiku/cumu.git
+cd cumu
+docker compose up -d
+```
+
+*(Optional custom port: `PORT=3001 docker compose up -d`)*
+
+### 2. Debian Package (`.deb`)
+Download `cumu_0.2.0-alpha_amd64.deb` from [GitHub Releases](https://github.com/Wolfiku/cumu/releases) and install:
+```bash
+dpkg -i cumu_0.2.0-alpha_amd64.deb
+```
+
+### 3. Offline Docker Image Archive (`.tar.gz`)
+Download `cumu_docker_image.tar.gz` from [GitHub Releases](https://github.com/Wolfiku/cumu/releases) and load:
+```bash
+docker load -i cumu_docker_image.tar.gz
+docker run -d -p 3000:3000 -v cumu_data:/app/data --name cumu ghcr.io/wolfiku/cumu:latest
+```
 
 ---
 

@@ -685,6 +685,19 @@ const CumuAdmin = (() => {
           </div>
         </div>
       </section>
+
+      <section class="flex flex-col gap-md mt-xl pt-lg border-t border-border-subtle">
+        <h2 class="font-title-md text-title-md text-on-surface border-b border-border-subtle pb-sm">System Update & Version</h2>
+        <div class="flex justify-between items-center p-md rounded-lg bg-surface-container-low flex-wrap gap-md">
+          <div class="flex flex-col gap-xs">
+            <span class="font-body-lg text-body-lg text-on-surface">Version: <strong class="font-bold">v0.2.0-alpha</strong></span>
+            <span class="font-body-sm text-body-sm text-text-muted" id="adminUpdateStatusText">Automatische Updates sind aktiv.</span>
+          </div>
+          <button id="btnTriggerAdminUpdate" class="px-md py-sm bg-text-muted text-on-primary font-body-sm text-body-sm rounded hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer">
+            Jetzt auf Updates prüfen & aktualisieren
+          </button>
+        </div>
+      </section>
     `;
 
     document.getElementById('adminConfigForm').addEventListener('submit', async (e) => {
@@ -696,6 +709,24 @@ const CumuAdmin = (() => {
         alert('Konfiguration gespeichert!');
       } catch (err) {
         alert(err.message || 'Speichern fehlgeschlagen');
+      }
+    });
+
+    document.getElementById('btnTriggerAdminUpdate')?.addEventListener('click', async () => {
+      const btn = document.getElementById('btnTriggerAdminUpdate');
+      const statusText = document.getElementById('adminUpdateStatusText');
+      btn.disabled = true;
+      btn.textContent = 'Prüfe auf Updates...';
+      statusText.textContent = 'Verbindung zu GitHub wird aufgebaut...';
+
+      try {
+        const res = await CumuApi.post('/admin/update', {});
+        statusText.textContent = res.message || 'Update wird ausgeführt...';
+        btn.textContent = 'Update Gestartet';
+      } catch (err) {
+        statusText.textContent = err.message || 'Update-Prüfung fehlgeschlagen.';
+        btn.disabled = false;
+        btn.textContent = 'Erneut Versuchen';
       }
     });
   }

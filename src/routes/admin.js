@@ -450,6 +450,71 @@ router.put('/config', requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
+// POST /admin/update — trigger system update
+router.post('/update', requireAdmin, async (req, res) => {
+  const isDocker = fs.existsSync('/.dockerenv');
+  const pkgVersion = require('../../package.json').version;
+
+  let latestCommit = 'unknown';
+  try {
+    const http = require('https');
+    const options = {
+      hostname: 'api.github.com',
+      path: '/repos/Wolfiku/cumu/commits/main',
+      headers: { 'User-Agent': 'cumu-server' }
+    };
+    await new Promise((resolve) => {
+      http.get(options, (response) => {
+        let body = '';
+        response.on('data', chunk => body += chunk);
+        response.on('end', () => {
+          try {
+            const data = JSON.parse(body);
+            if (data.sha) latestCommit = data.sha.substring(0, 7);
+          } catch {}
+          resolve();
+        });
+      }).on('error', resolve);
+    });
+  } catch {}
+
+  if (isDocker) {
+    log('info', 'admin', 'Triggered update check on Docker container');
+    return res.json({
+      ok: true,
+      isDocker: true,
+      currentVersion: pkgVersion,
+      latestCommit,
+      message: 'Watchtower aktualisiert das Docker-Image automatisch im Hintergrund.'
+    });
+  }
+
+  // Bare metal / systemd environment
+  const updateScript = '/usr/local/bin/cumu-update';
+  if (fs.existsSync(updateScript)) {
+    const { exec } = require('child_process');
+    exec(`${updateScript} --silent`, (err) => {
+      if (err) log('error', 'admin', `Update process failed: ${err.message}`);
+    });
+    log('info', 'admin', 'Triggered cumu-update background process');
+    return res.json({
+      ok: true,
+      isDocker: false,
+      currentVersion: pkgVersion,
+      latestCommit,
+      message: 'Update gestartet! Der Server aktualisiert sich im Hintergrund und startet gleich neu.'
+    });
+  }
+
+  res.json({
+    ok: true,
+    isDocker: false,
+    currentVersion: pkgVersion,
+    latestCommit,
+    message: 'Kein Update-Skript gefunden. Bitte führe "curl -fsSL https://raw.githubusercontent.com/Wolfiku/cumu/main/scripts/install.sh | bash" aus.'
+  });
+});
+
 router.get('/stats', requireAdmin, (req, res) => {
   const db = getDB();
   const cfg = getConfig();
