@@ -9,9 +9,8 @@
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
   <script>
     (function() {
-      var t = localStorage.getItem('cumu_theme');
-      if (!t || t === 'coddy') { localStorage.setItem('cumu_theme', 'standard'); }
-      document.documentElement.setAttribute('data-theme', localStorage.getItem('cumu_theme') || 'standard');
+      localStorage.setItem('cumu_theme', 'standard');
+      document.documentElement.setAttribute('data-theme', 'standard');
     })();
   </script>
   <script id="tailwind-config">
