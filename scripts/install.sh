@@ -4,8 +4,8 @@
 # Installs Node.js (if missing) + cumu as a systemd service
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/Wolfiku/cumu-music/main/scripts/install.sh | bash
-#   curl -fsSL https://raw.githubusercontent.com/Wolfiku/cumu-music/main/scripts/install.sh | bash -s -- --port 8080 --music-path /srv/music
+#   curl -fsSL https://raw.githubusercontent.com/Wolfiku/cumu/main/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/Wolfiku/cumu/main/scripts/install.sh | bash -s -- --port 8080 --music-path /srv/music
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -20,7 +20,7 @@ DATA_DIR="/var/lib/cumu"
 MUSIC_DIR="/var/lib/cumu/music"
 SERVICE_USER="cumu"
 PORT="3000"
-REPO="https://github.com/Wolfiku/cumu-music"
+REPO="https://github.com/Wolfiku/cumu"
 ARCHIVE_URL="${REPO}/archive/refs/heads/main.tar.gz"
 
 log()   { echo -e "${GREEN}[cumu]${NC} $*"; }
