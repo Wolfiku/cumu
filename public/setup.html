@@ -39,7 +39,7 @@
         <label class="section-label">[+] music library</label>
         <div class="form-row">
           <label>music path</label>
-          <input type="text" name="musicPath" required placeholder="/home/user/music" />
+          <input type="text" name="musicPath" value="/music" required placeholder="/music" />
         </div>
         <div class="form-row">
           <label>max storage (GB)</label>
@@ -62,7 +62,7 @@
         body: JSON.stringify(data)
       });
       const json = await res.json();
-      if (json.success) {
+      if (json.ok || json.success) {
         window.location.href = '/';
       } else {
         errEl.textContent = json.error || 'Setup failed';

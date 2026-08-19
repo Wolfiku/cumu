@@ -42,7 +42,7 @@ router.post('/login', async (req, res) => {
 router.get('/me', (req, res) => {
   const db = getDB();
   if (!req.session?.userId) {
-    if (process.env.AUTO_LOGIN !== 'false') {
+    if (process.env.AUTO_LOGIN === 'true') {
       const firstAdmin = db.prepare("SELECT id, username, role, theme FROM users WHERE role IN ('admin', 'creator') LIMIT 1").get();
       if (firstAdmin) {
         req.session.userId   = firstAdmin.id;
@@ -66,21 +66,22 @@ router.post('/logout', (req, res) => {
 // POST /auth/setup — initial server setup (creates admin user)
 router.post('/setup', async (req, res) => {
   if (getConfig().setupDone) return res.status(400).json({ error: 'Setup already done' });
-  const { username, password, musicDir } = req.body;
+  const { username, password, musicDir, musicPath } = req.body;
   if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
 
+  const targetMusic = musicPath || musicDir || '/music';
   const hash = await bcrypt.hash(password, 12);
   const db   = getDB();
   const id   = uuidv4();
   db.prepare('INSERT OR IGNORE INTO users (id, username, password, role) VALUES (?, ?, ?, ?)').run(id, username, hash, 'admin');
-  if (musicDir) setConfig('musicPath', musicDir);
+  if (targetMusic) setConfig('musicPath', targetMusic);
   setConfig('setupDone', 'true');
 
   const user = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
   req.session.userId   = user.id;
   req.session.username = username;
   req.session.role     = 'admin';
-  req.session.save(() => res.json({ ok: true }));
+  req.session.save(() => res.json({ ok: true, success: true }));
 });
 
 module.exports = router;

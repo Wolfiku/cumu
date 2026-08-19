@@ -103,7 +103,7 @@ app.get('*', (req, res) => {
 async function checkAutoSetup() {
   const autoSetup = process.env.AUTO_SETUP;
   const cfg = getConfig();
-  if ((autoSetup === 'true' || autoSetup === undefined || !cfg.setupDone) && !isSetupDone()) {
+  if (autoSetup === 'true' && !isSetupDone()) {
     const db = getDB();
     const existingUser = db.prepare('SELECT count(*) as count FROM users').get();
     if (!existingUser || existingUser.count === 0) {
@@ -113,7 +113,7 @@ async function checkAutoSetup() {
       const id = uuidv4();
       db.prepare('INSERT INTO users (id, username, password, role) VALUES (?, ?, ?, ?)').run(id, adminUser, hash, 'admin');
       setConfig('setupDone', 'true');
-      console.log(`[cumu] Auto-setup complete: Created default admin user '${adminUser}'.`);
+      console.log(`[cumu] Explicit AUTO_SETUP complete: Created default admin user '${adminUser}'.`);
     } else {
       setConfig('setupDone', 'true');
     }

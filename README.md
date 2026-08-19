@@ -24,10 +24,13 @@ cd cumu
 
 # 2. Run with Docker Compose
 docker compose up -d
+
+# (Optional) If port 3000 is already in use, specify a custom port in terminal:
+PORT=3001 docker compose up -d
 ```
 
-Open **`http://localhost:3000`** in your browser!
-- **Zero-Config**: Admin account (`admin` / `admin`) is created automatically on first run and auto-logged in.
+Open **`http://localhost:3000`** (or your custom port) in your browser!
+- **First-Time Setup**: Enter your own custom admin username and password on first launch.
 - **Drag & Drop Import**: Drop MP3, FLAC, M4A, WAV files or folders directly into your browser window or drop them into `./music` on your host.
 - **Auto-Updates**: Integrated **Watchtower** automatically checks for and applies new container releases in the background.
 
@@ -36,7 +39,8 @@ Open **`http://localhost:3000`** in your browser!
 ## ✨ Key Features
 
 ```
-[+] Zero-Config Docker Container — pre-configured out-of-the-box with automatic setup
+[+] Interactive Setup Wizard     — create your custom admin account on first launch
+[+] Custom Port Support          — specify PORT=3001 directly in terminal or .env
 [+] Instant Drag & Drop Import   — drop audio files or full folders into browser UI or ./music
 [+] Recursive Library Scanner    — auto-scans nested subdirectories (Artist/Album/Song.mp3)
 [+] Watchtower Auto-Updates      — background container updates from GitHub with zero downtime
@@ -66,13 +70,10 @@ services:
     container_name: cumu
     restart: unless-stopped
     ports:
-      - "${CUMU_PORT:-3000}:3000"
+      - "${PORT:-${CUMU_PORT:-3000}}:3000"
     environment:
       - NODE_ENV=production
       - SESSION_SECRET=${SESSION_SECRET:-cumu-default-production-secret-change-me}
-      - AUTO_SETUP=${AUTO_SETUP:-true}
-      - ADMIN_USER=${ADMIN_USER:-admin}
-      - ADMIN_PASS=${ADMIN_PASS:-admin}
       - MUSIC_PATH=/music
     volumes:
       - cumu_data:/app/data
@@ -98,7 +99,11 @@ volumes:
 
 #### Launching the Container:
 ```bash
+# Default port 3000:
 docker compose up -d
+
+# Custom port (e.g. 3001 if port 3000 is occupied):
+PORT=3001 docker compose up -d
 ```
 
 ### 1b. Offline Docker Image Import (From GitHub Release Assets)
