@@ -65,6 +65,13 @@ const ALWAYS_ALLOWED = ['/css/', '/js/', '/fonts/', '/favicon', '/health'];
 const SETUP_ALLOWED  = ['/auth/setup', '/auth/login', '/auth/logout', '/auth/me', '/user/', '/oauth/token', '/oauth/authorize'];
 
 function isSetupDone() {
+  try {
+    const db = getDB();
+    const userCount = db.prepare('SELECT count(*) as count FROM users').get();
+    if (!userCount || userCount.count === 0) return false;
+  } catch {
+    return false;
+  }
   const cfg = getConfig();
   return cfg.setupDone === true || cfg.setupDone === 'true';
 }
