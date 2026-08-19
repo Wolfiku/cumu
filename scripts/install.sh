@@ -27,6 +27,17 @@ log()   { echo -e "${GREEN}[cumu]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[warn]${NC} $*"; }
 error() { echo -e "${RED}[error]${NC} $*" >&2; exit 1; }
 
+# ── Print ASCII Logo ─────────────────────────────────────────────────────────
+echo -e "${BOLD}${GREEN}"
+echo "  ██████╗██╗   ██╗███╗   ███╗██╗   ██╗"
+echo " ██╔════╝██║   ██║████╗ ████║██║   ██║"
+echo " ██║     ██║   ██║██╔████╔██║██║   ██║"
+echo " ██║     ██║   ██║██║╚██╔╝██║██║   ██║"
+echo " ╚██████╗╚██████╔╝██║ ╚═╝ ██║╚██████╔╝"
+echo "  ╚═════╝ ╚═════╝ ╚═╝     ╚═╝ ╚═════╝"
+echo -e "${NC}"
+echo -e "${BOLD}  cumu — Self-hosted music & podcast streaming server${NC}\n"
+
 # ── Parse arguments ──────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -38,7 +49,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ── Root check ───────────────────────────────────────────────────────────────
-[[ $EUID -ne 0 ]] && error "This installer must run as root. Try: sudo bash"
+[[ $EUID -ne 0 ]] && error "This installer must run as root. Try running without sudo if already root."
 
 # ── Detect OS ────────────────────────────────────────────────────────────────
 if [[ -f /etc/os-release ]]; then
@@ -82,16 +93,16 @@ install_node() {
 
 install_node
 
-# Install git + curl if missing
+# Install git, curl, wget, rsync
 case "$OS_ID" in
   ubuntu|debian|linuxmint|pop)
-    apt-get install -y --no-install-recommends git curl wget
+    apt-get install -y --no-install-recommends git curl wget rsync
     ;;
   fedora|rhel|centos|rocky|almalinux)
-    dnf install -y git curl wget || yum install -y git curl wget
+    dnf install -y git curl wget rsync || yum install -y git curl wget rsync
     ;;
   arch|manjaro)
-    pacman -Sy --noconfirm git curl wget
+    pacman -Sy --noconfirm git curl wget rsync
     ;;
 esac
 
@@ -111,11 +122,16 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 wget -qO "${TMP_DIR}/cumu.tar.gz" "${ARCHIVE_URL}"
 tar -xzf "${TMP_DIR}/cumu.tar.gz" -C "$TMP_DIR" --strip-components=1
 
-rsync -a --delete \
-  --exclude='data/' \
-  --exclude='.env' \
-  --exclude='node_modules/' \
-  "${TMP_DIR}/" "${INSTALL_DIR}/"
+if command -v rsync &>/dev/null; then
+  rsync -a --delete \
+    --exclude='data/' \
+    --exclude='.env' \
+    --exclude='node_modules/' \
+    "${TMP_DIR}/" "${INSTALL_DIR}/"
+else
+  mkdir -p "${INSTALL_DIR}"
+  cp -rf "${TMP_DIR}"/* "${INSTALL_DIR}/"
+fi
 
 # ── Install npm dependencies ──────────────────────────────────────────────────
 log "Installing npm dependencies..."
@@ -144,7 +160,7 @@ log "Installing systemd service..."
 cat > /etc/systemd/system/cumu.service << SERVICEEOF
 [Unit]
 Description=cumu music streaming server
-Documentation=https://github.com/Wolfiku/cumu-music
+Documentation=https://github.com/Wolfiku/cumu
 After=network.target
 
 [Service]
@@ -178,17 +194,25 @@ cp "${INSTALL_DIR}/scripts/update.sh" /usr/local/bin/cumu-update
 chmod +x /usr/local/bin/cumu-update
 
 # ── Done ─────────────────────────────────────────────────────────────────────
-IP=$(hostname -I | awk '{print $1}')
+IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+[[ -z "$IP" ]] && IP="<server-ip>"
+
 echo ""
 echo -e "${BOLD}${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${BOLD}  cumu installed successfully!${NC}"
+echo -e "${BOLD}  🎉 cumu wurde erfolgreich installiert!${NC}"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
-echo -e "  Open in browser:   ${BOLD}http://${IP}:${PORT}${NC}"
-echo -e "  Service status:    ${BOLD}systemctl status cumu${NC}"
-echo -e "  View logs:         ${BOLD}journalctl -u cumu -f${NC}"
-echo -e "  Music folder:      ${BOLD}${MUSIC_DIR}${NC}"
-echo -e "  Update cumu:       ${BOLD}sudo cumu-update${NC}"
+echo -e "  🌐 ${BOLD}Der Server ist erreichbar unter:${NC}"
+echo -e "     👉  ${BOLD}${GREEN}http://${IP}:${PORT}${NC}"
+echo -e "     👉  ${BOLD}${GREEN}http://localhost:${PORT}${NC}"
 echo ""
-echo -e "  Complete the first-time setup wizard in your browser."
+echo -e "  📌 ${BOLD}Ersteinrichtung:${NC}"
+echo -e "     Öffne eine der obigen URLs im Browser, um den First-Time Setup Wizard zu starten."
+echo ""
+echo -e "  ⚙️  ${BOLD}Befehle zur Verwaltung:${NC}"
+echo -e "     Status prüfen:  ${BOLD}systemctl status cumu${NC}"
+echo -e "     Logs anzeigen:  ${BOLD}journalctl -u cumu -f${NC}"
+echo -e "     Musik-Ordner:   ${BOLD}${MUSIC_DIR}${NC}"
+echo -e "     Aktualisieren:  ${BOLD}cumu-update${NC}"
+echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
