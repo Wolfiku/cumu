@@ -3,7 +3,10 @@ FROM node:20-alpine AS deps
 WORKDIR /app
 
 # Install build tools required for native modules like better-sqlite3
-RUN apk add --no-cache python3 make g++
+# py3-setuptools is required for distutils support in Python 3.12+ (used by node-gyp)
+RUN apk add --no-cache python3 make g++ py3-setuptools
+
+ENV PYTHON=/usr/bin/python3
 
 COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev
