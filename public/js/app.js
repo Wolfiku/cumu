@@ -321,11 +321,10 @@ function showToast(msg) {
   // ── Theme Switching ────────────────────────────────────────────────────────
 
   function applyTheme(theme) {
-    if (!theme || theme === 'coddy') theme = 'standard';
-    currentTheme = theme;
-    document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('cumu_theme', theme);
-    CumuIcons.setTheme(theme);
+    currentTheme = 'standard';
+    document.documentElement.setAttribute('data-theme', 'standard');
+    localStorage.setItem('cumu_theme', 'standard');
+    CumuIcons.setTheme('standard');
     updateNavIcons();
   }
   window.applyTheme = applyTheme;

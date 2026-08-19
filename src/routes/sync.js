@@ -38,7 +38,7 @@ router.get('/', requireAuth, (req, res) => {
     volume: state.volume,
     lastSongId: state.last_song_id,
     lastPosition: state.last_position,
-    theme: state.theme,
+    theme: 'standard',
     extraSettings: extra,
     version: state.version,
     updatedAt: state.updated_at,
@@ -83,7 +83,7 @@ router.post('/', requireAuth, (req, res) => {
         volume: current.volume,
         lastSongId: current.last_song_id,
         lastPosition: current.last_position,
-        theme: current.theme,
+        theme: 'standard',
         extraSettings: extra,
         version: current.version,
         updatedAt: current.updated_at,
@@ -95,7 +95,7 @@ router.post('/', requireAuth, (req, res) => {
   const newVolume      = volume      !== undefined ? volume      : current.volume;
   const newLastSong    = lastSongId  !== undefined ? lastSongId  : current.last_song_id;
   const newLastPos     = lastPosition !== undefined ? lastPosition : current.last_position;
-  const newTheme       = theme       !== undefined ? theme       : current.theme;
+  const newTheme       = 'standard';
   const newExtra       = extraSettings !== undefined ? JSON.stringify(extraSettings) : current.extra_settings;
   const newVersion     = current.version + 1;
 

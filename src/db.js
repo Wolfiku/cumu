@@ -211,9 +211,10 @@ function initDB() {
     db.prepare("UPDATE oauth_clients SET redirect_uris = ? WHERE client_id = 'cumu-web'").run(BUILTIN_URIS);
   }
 
-  // Migrate legacy default theme 'coddy' to clean 'standard' theme
+  // Force update all legacy theme entries to clean 'standard' theme
   try {
-    db.prepare("UPDATE users SET theme = 'standard' WHERE theme = 'coddy'").run();
+    db.prepare("UPDATE users SET theme = 'standard'").run();
+    db.prepare("UPDATE user_state SET theme = 'standard'").run();
   } catch {}
 
   return db;
