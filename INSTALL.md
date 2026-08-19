@@ -91,7 +91,7 @@ For Debian-based systems requiring native package management.
 1. Download the latest `.deb` package from [GitHub Releases](https://github.com/Wolfiku/cumu/releases).
 2. Install via `dpkg`:
 ```bash
-dpkg -i cumu_0.2.0-alpha_amd64.deb
+dpkg -i cumu_0.2.0_amd64.deb
 ```
 
 ---
