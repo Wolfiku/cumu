@@ -39,14 +39,28 @@ echo -e "${NC}"
 echo -e "${BOLD}  cumu — Self-hosted music & podcast streaming server${NC}\n"
 
 # ── Parse arguments ──────────────────────────────────────────────────────────
+PORT_SET_VIA_ARG=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --port)        PORT="$2";        shift 2 ;;
-    --music-path)  MUSIC_DIR="$2";   shift 2 ;;
-    --install-dir) INSTALL_DIR="$2"; shift 2 ;;
+    --port)        PORT="$2"; PORT_SET_VIA_ARG=true; shift 2 ;;
+    --music-path)  MUSIC_DIR="$2";                   shift 2 ;;
+    --install-dir) INSTALL_DIR="$2";                 shift 2 ;;
     *) warn "Unknown argument: $1"; shift ;;
   esac
 done
+
+if [[ "$PORT_SET_VIA_ARG" == false ]]; then
+  if [[ -c /dev/tty ]]; then
+    echo -e "${BOLD}[+] Server-Konfiguration:${NC}"
+    echo -ne "    Welcher Port soll für cumu verwendet werden? [Standard: 3000]: "
+    read -r USER_PORT </dev/tty || USER_PORT=""
+    if [[ -n "${USER_PORT// /}" ]]; then
+      PORT="${USER_PORT// /}"
+    fi
+  fi
+fi
+
+log "Verwende Server-Port: ${PORT}"
 
 # ── Root check ───────────────────────────────────────────────────────────────
 [[ $EUID -ne 0 ]] && error "This installer must run as root. Try running without sudo if already root."

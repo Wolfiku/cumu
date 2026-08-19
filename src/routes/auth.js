@@ -68,7 +68,7 @@ const { validateMusicPath } = require('../utils/pathValidator');
 // POST /auth/setup — initial server setup (creates admin user)
 router.post('/setup', async (req, res) => {
   if (getConfig().setupDone) return res.status(400).json({ error: 'Setup already done' });
-  const { username, password, musicDir, musicPath } = req.body;
+  const { username, password, musicDir, musicPath, port } = req.body;
   if (!username || !password) return res.status(400).json({ error: 'Benutzername und Passwort sind erforderlich' });
 
   const targetMusic = musicPath || musicDir || '/music';
@@ -82,6 +82,7 @@ router.post('/setup', async (req, res) => {
   const id   = uuidv4();
   db.prepare('INSERT OR IGNORE INTO users (id, username, password, role) VALUES (?, ?, ?, ?)').run(id, username, hash, 'admin');
   setConfig('musicPath', pathCheck.path);
+  if (port) setConfig('port', port);
   setConfig('setupDone', 'true');
 
   const user = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
