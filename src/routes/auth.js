@@ -69,7 +69,7 @@ const { validateMusicPath } = require('../utils/pathValidator');
 router.post('/setup', async (req, res) => {
   if (getConfig().setupDone) return res.status(400).json({ error: 'Setup already done' });
   const { username, password, musicDir, musicPath, port } = req.body;
-  if (!username || !password) return res.status(400).json({ error: 'Benutzername und Passwort sind erforderlich' });
+  if (!username || !password) return res.status(400).json({ error: 'Username and password are required' });
 
   const targetMusic = musicPath || musicDir || '/music';
   const pathCheck = validateMusicPath(targetMusic);

@@ -100,7 +100,7 @@ async function doLogin(url, username, password) {
   });
   if (!r.ok) {
     const e = await r.json().catch(() => ({}));
-    throw new Error(e.error || 'Login fehlgeschlagen.');
+    throw new Error(e.error || 'Login failed.');
   }
   return r.json();
 }
@@ -157,10 +157,10 @@ btnConn.addEventListener('click', async () => {
   const user = inpUser.value.trim();
   const pass = inpPass.value;
 
-  if (!url || !user || !pass) { showErr('Bitte alle Felder ausfüllen.'); return; }
+  if (!url || !user || !pass) { showErr('Please fill in all fields.'); return; }
 
   btnConn.disabled    = true;
-  btnConn.textContent = 'Verbinde…';
+  btnConn.textContent = 'Connecting…';
   setupErr.style.display = 'none';
 
   try {
@@ -179,10 +179,10 @@ btnConn.addEventListener('click', async () => {
     loadHome();
   } catch (e) {
     serverUrl = '';
-    showErr(e.message || 'Verbindungsfehler.');
+    showErr(e.message || 'Connection error.');
   } finally {
     btnConn.disabled    = false;
-    btnConn.textContent = 'Verbinden';
+    btnConn.textContent = 'Connect';
   }
 });
 
@@ -245,7 +245,7 @@ async function doSearch(q) {
       html += renderSongRowsHtml(data.songs);
     }
     if (data.albums?.length) {
-      html += `<div style="font-size:13px;font-weight:700;color:var(--mute);padding:8px 4px 4px">Alben</div>`;
+      html += `<div style="font-size:13px;font-weight:700;color:var(--mute);padding:8px 4px 4px">Albums</div>`;
       html += data.albums.map(a => `
         <div class="song-row">
           <div class="song-cover">${a.cover ? `<img src="${esc(coverUrl(a))}" />` : '💿'}</div>
@@ -255,7 +255,7 @@ async function doSearch(q) {
           </div>
         </div>`).join('');
     }
-    searchRes.innerHTML = html || '<div class="empty-state">Keine Ergebnisse.</div>';
+    searchRes.innerHTML = html || '<div class="empty-state">No results found.</div>';
     bindSongRows(searchRes, data.songs || []);
   } catch(e) { console.error(e); }
 }
@@ -299,17 +299,20 @@ async function loadPlaylists() {
     if (!r.ok) return;
     const list = await r.json();
     if (!list.length) {
-      listPls.innerHTML = '<li class="empty-state"><div class="big">📋</div>Noch keine Playlists.</li>';
+      listPls.innerHTML = '<li class="empty-state"><div class="big">📋</div>No playlists yet.</li>';
       return;
     }
-    listPls.innerHTML = list.map(p => `
-      <li class="playlist-item" data-pl-id="${esc(p.id)}" data-pl-name="${esc(p.name)}">
-        <div class="playlist-cover">🎵</div>
-        <div class="song-meta">
-          <div class="song-title">${esc(p.name)}</div>
-          <div class="song-sub">${esc(p.description || '')}</div>
-        </div>
-      </li>`).join('');
+    listPls.innerHTML = list.map(p => {
+      const isGen = p.is_generated === 1 || (p.description && p.description.includes('[dynamic:'));
+      return `
+        <li class="playlist-item" data-pl-id="${esc(p.id)}" data-pl-name="${esc(p.name)}">
+          <div class="playlist-cover">${isGen ? '✨' : '🎵'}</div>
+          <div class="song-meta">
+            <div class="song-title">${esc(p.name)} ${isGen ? '<span style="font-size:10px;background:rgba(var(--primary-rgb, 120,80,220),0.2);color:var(--primary,#a855f7);padding:1px 4px;border-radius:4px;margin-left:4px">Cumu</span>' : ''}</div>
+            <div class="song-sub">${esc((p.description || '').replace(/\s*\[dynamic:[^\]]+\]/, ''))}</div>
+          </div>
+        </li>`;
+    }).join('');
     listPls.querySelectorAll('.playlist-item').forEach(el => {
       el.addEventListener('click', () => openPlaylist(el.dataset.plId, el.dataset.plName));
     });
@@ -326,6 +329,10 @@ async function openPlaylist(id, name) {
     const r = await api(`/api/playlists/${id}`);
     if (!r.ok) return;
     const pl = await r.json();
+    const isGen = pl.is_generated === 1 || (pl.description && pl.description.includes('[dynamic:'));
+    if (isGen) {
+      $('playlist-detail-name').textContent = '✨ ' + name;
+    }
     renderSongList(pl.songs || [], listPlSongs);
   } catch (e) { console.error(e); }
 }
@@ -336,20 +343,20 @@ $('btn-back-playlists').addEventListener('click', () => {
   navTabs.forEach(t => t.classList.toggle('active', t.dataset.view === 'playlists'));
 });
 $('btn-new-playlist').addEventListener('click', async () => {
-  const name = prompt('Playlist-Name:');
+  const name = prompt('Playlist name:');
   if (!name?.trim()) return;
   try {
     const r = await api('/api/playlists', { method:'POST', body: JSON.stringify({ name }) });
     if (!r.ok) return;
-    toast('Playlist erstellt');
+    toast('Playlist created');
     loadPlaylists();
   } catch (e) { console.error(e); }
 });
 $('btn-delete-playlist').addEventListener('click', async () => {
-  if (!confirm(`Playlist "${currentPlaylistName}" löschen?`)) return;
+  if (!confirm(`Delete playlist "${currentPlaylistName}"?`)) return;
   try {
     await api(`/api/playlists/${currentPlaylistId}`, { method: 'DELETE' });
-    toast('Playlist gelöscht');
+    toast('Playlist deleted');
     $('view-playlist-detail').style.display = 'none';
     $('view-playlists').style.display = '';
     navTabs.forEach(t => t.classList.toggle('active', t.dataset.view === 'playlists'));
@@ -366,7 +373,7 @@ function renderSongRowsHtml(list) {
     <li class="song-row" data-idx="${i}">
       <div class="song-cover">${cv ? `<img src="${esc(cv)}" loading="lazy" />` : '♪'}</div>
       <div class="song-meta">
-        <div class="song-title">${esc(s.title || s.filename || 'Unbekannt')}</div>
+        <div class="song-title">${esc(s.title || s.filename || 'Unknown')}</div>
         <div class="song-sub">${esc(s.artist_name||'')}${s.artist_name&&s.album_title?' · ':''}${esc(s.album_title||'')}</div>
       </div>
       ${s.duration ? `<span class="song-duration">${fmt(s.duration)}</span>` : ''}
@@ -375,7 +382,7 @@ function renderSongRowsHtml(list) {
   }).join('');
 }
 function renderSongList(list, container) {
-  if (!list.length) { container.innerHTML = '<li class="empty-state">Keine Lieder.</li>'; return; }
+  if (!list.length) { container.innerHTML = '<li class="empty-state">No tracks.</li>'; return; }
   container.innerHTML = renderSongRowsHtml(list);
   bindSongRows(container, list);
 }
@@ -398,7 +405,7 @@ function bindSongRows(container, list) {
   });
 }
 function renderAlbums(list, container) {
-  if (!list.length) { container.innerHTML = '<span class="empty-state" style="padding:16px">Keine Alben.</span>'; return; }
+  if (!list.length) { container.innerHTML = '<span class="empty-state" style="padding:16px">No albums.</span>'; return; }
   container.innerHTML = list.map(a => {
     const cv = a.cover ? `${serverUrl}/stream/cover/${encodeURIComponent(a.cover)}` : null;
     return `<div class="album-card">
@@ -409,13 +416,13 @@ function renderAlbums(list, container) {
   }).join('');
 }
 function renderArtists(list, container) {
-  if (!list.length) { container.innerHTML = '<li class="empty-state">Keine Künstler.</li>'; return; }
+  if (!list.length) { container.innerHTML = '<li class="empty-state">No artists.</li>'; return; }
   container.innerHTML = list.map(a => `
     <li class="song-row">
       <div class="song-cover" style="font-size:22px">🎤</div>
       <div class="song-meta">
         <div class="song-title">${esc(a.name)}</div>
-        <div class="song-sub">${a.song_count||0} Songs · ${a.album_count||0} Alben</div>
+        <div class="song-sub">${a.song_count||0} Songs · ${a.album_count||0} Albums</div>
       </div>
     </li>`).join('');
 }
@@ -431,32 +438,32 @@ async function saveOfflineMeta() {
 async function downloadSong(song, btn) {
   try {
     const net = await Network.getStatus();
-    if (!net.connected) { toast('Kein Internet'); btn.textContent = '↓'; return; }
+    if (!net.connected) { toast('No Internet connection'); btn.textContent = '↓'; return; }
     const r = await api(`/stream/${song.id}`);
-    if (!r.ok) throw new Error('Fehler');
+    if (!r.ok) throw new Error('Error');
     const blob = await r.blob();
     const reader = new FileReader();
     reader.onload = async ev => {
       offlineSongs[song.id] = { ...song, dataUrl: ev.target.result };
       await saveOfflineMeta();
       btn.textContent = '✓'; btn.classList.add('done');
-      toast(`"${song.title || song.filename}" gespeichert`);
+      toast(`"${song.title || song.filename}" saved`);
       renderOffline();
     };
     reader.readAsDataURL(blob);
-  } catch (e) { btn.textContent = '!'; toast('Download fehlgeschlagen'); console.error(e); }
+  } catch (e) { btn.textContent = '!'; toast('Download failed'); console.error(e); }
 }
 function renderOffline() {
   const list = Object.values(offlineSongs);
   if (!list.length) {
-    listOffline.innerHTML = '<li class="empty-state"><div class="big">📥</div>Noch keine Lieder heruntergeladen.<br/>Tippe auf ↓ um ein Lied zu speichern.</li>';
+    listOffline.innerHTML = '<li class="empty-state"><div class="big">📥</div>No tracks downloaded yet.<br/>Tap ↓ to save a track.</li>';
     return;
   }
   listOffline.innerHTML = list.map((s,i) => `
     <li class="song-row" data-off-idx="${i}">
       <div class="song-cover">♪</div>
       <div class="song-meta">
-        <div class="song-title">${esc(s.title || s.filename || 'Unbekannt')}</div>
+        <div class="song-title">${esc(s.title || s.filename || 'Unknown')}</div>
         <div class="song-sub">${esc(s.artist_name||'')}</div>
       </div>
       <button class="dl-btn" style="border-color:var(--danger);color:var(--danger)" data-del-id="${esc(s.id)}">✕</button>
@@ -493,7 +500,7 @@ function playSong(index, list) {
     api(`/stream/${song.id}`)
       .then(r => r.ok ? r.blob() : Promise.reject())
       .then(blob => { audio.src = URL.createObjectURL(blob); audio.play(); })
-      .catch(() => toast('Stream nicht verfügbar'));
+      .catch(() => toast('Stream unavailable'));
   }
 }
 npPlay.addEventListener('click', () => {
@@ -525,7 +532,7 @@ npSeek.addEventListener('input', () => {
 function updateNpBar() {
   if (!currentSong) return;
   npBar.style.display = '';
-  npTitle.textContent  = currentSong.title || currentSong.filename || 'Unbekannt';
+  npTitle.textContent  = currentSong.title || currentSong.filename || 'Unknown';
   npArtist.textContent = currentSong.artist_name || '';
   npPlay.textContent   = '⏸';
   const cv = coverUrl(currentSong);

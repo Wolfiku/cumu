@@ -1169,7 +1169,6 @@ html body span.material-symbols-outlined,
 .search-input-container input[type="search"],
 .search-input-container input {
   padding-left: 56px !important;
-  height: auto !important;
 }
 
 .search-input-container.compact .search-icon {

@@ -14,12 +14,12 @@ function scorePassword(pw) {
   if (/[0-9]/.test(pw)) score++;
   if (/[^A-Za-z0-9]/.test(pw)) score++;
 
-  if (score <= 2) return { score, label: 'Schwaches Passwort', percent: 33, color: '#ba1a1a' };
-  if (score <= 3) return { score, label: 'Mittelstarkes Passwort', percent: 66, color: '#665b43' };
-  return { score, label: 'Starkes Passwort', percent: 100, color: '#000000' };
+  if (score <= 2) return { score, label: 'Weak Password', percent: 33, color: '#ba1a1a' };
+  if (score <= 3) return { score, label: 'Medium Password', percent: 66, color: '#665b43' };
+  return { score, label: 'Strong Password', percent: 100, color: '#000000' };
 }
 
-function renderSettingsPage(user, audioSettings = {}) {
+function renderSettingsPage(user, audioSettings = {}, autoLookupVal = false) {
   const crossfadeVal = audioSettings.crossfadeDuration !== undefined ? audioSettings.crossfadeDuration : 0;
   const gaplessVal = audioSettings.gaplessEnabled !== undefined ? audioSettings.gaplessEnabled : true;
   const podcastSearchVal = audioSettings.podcastSearchEnabled !== undefined ? audioSettings.podcastSearchEnabled : true;
@@ -27,8 +27,8 @@ function renderSettingsPage(user, audioSettings = {}) {
   return `
 <div class="p-md md:p-margin-desktop max-w-[960px] mx-auto w-full">
   <div class="mb-xl">
-    <h1 class="text-headline-lg font-headline-lg text-text-high-contrast font-bold mb-xs">Einstellungen</h1>
-    <p class="text-body-sm text-text-muted">Verwalte dein Konto, Audio-Präferenzen, Podcasts und System-Einstellungen</p>
+    <h1 class="text-headline-lg font-headline-lg text-text-high-contrast font-bold mb-xs">Settings</h1>
+    <p class="text-body-sm text-text-muted">Manage your account, audio preferences, podcasts, and system settings</p>
   </div>
 
   <!-- ── Section 1: User Account Summary ────────────────────────── -->
@@ -38,7 +38,7 @@ function renderSettingsPage(user, audioSettings = {}) {
         ${(user.username || 'U')[0].toUpperCase()}
       </div>
       <div>
-        <div class="text-title-md font-title-md text-text-high-contrast font-bold">${esc(user.username || 'Benutzer')}</div>
+        <div class="text-title-md font-title-md text-text-high-contrast font-bold">${esc(user.username || 'User')}</div>
         <div class="flex items-center gap-xs mt-xs">
           <span class="px-xs py-xxs rounded bg-surface-container text-text-high-contrast text-label-caps uppercase font-bold">
             ${esc(user.role || 'user')}
@@ -48,21 +48,21 @@ function renderSettingsPage(user, audioSettings = {}) {
       </div>
     </div>
     <div class="flex items-center gap-xs text-label-caps text-text-muted">
-      <span class="w-2 h-2 rounded-full bg-green-500"></span> Live Sync aktiv
+      <span class="w-2 h-2 rounded-full bg-green-500"></span> Live Sync Active
     </div>
   </div>
 
   <!-- ── Section 2: Audio Engine & Playback ──────────────────────── -->
   <div class="bg-surface-bright border border-border-subtle rounded-xl p-xl mb-xl">
-    <h2 class="text-title-md font-title-md text-text-high-contrast font-bold mb-xs">Audiosystem & Übergänge</h2>
-    <p class="text-body-sm text-text-muted mb-lg">Nahtlose Wiedergabe und digitales Crossfade.</p>
+    <h2 class="text-title-md font-title-md text-text-high-contrast font-bold mb-xs">Audio Engine & Crossfade</h2>
+    <p class="text-body-sm text-text-muted mb-lg">Seamless playback and digital crossfade.</p>
 
     <div class="flex flex-col gap-lg">
       <!-- Gapless Playback Toggle -->
       <div class="flex items-center justify-between gap-md p-md bg-background border border-border-subtle rounded-lg">
         <div>
-          <div class="text-body-lg font-medium text-text-high-contrast">Nahtlose Wiedergabe (Gapless Playback)</div>
-          <div class="text-body-sm text-text-muted mt-xs">Eliminiert Stillepausen zwischen Titeln.</div>
+          <div class="text-body-lg font-medium text-text-high-contrast">Gapless Playback</div>
+          <div class="text-body-sm text-text-muted mt-xs">Eliminates silence between tracks.</div>
         </div>
         <label class="relative inline-block w-12 h-6 cursor-pointer flex-shrink-0">
           <input type="checkbox" id="settingsGaplessToggle" ${gaplessVal ? 'checked' : ''} class="opacity-0 w-0 h-0">
@@ -75,14 +75,33 @@ function renderSettingsPage(user, audioSettings = {}) {
       <div class="p-md bg-background border border-border-subtle rounded-lg">
         <div class="flex items-center justify-between mb-md">
           <div>
-            <div class="text-body-lg font-medium text-text-high-contrast">Sanftes Überblenden (Crossfade)</div>
-            <div class="text-body-sm text-text-muted mt-xs">Überblendet das Ende eines Titels sanft in den nächsten.</div>
+            <div class="text-body-lg font-medium text-text-high-contrast">Crossfade</div>
+            <div class="text-body-sm text-text-muted mt-xs">Smoothly fades out the end of a track into the next.</div>
           </div>
           <div class="text-title-md font-bold text-text-high-contrast" id="crossfadeValDisplay">
-            ${crossfadeVal > 0 ? crossfadeVal + ' Sek.' : 'Aus (0s)'}
+            ${crossfadeVal > 0 ? crossfadeVal + ' sec.' : 'Off (0s)'}
           </div>
         </div>
         <input type="range" id="settingsCrossfadeRange" min="0" max="12" step="1" value="${crossfadeVal}" class="w-full accent-text-high-contrast cursor-pointer">
+      </div>
+
+      <!-- Audio Output Device (setSinkId) -->
+      <div class="p-md bg-background border border-border-subtle rounded-lg">
+        <div class="flex items-center justify-between flex-wrap gap-md mb-xs">
+          <div>
+            <div class="text-body-lg font-medium text-text-high-contrast">Audio Output Device</div>
+            <div class="text-body-sm text-text-muted mt-xs">Select your speakers, headphones, or external DAC (setSinkId).</div>
+          </div>
+          <button id="settingsRefreshAudioDevicesBtn" type="button" class="px-sm py-xs text-label-caps font-bold text-text-muted hover:text-on-surface bg-surface-container hover:bg-surface-container-high rounded transition-colors flex items-center gap-xs">
+            <span class="material-symbols-outlined text-[16px]">refresh</span> Refresh Devices
+          </button>
+        </div>
+        <div id="settingsAudioOutputContainer" class="mt-sm">
+          <select id="settingsAudioOutputSelect" class="w-full px-md py-sm bg-surface-bright border border-border-subtle rounded-lg font-body-sm text-on-surface focus:outline-none focus:border-text-muted transition-colors cursor-pointer">
+            <option value="default">Default System Output</option>
+          </select>
+          <div id="settingsAudioOutputNotice" class="hidden text-body-sm text-text-muted mt-xs italic"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -90,12 +109,12 @@ function renderSettingsPage(user, audioSettings = {}) {
   <!-- ── Section 3: Podcast-Einstellungen ────────────────────────── -->
   <div class="bg-surface-bright border border-border-subtle rounded-xl p-xl mb-xl">
     <h2 class="text-title-md font-title-md text-text-high-contrast font-bold mb-xs">Podcasts</h2>
-    <p class="text-body-sm text-text-muted mb-lg">Sichtbarkeit und Verhalten von Podcasts in der Anwendung.</p>
+    <p class="text-body-sm text-text-muted mb-lg">Visibility and behavior of podcasts in the application.</p>
 
     <div class="flex items-center justify-between gap-md p-md bg-background border border-border-subtle rounded-lg">
       <div>
-        <div class="text-body-lg font-medium text-text-high-contrast">Podcasts in der Suche finden</div>
-        <div class="text-body-sm text-text-muted mt-xs">Ermöglicht das Suchen und Anzeigen von Podcasts in den allgemeinen Suchergebnissen.</div>
+        <div class="text-body-lg font-medium text-text-high-contrast">Include podcasts in search</div>
+        <div class="text-body-sm text-text-muted mt-xs">Allows searching and displaying podcasts in global search results.</div>
       </div>
       <label class="relative inline-block w-12 h-6 cursor-pointer flex-shrink-0">
         <input type="checkbox" id="settingsPodcastSearchToggle" ${podcastSearchVal ? 'checked' : ''} class="opacity-0 w-0 h-0">
@@ -105,21 +124,40 @@ function renderSettingsPage(user, audioSettings = {}) {
     </div>
   </div>
 
-  <!-- ── Section: Navigation & Sichtbarkeit ──────────────────────── -->
+  <!-- ── Section: Auto-Lookup Metadaten ──────────────────────────── -->
+  <div class="bg-surface-bright border border-border-subtle rounded-xl p-xl mb-xl">
+    <h2 class="text-title-md font-title-md text-text-high-contrast font-bold mb-xs">Metadata Auto-Lookup</h2>
+    <p class="text-body-sm text-text-muted mb-lg">Automatically search for missing song details (year, genre, album, track number) in the background.</p>
+
+    <div class="flex items-center justify-between gap-md p-md bg-background border border-border-subtle rounded-lg">
+      <div>
+        <div class="text-body-lg font-medium text-text-high-contrast font-bold">Automatic Background Lookup</div>
+        <div class="text-body-sm text-text-muted mt-xs">Automatically fills in missing metadata via MusicBrainz & AI in the background. Your custom data remains untouched.</div>
+      </div>
+      <label class="relative inline-block w-12 h-6 cursor-pointer flex-shrink-0">
+        <input type="checkbox" id="settingsAutoLookupToggle" ${autoLookupVal ? 'checked' : ''} class="opacity-0 w-0 h-0">
+        <span id="autoLookupSliderBg" class="absolute inset-0 ${autoLookupVal ? 'bg-text-high-contrast' : 'bg-border-subtle'} rounded-full transition-colors"></span>
+        <span id="autoLookupSliderKnob" class="absolute top-1 ${autoLookupVal ? 'left-7' : 'left-1'} w-4 h-4 bg-white rounded-full transition-all"></span>
+      </label>
+    </div>
+  </div>
+
+  <!-- ── Section: Navigation & Visibility ──────────────────────── -->
+
   ${(() => {
     const showFavoritesVal = window.CumuApp?.getShowFavorites ? window.CumuApp.getShowFavorites() : (localStorage.getItem('cumu_show_favorites') !== 'false');
     const showPodcastsVal = window.CumuApp?.getShowPodcasts ? window.CumuApp.getShowPodcasts() : (localStorage.getItem('cumu_show_podcasts') !== 'false');
     return `
       <div class="bg-surface-bright border border-border-subtle rounded-xl p-xl mb-xl">
-        <h2 class="text-title-md font-title-md text-text-high-contrast font-bold mb-xs">Navigation & Menü-Sichtbarkeit</h2>
-        <p class="text-body-sm text-text-muted mb-lg">Pass an, welche Bereiche in der Sidebar und Mediathek angezeigt werden.</p>
+        <h2 class="text-title-md font-title-md text-text-high-contrast font-bold mb-xs">Navigation & Menu Visibility</h2>
+        <p class="text-body-sm text-text-muted mb-lg">Customize which sections appear in the sidebar and library.</p>
 
         <div class="flex flex-col gap-md">
           <!-- Show Favorites Toggle -->
           <div class="flex items-center justify-between gap-md p-md bg-background border border-border-subtle rounded-lg">
             <div>
-              <div class="text-body-lg font-medium text-text-high-contrast">Lieblingslieder anzeigen</div>
-              <div class="text-body-sm text-text-muted mt-xs">Blendet "Lieblingslieder" in der linken Navigation und Mediathek ein.</div>
+              <div class="text-body-lg font-medium text-text-high-contrast">Show Favorite Songs</div>
+              <div class="text-body-sm text-text-muted mt-xs">Show "Favorite Songs" in the left sidebar and library.</div>
             </div>
             <label class="relative inline-block w-12 h-6 cursor-pointer flex-shrink-0">
               <input type="checkbox" id="settingsShowFavoritesToggle" ${showFavoritesVal ? 'checked' : ''} class="opacity-0 w-0 h-0">
@@ -131,8 +169,8 @@ function renderSettingsPage(user, audioSettings = {}) {
           <!-- Show Podcasts Toggle -->
           <div class="flex items-center justify-between gap-md p-md bg-background border border-border-subtle rounded-lg">
             <div>
-              <div class="text-body-lg font-medium text-text-high-contrast">Podcasts anzeigen</div>
-              <div class="text-body-sm text-text-muted mt-xs">Blendet "Podcasts" in der linken Navigation und Mediathek ein.</div>
+              <div class="text-body-lg font-medium text-text-high-contrast">Show Podcasts</div>
+              <div class="text-body-sm text-text-muted mt-xs">Show "Podcasts" in the left sidebar and library.</div>
             </div>
             <label class="relative inline-block w-12 h-6 cursor-pointer flex-shrink-0">
               <input type="checkbox" id="settingsShowPodcastsToggle" ${showPodcastsVal ? 'checked' : ''} class="opacity-0 w-0 h-0">
@@ -145,20 +183,20 @@ function renderSettingsPage(user, audioSettings = {}) {
     `;
   })()}
 
-  <!-- ── Section 4: Offline-Speicher & Downloads ──────────────────── -->
+  <!-- ── Section 4: Offline Storage & Downloads ──────────────────── -->
   <div class="bg-surface-bright border border-border-subtle rounded-xl p-xl mb-xl">
-    <h2 class="text-title-md font-title-md text-text-high-contrast font-bold mb-xs">Offline-Speicher & Downloads</h2>
-    <p class="text-body-sm text-text-muted mb-lg">Im Browser (IndexedDB) gespeicherte Playlists verwalten.</p>
+    <h2 class="text-title-md font-title-md text-text-high-contrast font-bold mb-xs">Offline Storage & Downloads</h2>
+    <p class="text-body-sm text-text-muted mb-lg">Manage playlists saved in browser storage (IndexedDB).</p>
 
     <div class="p-md bg-background border border-border-subtle rounded-lg flex items-center justify-between flex-wrap gap-md">
       <div>
         <div class="text-body-lg font-medium text-text-high-contrast" id="settingsOfflineStats">
-          Lade Speicherdaten…
+          Loading storage data…
         </div>
-        <div class="text-body-sm text-text-muted mt-xs">Gleicher Browser / Lokal auf diesem Gerät</div>
+        <div class="text-body-sm text-text-muted mt-xs">Same browser / Local on this device</div>
       </div>
       <button class="px-md py-sm rounded-lg font-body-sm text-body-sm text-red-600 bg-red-50 hover:bg-red-100 dark:bg-red-950/30 dark:hover:bg-red-950/50 border border-red-200 dark:border-red-800 transition-colors active:scale-95 font-bold" onclick="clearOfflineStorageFromSettings()">
-        Offline-Speicher leeren
+        Clear Offline Storage
       </button>
     </div>
   </div>
@@ -166,32 +204,32 @@ function renderSettingsPage(user, audioSettings = {}) {
   <!-- ── Section 5: Design System Status ──────────────────────────── -->
   <div class="bg-surface-bright border border-border-subtle rounded-xl p-xl mb-xl">
     <h2 class="text-title-md font-title-md text-text-high-contrast font-bold mb-xs">Design System</h2>
-    <p class="text-body-sm text-text-muted mb-md">Aktiviertes Design-System für deine cumu Instanz.</p>
+    <p class="text-body-sm text-text-muted mb-md">Active design system for your cumu instance.</p>
 
     <div class="border border-text-high-contrast rounded-lg p-md bg-background flex items-center justify-between">
       <div>
         <strong class="text-body-lg font-bold block text-text-high-contrast">Calculated Minimalism (Stitch Cumu Identity)</strong>
-        <div class="text-body-sm text-text-muted mt-xs">Pure White Canvas &bull; Inter Typografie &bull; desaturiertes Akzentgrau</div>
+        <div class="text-body-sm text-text-muted mt-xs">Pure White Canvas &bull; Inter Typography &bull; Desaturated Accent Gray</div>
       </div>
-      <span class="px-md py-xs rounded-full text-label-caps font-bold bg-text-high-contrast text-on-primary">Aktiv</span>
+      <span class="px-md py-xs rounded-full text-label-caps font-bold bg-text-high-contrast text-on-primary">Active</span>
     </div>
   </div>
 
-  <!-- ── Section 5: Passwort ändern ──────────────────────────────── -->
+  <!-- ── Section 5: Change Password ──────────────────────────────── -->
   <div class="bg-surface-bright border border-border-subtle rounded-xl p-xl">
-    <h2 class="text-title-md font-title-md text-text-high-contrast font-bold mb-xs">Passwort ändern</h2>
-    <p class="text-body-sm text-text-muted mb-lg">Erstelle ein neues, sicheres Passwort.</p>
+    <h2 class="text-title-md font-title-md text-text-high-contrast font-bold mb-xs">Change Password</h2>
+    <p class="text-body-sm text-text-muted mb-lg">Create a new, secure password.</p>
 
     <form id="settingsPwForm" novalidate class="flex flex-col gap-md max-w-md">
       <div class="flex flex-col gap-xs">
-        <label for="settingsCurrPw" class="text-label-caps text-text-muted lowercase">Aktuelles Passwort</label>
-        <input type="password" id="settingsCurrPw" name="currentPassword" required placeholder="Aktuelles Passwort"
+        <label for="settingsCurrPw" class="text-label-caps text-text-muted lowercase">Current Password</label>
+        <input type="password" id="settingsCurrPw" name="currentPassword" required placeholder="Current Password"
                class="w-full px-md py-sm bg-background border border-border-subtle rounded-lg text-body-sm text-text-high-contrast focus:outline-none focus:border-text-high-contrast">
       </div>
       
       <div class="flex flex-col gap-xs">
-        <label for="settingsNewPw" class="text-label-caps text-text-muted lowercase">Neues Passwort</label>
-        <input type="password" id="settingsNewPw" name="newPassword" required placeholder="Neues Passwort (min. 8 Zeichen)"
+        <label for="settingsNewPw" class="text-label-caps text-text-muted lowercase">New Password</label>
+        <input type="password" id="settingsNewPw" name="newPassword" required placeholder="New Password (min. 8 characters)"
                class="w-full px-md py-sm bg-background border border-border-subtle rounded-lg text-body-sm text-text-high-contrast focus:outline-none focus:border-text-high-contrast">
         <div id="pwMeterContainer" class="hidden mt-xs">
           <div class="h-1.5 w-full bg-border-subtle rounded-full overflow-hidden">
@@ -202,8 +240,8 @@ function renderSettingsPage(user, audioSettings = {}) {
       </div>
 
       <div class="flex flex-col gap-xs">
-        <label for="settingsConfirmPw" class="text-label-caps text-text-muted lowercase">Passwort bestätigen</label>
-        <input type="password" id="settingsConfirmPw" name="confirmPassword" required placeholder="Passwort wiederholen"
+        <label for="settingsConfirmPw" class="text-label-caps text-text-muted lowercase">Confirm Password</label>
+        <input type="password" id="settingsConfirmPw" name="confirmPassword" required placeholder="Repeat Password"
                class="w-full px-md py-sm bg-background border border-border-subtle rounded-lg text-body-sm text-text-high-contrast focus:outline-none focus:border-text-high-contrast">
       </div>
 
@@ -211,7 +249,7 @@ function renderSettingsPage(user, audioSettings = {}) {
       <div id="settingsPwSuccess" class="hidden text-body-sm text-green-600 bg-green-50 rounded-lg p-sm"></div>
 
       <button type="submit" id="settingsPwBtn" class="mt-sm py-md px-lg bg-text-high-contrast text-on-primary rounded-lg text-label-caps font-bold hover:bg-interactive-hover transition-all active:scale-95">
-        Passwort aktualisieren
+        Update Password
       </button>
     </form>
   </div>
@@ -224,6 +262,7 @@ async function initSettingsPage() {
 
   let user = {};
   let audioSettings = { crossfadeDuration: 0, gaplessEnabled: true, podcastSearchEnabled: true };
+  let autoLookupVal = false;
 
   try {
     user = await CumuApi.get('/user/settings');
@@ -233,11 +272,37 @@ async function initSettingsPage() {
       if (syncData.extraSettings.gaplessEnabled !== undefined) audioSettings.gaplessEnabled = syncData.extraSettings.gaplessEnabled;
       if (syncData.extraSettings.podcastSearchEnabled !== undefined) audioSettings.podcastSearchEnabled = syncData.extraSettings.podcastSearchEnabled;
     }
+    try {
+      const cfg = await CumuApi.get('/admin/config');
+      if (cfg && cfg.autoLookupEnabled !== undefined) autoLookupVal = cfg.autoLookupEnabled;
+    } catch (_) {}
   } catch (_) {}
 
-  mainContent.innerHTML = renderSettingsPage(user, audioSettings);
+  mainContent.innerHTML = renderSettingsPage(user, audioSettings, autoLookupVal);
 
   updateOfflineStats();
+
+  // ── Auto-Lookup Toggle Handler ──────────────────────────────────────
+  const autoLookupToggle = document.getElementById('settingsAutoLookupToggle');
+  if (autoLookupToggle) {
+    autoLookupToggle.addEventListener('change', async () => {
+      const isEnabled = autoLookupToggle.checked;
+      const bg = document.getElementById('autoLookupSliderBg');
+      const knob = document.getElementById('autoLookupSliderKnob');
+      if (bg) {
+        bg.classList.toggle('bg-text-high-contrast', isEnabled);
+        bg.classList.toggle('bg-border-subtle', !isEnabled);
+      }
+      if (knob) {
+        knob.style.left = isEnabled ? '28px' : '4px';
+      }
+      try {
+        await CumuApi.put('/admin/config', { autoLookupEnabled: isEnabled });
+      } catch (e) {
+        console.error('Failed to save autoLookupEnabled config', e);
+      }
+    });
+  }
 
   // ── Gapless Toggle Handler ─────────────────────────────────────────
   const gaplessToggle = document.getElementById('settingsGaplessToggle');
@@ -328,7 +393,7 @@ async function initSettingsPage() {
     crossfadeRange.addEventListener('input', () => {
       const val = parseInt(crossfadeRange.value, 10);
       if (crossfadeDisplay) {
-        crossfadeDisplay.textContent = val > 0 ? `${val} Sek.` : 'Aus (0s)';
+        crossfadeDisplay.textContent = val > 0 ? `${val} sec.` : 'Off (0s)';
       }
       if (window.CumuAudioEngine) {
         window.CumuAudioEngine.setCrossfade(val);
@@ -338,6 +403,77 @@ async function initSettingsPage() {
     crossfadeRange.addEventListener('change', async () => {
       const val = parseInt(crossfadeRange.value, 10);
       await saveAudioSettings({ crossfadeDuration: val });
+    });
+  }
+
+  // ── Audio Output Device Handler (setSinkId) ───────────────────────
+  async function populateAudioOutputDevices() {
+    const select = document.getElementById('settingsAudioOutputSelect');
+    const notice = document.getElementById('settingsAudioOutputNotice');
+    if (!select) return;
+
+    if (!window.CumuAudioEngine || !window.CumuAudioEngine.getAudioOutputDevices) return;
+
+    const res = await window.CumuAudioEngine.getAudioOutputDevices();
+    if (!res.supported) {
+      if (notice) {
+        notice.textContent = 'Note: Direct audio output selection (setSinkId) is not supported by your current browser.';
+        notice.classList.remove('hidden');
+      }
+      select.disabled = true;
+      return;
+    }
+
+    const currentId = window.CumuAudioEngine.getCurrentAudioDeviceId ? window.CumuAudioEngine.getCurrentAudioDeviceId() : 'default';
+    select.innerHTML = '';
+
+    if (res.devices.length === 0) {
+      const opt = document.createElement('option');
+      opt.value = 'default';
+      opt.textContent = 'Default System Output';
+      select.appendChild(opt);
+    } else {
+      let foundCurrent = false;
+      res.devices.forEach((dev, idx) => {
+        const opt = document.createElement('option');
+        opt.value = dev.deviceId;
+        opt.textContent = dev.label || `Audio Output ${idx + 1} (${dev.deviceId.slice(0, 8)}…)`;
+        if (dev.deviceId === currentId) {
+          opt.selected = true;
+          foundCurrent = true;
+        }
+        select.appendChild(opt);
+      });
+      if (!foundCurrent) {
+        select.value = select.options[0]?.value || 'default';
+      }
+    }
+  }
+
+  populateAudioOutputDevices();
+
+  const audioSelect = document.getElementById('settingsAudioOutputSelect');
+  if (audioSelect) {
+    audioSelect.addEventListener('change', async () => {
+      const selectedId = audioSelect.value;
+      if (window.CumuAudioEngine && window.CumuAudioEngine.setAudioOutputDevice) {
+        await window.CumuAudioEngine.setAudioOutputDevice(selectedId);
+        if (typeof showToast === 'function') showToast('Audio output device updated');
+      }
+    });
+  }
+
+  const refreshAudioBtn = document.getElementById('settingsRefreshAudioDevicesBtn');
+  if (refreshAudioBtn) {
+    refreshAudioBtn.addEventListener('click', async () => {
+      try {
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          stream.getTracks().forEach(t => t.stop());
+        }
+      } catch (e) {}
+      await populateAudioOutputDevices();
+      if (typeof showToast === 'function') showToast('Audio output devices refreshed');
     });
   }
 
@@ -375,7 +511,7 @@ async function initSettingsPage() {
 
       const btn = document.getElementById('settingsPwBtn');
       btn.disabled = true;
-      btn.textContent = 'Speichern…';
+      btn.textContent = 'Saving…';
 
       const body = {
         currentPassword: document.getElementById('settingsCurrPw').value,
@@ -384,29 +520,29 @@ async function initSettingsPage() {
       };
 
       if (body.newPassword.length < 8) {
-        showMsg(pwError, 'Neues Passwort muss mindestens 8 Zeichen lang sein.');
-        btn.disabled = false; btn.textContent = 'Passwort aktualisieren';
+        showMsg(pwError, 'New password must be at least 8 characters long.');
+        btn.disabled = false; btn.textContent = 'Update Password';
         return;
       }
       if (body.newPassword !== body.confirmPassword) {
-        showMsg(pwError, 'Passwörter stimmen nicht überein.');
-        btn.disabled = false; btn.textContent = 'Passwort aktualisieren';
+        showMsg(pwError, 'Passwords do not match.');
+        btn.disabled = false; btn.textContent = 'Update Password';
         return;
       }
 
       try {
         const res = await CumuApi.post('/user/change-password', body);
         if (res.success) {
-          showMsg(pwSuccess, res.message || 'Passwort erfolgreich geändert.');
+          showMsg(pwSuccess, res.message || 'Password updated successfully.');
           pwForm.reset();
           if (meterContainer) meterContainer.classList.add('hidden');
         } else {
-          showMsg(pwError, res.error || 'Fehler beim Ändern des Passworts.');
+          showMsg(pwError, res.error || 'Error changing password.');
         }
       } catch (err) {
-        showMsg(pwError, err.message || 'Netzwerkfehler.');
+        showMsg(pwError, err.message || 'Network error.');
       } finally {
-        btn.disabled = false; btn.textContent = 'Passwort aktualisieren';
+        btn.disabled = false; btn.textContent = 'Update Password';
       }
     });
   }
@@ -449,18 +585,18 @@ async function updateOfflineStats() {
     if (stats.playlistCount > 0) {
       el.textContent = `${stats.playlistCount} Playlist(s) &bull; ${stats.songCount} Songs (${stats.formattedSize})`;
     } else {
-      el.textContent = `Keine Offline-Playlists gespeichert (0 B)`;
+      el.textContent = `No offline playlists stored (0 B)`;
     }
   } else {
-    el.textContent = `Offline-Speicher nicht unterstützt`;
+    el.textContent = `Offline storage not supported`;
   }
 }
 
 async function clearOfflineStorageFromSettings() {
   if (!window.CumuOfflineStore) return;
-  if (confirm('Möchtest du wirklich den gesamten Offline-Speicher (alle heruntergeladenen Playlists und Audio-Dateien) im Browser leeren?')) {
+  if (confirm('Are you sure you want to clear all offline storage (all downloaded playlists and audio files) in this browser?')) {
     await CumuOfflineStore.clearAllOffline();
-    if (typeof showToast === 'function') showToast('Offline-Speicher geleert');
+    if (typeof showToast === 'function') showToast('Offline storage cleared');
     updateOfflineStats();
   }
 }

@@ -18,8 +18,11 @@ const fs      = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const bcrypt  = require('bcryptjs');
 const mm      = require('music-metadata');
-const { getDB, getConfig, setConfig, log } = require('../db');
+const { getDB, getConfig, setConfig, log, getOrCreateArtist } = require('../db');
 const { requireAdmin } = require('../middleware/auth');
+const { testMistralKey } = require('../services/mistral');
+const { processSongLookup, triggerLibraryAutoLookup, queueSongForLookup } = require('../services/autoLookup');
+
 
 const router = express.Router();
 
@@ -99,23 +102,91 @@ async function extractMeta(filePath) {
   }
 }
 
-function getOrCreateArtist(db, name) {
-  if (!name) return null;
-  let row = db.prepare('SELECT id FROM artists WHERE name = ?').get(name);
-  if (!row) { const id = uuidv4(); db.prepare('INSERT INTO artists (id, name) VALUES (?, ?)').run(id, name); row = { id }; }
-  return row.id;
+
+
+function cleanupOrphanedAlbums(db) {
+  try {
+    const orphaned = db.prepare(`
+      SELECT a.* FROM albums a
+      LEFT JOIN songs s ON s.album_id = a.id
+      WHERE s.id IS NULL
+    `).all();
+
+    for (const emptyAlbum of orphaned) {
+      if (emptyAlbum.title) {
+        const activeAlbum = db.prepare(`
+          SELECT a.* FROM albums a
+          JOIN songs s ON s.album_id = a.id
+          WHERE a.title = ? AND a.id != ?
+          LIMIT 1
+        `).get(emptyAlbum.title, emptyAlbum.id);
+
+        if (activeAlbum && !activeAlbum.cover && emptyAlbum.cover) {
+          db.prepare('UPDATE albums SET cover = ? WHERE id = ?').run(emptyAlbum.cover, activeAlbum.id);
+        }
+      }
+      db.prepare('DELETE FROM albums WHERE id = ?').run(emptyAlbum.id);
+    }
+  } catch (err) {
+    console.error('[cumu] cleanupOrphanedAlbums error:', err.message);
+  }
 }
 
-function getOrCreateAlbum(db, title, artistId, meta) {
+function getOrCreateAlbum(db, title, artistId, meta = {}, existingAlbumId = null) {
   if (!title) return null;
-  let row = db.prepare('SELECT id FROM albums WHERE title = ? AND artist_id = ?').get(title, artistId);
-  if (!row) {
-    const id = uuidv4();
-    db.prepare('INSERT INTO albums (id, title, artist_id, year, genre) VALUES (?, ?, ?, ?, ?)').run(id, title, artistId, meta.year || null, meta.genre || null);
-    row = { id };
+
+  // 1. Search by title and artist_id
+  let row = null;
+  if (artistId) {
+    row = db.prepare('SELECT * FROM albums WHERE title = ? AND artist_id = ?').get(title, artistId);
   }
-  return row.id;
+
+  // 2. Search by title where artist_id is NULL
+  if (!row) {
+    row = db.prepare('SELECT * FROM albums WHERE title = ? AND artist_id IS NULL').get(title);
+    if (row && artistId) {
+      db.prepare('UPDATE albums SET artist_id = ? WHERE id = ?').run(artistId, row.id);
+      row.artist_id = artistId;
+    }
+  }
+
+  // 3. Search by title matching any artist (prevents creating duplicate empty albums for same album)
+  if (!row) {
+    row = db.prepare('SELECT * FROM albums WHERE title = ?').get(title);
+    if (row && artistId && !row.artist_id) {
+      db.prepare('UPDATE albums SET artist_id = ? WHERE id = ?').run(artistId, row.id);
+      row.artist_id = artistId;
+    }
+  }
+
+  if (row) {
+    if (meta.year && !row.year) db.prepare('UPDATE albums SET year = ? WHERE id = ?').run(meta.year, row.id);
+    if (meta.genre && !row.genre) db.prepare('UPDATE albums SET genre = ? WHERE id = ?').run(meta.genre, row.id);
+    if (meta.cover && !row.cover) db.prepare('UPDATE albums SET cover = ? WHERE id = ?').run(meta.cover, row.id);
+    return row.id;
+  }
+
+  // 4. Update existingAlbumId in place if single track
+  if (existingAlbumId) {
+    const existingAlbum = db.prepare('SELECT * FROM albums WHERE id = ?').get(existingAlbumId);
+    if (existingAlbum) {
+      const countRow = db.prepare('SELECT COUNT(*) as c FROM songs WHERE album_id = ?').get(existingAlbumId);
+      if (countRow.c <= 1) {
+        db.prepare('UPDATE albums SET title = ?, artist_id = COALESCE(?, artist_id), year = COALESCE(?, year), genre = COALESCE(?, genre), cover = COALESCE(?, cover) WHERE id = ?')
+          .run(title, artistId, meta.year || null, meta.genre || null, meta.cover || null, existingAlbumId);
+        return existingAlbumId;
+      }
+    }
+  }
+
+  // 5. Create new album
+  const id = uuidv4();
+  db.prepare('INSERT INTO albums (id, title, artist_id, year, genre, cover) VALUES (?, ?, ?, ?, ?, ?)').run(
+    id, title, artistId, meta.year || null, meta.genre || null, meta.cover || null
+  );
+  return id;
 }
+
 
 let _songColsCache = null;
 function getSongCols(db) {
@@ -229,6 +300,7 @@ async function processUpload(req, res) {
         if (albumId) db.prepare('UPDATE albums SET cover=? WHERE id=?').run(coverFilename, albumId);
       }
 
+      const userProvided = !!(req.body.artist || req.body.album || req.body.title || req.body.genre);
       const songId   = uuidv4();
       const fileSize = fs.statSync(filePath).size;
 
@@ -237,13 +309,36 @@ async function processUpload(req, res) {
         filename: file.filename, duration: meta.duration, track_number: meta.track,
         genre: genreName, year: meta.year, is_audiobook: isAudiobook,
         file_size: fileSize, cover: coverFilename, mime_type: mime,
+        is_user_edited: userProvided ? 1 : 0
       });
 
-      results.push({ id: songId, title: songTitle, artist: artistName, album: albumTitle, codec: meta.codec });
+      // Perform lookup immediately upon uploading
+      if (cfg.autoLookupEnabled !== false) {
+        try {
+          await processSongLookup(songId);
+        } catch (e) {
+          console.error(`[cumu] Direct upload lookup error for ${songId}:`, e.message);
+        }
+      } else {
+        queueSongForLookup(songId);
+      }
+
+      const updatedSong = db.prepare('SELECT s.*, ar.name as artist_name, al.title as album_title FROM songs s LEFT JOIN artists ar ON ar.id=s.artist_id LEFT JOIN albums al ON al.id=s.album_id WHERE s.id=?').get(songId);
+
+      results.push({
+        id: songId,
+        title: updatedSong?.title || songTitle,
+        artist: updatedSong?.artist_name || artistName,
+        album: updatedSong?.album_title || albumTitle,
+        genre: updatedSong?.genre || genreName,
+        year: updatedSong?.year || meta.year,
+        codec: meta.codec
+      });
     }
 
     log('info', 'admin', `Uploaded ${results.length} songs`);
     res.json({ success: true, uploaded: results.length, songs: results });
+
   } catch (err) {
     console.error('[cumu] upload error:', err);
     res.status(500).json({ error: 'Upload processing failed: ' + (err.message || 'unknown error') });
@@ -303,7 +398,9 @@ async function runLibraryScan() {
         filename: item.relativePath, duration: meta.duration, track_number: meta.track,
         genre: meta.genre, year: meta.year, is_audiobook: 0,
         file_size: fileSize, cover: null, mime_type: mimeForExt(ext),
+        is_user_edited: 0
       });
+      queueSongForLookup(songId);
       added++;
     } catch (e) {
       console.error(`[cumu] Scan error for ${item.relativePath}:`, e.message);
@@ -339,7 +436,7 @@ router.put('/songs/:id', requireAdmin, (req, res) => {
     let albumId = song.album_id;
     if (album !== undefined) albumId = album ? getOrCreateAlbum(db, album, artistId, { year, genre }) : null;
 
-    db.prepare('UPDATE songs SET title=COALESCE(?,title), artist_id=?, album_id=?, genre=COALESCE(?,genre), year=COALESCE(?,year), track_number=COALESCE(?,track_number), is_audiobook=COALESCE(?,is_audiobook) WHERE id=?')
+    db.prepare('UPDATE songs SET title=COALESCE(?,title), artist_id=?, album_id=?, genre=COALESCE(?,genre), year=COALESCE(?,year), track_number=COALESCE(?,track_number), is_audiobook=COALESCE(?,is_audiobook), is_user_edited=1 WHERE id=?')
       .run(title || null, artistId, albumId, genre || null, year || null, track_number || null, is_audiobook != null ? (is_audiobook ? 1 : 0) : null, req.params.id);
 
     res.json(db.prepare('SELECT * FROM songs WHERE id=?').get(req.params.id));
@@ -347,6 +444,7 @@ router.put('/songs/:id', requireAdmin, (req, res) => {
     res.status(500).json({ error: 'Failed to save: ' + err.message });
   }
 });
+
 
 router.put('/albums/:id', requireAdmin, (req, res) => {
   try {
@@ -415,7 +513,11 @@ router.get('/config', requireAdmin, (req, res) => {
     podcastApiSource:       cfg.podcastApiSource || 'itunes',
     podcastIndexKey:        cfg.podcastIndexKey || '',
     podcastIndexSecret:     cfg.podcastIndexSecret || '',
-    customPodcastFeeds:     cfg.customPodcastFeeds || []
+    customPodcastFeeds:     cfg.customPodcastFeeds || [],
+    autoLookupEnabled:      cfg.autoLookupEnabled === true,
+    mistralApiKey:          cfg.mistralApiKey || '',
+    enableAiCorrection:     cfg.enableAiCorrection === true,
+    aiModel:                cfg.aiModel || 'mistral-small-latest'
   });
 });
 
@@ -425,7 +527,8 @@ router.put('/config', requireAdmin, (req, res) => {
   const {
     musicPath, maxStorageGb, port, host, enablePodcasts,
     enablePublicPodcasts, podcastApiSource, podcastIndexKey,
-    podcastIndexSecret, customPodcastFeeds
+    podcastIndexSecret, customPodcastFeeds,
+    autoLookupEnabled, mistralApiKey, enableAiCorrection, aiModel
   } = req.body;
 
   if (musicPath !== undefined) {
@@ -446,9 +549,36 @@ router.put('/config', requireAdmin, (req, res) => {
   if (podcastIndexSecret !== undefined) setConfig('podcastIndexSecret', podcastIndexSecret);
   if (customPodcastFeeds !== undefined) setConfig('customPodcastFeeds', customPodcastFeeds);
 
+  if (autoLookupEnabled !== undefined) setConfig('autoLookupEnabled', !!autoLookupEnabled);
+  if (mistralApiKey !== undefined) setConfig('mistralApiKey', mistralApiKey);
+  if (enableAiCorrection !== undefined) setConfig('enableAiCorrection', !!enableAiCorrection);
+  if (aiModel !== undefined) setConfig('aiModel', aiModel);
+
   log('info', 'admin', 'Server config updated');
   res.json({ ok: true });
 });
+
+// ── AGENTS & AUTO-LOOKUP ROUTES ───────────────────────────────────────────────
+
+router.post('/agents/test', requireAdmin, async (req, res) => {
+  const { apiKey, model } = req.body;
+  const keyToTest = apiKey || getConfig().mistralApiKey;
+  const modelToTest = model || getConfig().aiModel || 'mistral-small-latest';
+
+  const result = await testMistralKey(keyToTest, modelToTest);
+  res.json(result);
+});
+
+router.post('/lookup/trigger', requireAdmin, async (req, res) => {
+  const result = await triggerLibraryAutoLookup();
+  res.json(result);
+});
+
+router.post('/songs/:id/lookup', requireAdmin, async (req, res) => {
+  const result = await processSongLookup(req.params.id);
+  res.json(result);
+});
+
 
 // POST /admin/update — trigger system update
 router.post('/update', requireAdmin, async (req, res) => {

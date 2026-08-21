@@ -40,6 +40,20 @@ function formatTime(seconds) {
   return `${m}:${s < 10 ? '0' : ''}${s}`;
 }
 
+function formatTotalDuration(seconds) {
+  if (!seconds || isNaN(seconds) || seconds <= 0) return '0 Min.';
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  if (h > 0) {
+    return `${h} Std.${m > 0 ? ` ${m} Min.` : ''}`;
+  } else if (m > 0) {
+    return `${m} Min.`;
+  } else {
+    return `${s} Sek.`;
+  }
+}
+
 function showToast(msg) {
   let toast = document.getElementById('cumuToast');
   if (!toast) {
@@ -136,8 +150,8 @@ function showToast(msg) {
       } else if (key === 'favorites') {
         cards.push({
           key,
-          title: 'Lieblingslieder',
-          subtitle: `${favorites.size} Titel`,
+          title: 'Favorite Songs',
+          subtitle: `${favorites.size} songs`,
           typeLabel: 'Kategorie',
           icon: 'favorite',
           onClick: "navigate('favorites')",
@@ -343,6 +357,11 @@ function showToast(msg) {
 
     window.addEventListener('cumu:unauthorized', () => showLogin());
 
+    // Initialize System MediaSession API, Keyboard Shortcuts & Output Device
+    initMediaSession();
+    initKeyboardShortcuts();
+    setAudioOutputDevice(currentAudioDeviceId);
+
     // Unlock WebAudio Context on first click/touch
     const unlockAudio = () => {
       initWebAudio();
@@ -439,7 +458,7 @@ function showToast(msg) {
     } catch (err) {
       const msg = err.message || 'Login fehlgeschlagen';
       errEl.textContent = msg.includes('fetch') || msg.includes('NetworkError')
-        ? 'Server nicht erreichbar. Bitte stelle sicher, dass der Backend-Server läuft.'
+        ? 'Server unreachable. Please make sure the backend server is running.'
         : msg;
       errEl.classList.remove('hidden');
     } finally {
@@ -569,7 +588,8 @@ function showToast(msg) {
       if (currentUser?.enablePodcasts === false) { navigate('discover'); return; }
       renderPodcasts();
     }
-    else if (page === 'genre')      renderGenre(params);
+    else if (page === 'genre')          renderGenre(params);
+    else if (page === 'genrePlaylist')  renderGenrePlaylist(params);
     else if (page === 'admin')      renderAdmin();
     else if (page === 'album')      renderAlbum(params);
     else if (page === 'artist')     renderArtist(params);
@@ -668,9 +688,9 @@ function showToast(msg) {
         console.error('[cumu] playback error:', err);
         isPlaying = false;
         if (err.name === 'NotAllowedError') {
-          showToast('Drücke Play, um die Wiedergabe zu starten');
+          showToast('Press Play to start playback');
         } else {
-          showToast('Fehler bei der Wiedergabe (Netzwerk oder Dateiformat)');
+          showToast('Playback error (network or file format)');
         }
         updatePlayerUI();
       });
@@ -813,7 +833,7 @@ function showToast(msg) {
     try {
       await CumuApi.post('/api/podcasts/progress', { progress: null });
     } catch (_) {}
-    showToast('Weiterhören zurückgesetzt');
+    showToast('Continue listening reset');
     
     const contSec = document.getElementById('podcastContinueSection');
     if (contSec) contSec.classList.add('hidden');
@@ -938,6 +958,212 @@ function showToast(msg) {
   setupAudioListeners(audioB, false);
   setupAudioListeners(audioPodcast, false);
 
+  // ── MediaSession API & Audio Output Device (setSinkId) Integration ─────────
+
+  let currentAudioDeviceId = localStorage.getItem('cumu_audio_output_device') || 'default';
+
+  function initMediaSession() {
+    if (!('mediaSession' in navigator)) return;
+
+    const actions = [
+      ['play', () => { if (!isPlaying) togglePlay(); }],
+      ['pause', () => { if (isPlaying) togglePlay(); }],
+      ['previoustrack', () => prevTrack()],
+      ['nexttrack', () => nextTrack()],
+      ['stop', () => {
+        if (activeAudio) { activeAudio.pause(); isPlaying = false; updatePlayerUI(); }
+      }],
+      ['seekto', (details) => {
+        if (details.fastSeek && 'fastSeek' in activeAudio) {
+          activeAudio.fastSeek(details.seekTime);
+        } else if (details.seekTime !== undefined) {
+          activeAudio.currentTime = details.seekTime;
+        }
+      }],
+      ['seekbackward', (details) => {
+        const skip = details.seekOffset || 10;
+        if (activeAudio) {
+          activeAudio.currentTime = Math.max(activeAudio.currentTime - skip, 0);
+          updateMediaSessionPosition();
+          showToast(`- ${skip}s`);
+        }
+      }],
+      ['seekforward', (details) => {
+        const skip = details.seekOffset || 10;
+        if (activeAudio && activeAudio.duration) {
+          activeAudio.currentTime = Math.min(activeAudio.currentTime + skip, activeAudio.duration);
+          updateMediaSessionPosition();
+          showToast(`+ ${skip}s`);
+        }
+      }],
+    ];
+
+    for (const [action, handler] of actions) {
+      try {
+        navigator.mediaSession.setActionHandler(action, handler);
+      } catch (e) {
+        // Ignore unsupported action in browser
+      }
+    }
+  }
+
+  function updateMediaSession() {
+    if (!('mediaSession' in navigator)) return;
+
+    if (!currentSong) {
+      navigator.mediaSession.playbackState = 'none';
+      return;
+    }
+
+    navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+
+    const title = currentSong.title || 'Untitled';
+    const artist = currentSong.artist_name || 'Unknown Artist';
+    const album = currentSong.album_name || currentSong.show_title || 'cumu';
+    
+    let artwork = [];
+    if (currentSong.cover) {
+      const coverUrl = new URL(`/stream/cover/${currentSong.cover}`, window.location.origin).href;
+      artwork = [
+        { src: coverUrl, sizes: '96x96', type: 'image/png' },
+        { src: coverUrl, sizes: '128x128', type: 'image/png' },
+        { src: coverUrl, sizes: '192x192', type: 'image/png' },
+        { src: coverUrl, sizes: '256x256', type: 'image/png' },
+        { src: coverUrl, sizes: '512x512', type: 'image/png' },
+      ];
+    } else {
+      const defaultIcon = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect width="16" height="16" fill="%23f3f3f4"/></svg>';
+      artwork = [{ src: defaultIcon, sizes: '96x96', type: 'image/svg+xml' }];
+    }
+
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: title,
+        artist: artist,
+        album: album,
+        artwork: artwork,
+      });
+    } catch (e) {
+      console.warn('[cumu] mediaSession metadata error:', e);
+    }
+
+    updateMediaSessionPosition();
+  }
+
+  function updateMediaSessionPosition() {
+    if (!('mediaSession' in navigator) || !('setPositionState' in navigator.mediaSession)) return;
+    if (!activeAudio || !activeAudio.duration || isNaN(activeAudio.duration) || activeAudio.duration <= 0) return;
+    try {
+      navigator.mediaSession.setPositionState({
+        duration: activeAudio.duration,
+        playbackRate: activeAudio.playbackRate || 1.0,
+        position: Math.min(activeAudio.currentTime || 0, activeAudio.duration),
+      });
+    } catch (e) {
+      // Ignored during buffering
+    }
+  }
+
+  async function setAudioOutputDevice(deviceId) {
+    currentAudioDeviceId = deviceId || 'default';
+    localStorage.setItem('cumu_audio_output_device', currentAudioDeviceId);
+
+    const elements = [audioA, audioB, audioPodcast];
+    let success = true;
+    for (const el of elements) {
+      if (typeof el.setSinkId === 'function') {
+        try {
+          await el.setSinkId(currentAudioDeviceId);
+        } catch (err) {
+          console.warn('[cumu] Error setting sinkId:', err);
+          success = false;
+        }
+      }
+    }
+    return success;
+  }
+
+  async function getAudioOutputDevices() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+      return { supported: false, devices: [] };
+    }
+    const hasSetSinkId = typeof HTMLMediaElement.prototype.setSinkId === 'function';
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const audioOutputs = devices.filter(d => d.kind === 'audiooutput');
+      return { supported: hasSetSinkId, devices: audioOutputs };
+    } catch (err) {
+      console.warn('[cumu] Error enumerating audio devices:', err);
+      return { supported: hasSetSinkId, devices: [] };
+    }
+  }
+
+  // ── Global Keyboard & Media Key Shortcuts ─────────────────────────────────
+
+  function initKeyboardShortcuts() {
+    window.addEventListener('keydown', (e) => {
+      // Don't intercept shortcuts when user is typing in form controls
+      const target = e.target;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return;
+      }
+
+      const loginModal = document.getElementById('loginModal');
+      if (loginModal && !loginModal.classList.contains('hidden')) return;
+
+      switch (e.code) {
+        case 'Space':
+        case 'KeyK':
+          e.preventDefault();
+          togglePlay();
+          break;
+        case 'ArrowLeft':
+        case 'KeyJ':
+          e.preventDefault();
+          if (activeAudio) {
+            const skip = e.shiftKey ? 10 : 5;
+            activeAudio.currentTime = Math.max(activeAudio.currentTime - skip, 0);
+            updateMediaSessionPosition();
+            showToast(`- ${skip}s`);
+          }
+          break;
+        case 'ArrowRight':
+        case 'KeyL':
+          e.preventDefault();
+          if (activeAudio && activeAudio.duration) {
+            const skip = e.shiftKey ? 10 : 5;
+            activeAudio.currentTime = Math.min(activeAudio.currentTime + skip, activeAudio.duration);
+            updateMediaSessionPosition();
+            showToast(`+ ${skip}s`);
+          }
+          break;
+        case 'ArrowUp':
+          e.preventDefault();
+          setVolume(Math.min((activeAudio ? activeAudio.volume : 1) + 0.05, 1));
+          break;
+        case 'ArrowDown':
+          e.preventDefault();
+          setVolume(Math.max((activeAudio ? activeAudio.volume : 1) - 0.05, 0));
+          break;
+        case 'KeyM':
+          e.preventDefault();
+          toggleMute();
+          break;
+        case 'MediaPlayPause':
+          e.preventDefault();
+          togglePlay();
+          break;
+        case 'MediaTrackPrevious':
+          e.preventDefault();
+          prevTrack();
+          break;
+        case 'MediaTrackNext':
+          e.preventDefault();
+          nextTrack();
+          break;
+      }
+    });
+  }
   if (npSeek) {
     npSeek.addEventListener('input', () => {
       if (activeAudio.duration) {
@@ -948,7 +1174,7 @@ function showToast(msg) {
 
   function toggleShuffle() {
     isShuffle = !isShuffle;
-    showToast(isShuffle ? 'Zufallswiedergabe aktiviert' : 'Zufallswiedergabe deaktiviert');
+    showToast(isShuffle ? 'Shuffle enabled' : 'Shuffle disabled');
     updatePlayerUI();
   }
 
@@ -957,7 +1183,7 @@ function showToast(msg) {
     else if (repeatMode === 'all') repeatMode = 'one';
     else repeatMode = 'none';
 
-    const modeLabels = { none: 'Wiederholung aus', all: 'Alle wiederholen', one: 'Titel wiederholen' };
+    const modeLabels = { none: 'Repeat off', all: 'Repeat all', one: 'Repeat track' };
     showToast(modeLabels[repeatMode]);
     updatePlayerUI();
   }
@@ -1011,10 +1237,10 @@ function showToast(msg) {
     if (!songId) return;
     if (favorites.has(songId)) {
       favorites.delete(songId);
-      showToast('Aus Favoriten entfernt');
+      showToast('Removed from favorites');
     } else {
       favorites.add(songId);
-      showToast('Zu Favoriten hinzugefügt');
+      showToast('Added to favorites');
     }
     localStorage.setItem('cumu_favorites', JSON.stringify(Array.from(favorites)));
     updatePlayerUI();
@@ -1024,16 +1250,17 @@ function showToast(msg) {
     if (!currentSong) return;
     showNpBar();
     window._currentSongId = currentSong.id;
+    updateMediaSession();
 
     const coverSrc = currentSong.cover ? `/stream/cover/${currentSong.cover}` : 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect width="16" height="16" fill="%23f3f3f4"/></svg>';
     const npCover = document.getElementById('npCover');
     if (npCover) npCover.src = coverSrc;
 
     const npTitle = document.getElementById('npTitle');
-    if (npTitle) npTitle.textContent = currentSong.title || 'Ohne Titel';
+    if (npTitle) npTitle.textContent = currentSong.title || 'Untitled';
 
     const npArtist = document.getElementById('npArtist');
-    if (npArtist) npArtist.textContent = (currentSong.artist_name || 'Unbekannter Künstler').toLowerCase();
+    if (npArtist) npArtist.textContent = (currentSong.artist_name || 'Unknown Artist').toLowerCase();
 
     const npPlayIcon = document.getElementById('npPlayIcon');
     if (npPlayIcon) npPlayIcon.textContent = isPlaying ? 'pause_circle' : 'play_circle';
@@ -1074,6 +1301,40 @@ function showToast(msg) {
       }
     }
 
+    // Update active icon states on playlist page if currently rendered
+    if (currentPage === 'playlist' && window._lastNavParams) {
+      const currentPlId = window._lastNavParams;
+      const plPlayBtn = document.getElementById(`plPlayBtn_${currentPlId}`);
+      if (plPlayBtn) {
+        const isThisPlPlaying = isPlaying && currentSong && window._currentPlaylistSongs && window._currentPlaylistSongs.some(s => s.id === currentSong.id);
+        plPlayBtn.innerHTML = `<span class="material-symbols-outlined text-[28px]" style="font-variation-settings: 'FILL' 1;">${isThisPlPlaying ? 'pause' : 'play_arrow'}</span>`;
+        plPlayBtn.title = isThisPlPlaying ? 'Pause' : 'Play playlist';
+        plPlayBtn.onclick = () => {
+          if (isThisPlPlaying) {
+            togglePlay();
+          } else {
+            playPlaylist(currentPlId);
+          }
+        };
+        if (isThisPlPlaying) {
+          plPlayBtn.classList.add('ring-4', 'ring-primary/30');
+        } else {
+          plPlayBtn.classList.remove('ring-4', 'ring-primary/30');
+        }
+      }
+
+      const plShuffleBtn = document.getElementById(`plShuffleBtn_${currentPlId}`);
+      if (plShuffleBtn) {
+        if (isShuffle) {
+          plShuffleBtn.className = 'w-10 h-10 rounded-full bg-primary/20 text-primary border-primary/40 flex items-center justify-center hover:scale-110 active:scale-95 transition-all duration-200 border shadow-sm cursor-pointer';
+          plShuffleBtn.title = 'Disable shuffle';
+        } else {
+          plShuffleBtn.className = 'w-10 h-10 rounded-full bg-surface-container-high hover:bg-surface-bright hover:border-primary/50 text-text-high-contrast flex items-center justify-center hover:scale-110 active:scale-95 transition-all duration-200 border border-border-subtle shadow-sm cursor-pointer';
+          plShuffleBtn.title = 'Enable shuffle';
+        }
+      }
+    }
+
     if (currentPage === 'nowplaying') {
       renderNowPlaying();
     }
@@ -1094,7 +1355,7 @@ function showToast(msg) {
     if (currentSong) {
       ensureCurrentSongInQueue();
       queue.splice(queueIndex + 1, 0, song);
-      showToast(`"${song.title}" wird als Nächstes gespielt`);
+      showToast(`"${song.title}" will play next`);
     } else {
       queue = [song];
       queueIndex = 0;
@@ -1112,7 +1373,7 @@ function showToast(msg) {
     if (currentSong) {
       ensureCurrentSongInQueue();
       queue.push(song);
-      showToast(`"${song.title}" zur Warteschlange hinzugefügt`);
+      showToast(`"${song.title}" added to queue`);
     } else {
       queue = [song];
       queueIndex = 0;
@@ -1131,7 +1392,7 @@ function showToast(msg) {
     if (currentSong) {
       ensureCurrentSongInQueue();
       queue.splice(queueIndex + 1, 0, ...playlistSongs);
-      showToast(`${playlistSongs.length} Songs als Nächstes hinzugefügt`);
+      showToast(`${playlistSongs.length} songs added to play next`);
     } else {
       queue = [...playlistSongs];
       queueIndex = 0;
@@ -1248,7 +1509,7 @@ function showToast(msg) {
       listHTML = `
         <div class="flex flex-col items-center justify-center h-64 text-text-muted gap-sm">
           <span class="material-symbols-outlined text-[48px] opacity-40">queue_music</span>
-          <p class="text-body-md font-medium">Keine Tracks in der Warteschlange</p>
+          <p class="text-body-md font-medium">No tracks in queue</p>
         </div>`;
     } else {
       queue.forEach((song, i) => {
@@ -1256,11 +1517,11 @@ function showToast(msg) {
         const coverSrc  = song.cover ? (song.cover.startsWith('http') ? song.cover : `/stream/cover/${song.cover}`) : null;
         
         if (i === 0 && queueIndex > 0) {
-          listHTML += `<div class="text-[11px] font-bold uppercase tracking-wider text-text-muted px-xs pt-xs pb-1">Vergangene Titel</div>`;
+          listHTML += `<div class="text-[11px] font-bold uppercase tracking-wider text-text-muted px-xs pt-xs pb-1">Past tracks</div>`;
         } else if (isCurrent) {
-          listHTML += `<div class="text-[11px] font-bold uppercase tracking-wider text-primary px-xs pt-xs pb-1 flex items-center gap-xs"><span class="material-symbols-outlined text-[14px]">play_circle</span> Gerade läuft</div>`;
+          listHTML += `<div class="text-[11px] font-bold uppercase tracking-wider text-primary px-xs pt-xs pb-1 flex items-center gap-xs"><span class="material-symbols-outlined text-[14px]">play_circle</span> Now playing</div>`;
         } else if (i === queueIndex + 1) {
-          listHTML += `<div class="text-[11px] font-bold uppercase tracking-wider text-text-muted px-xs pt-md pb-1">Nächste Titel in der Warteschlange</div>`;
+          listHTML += `<div class="text-[11px] font-bold uppercase tracking-wider text-text-muted px-xs pt-md pb-1">Next in queue</div>`;
         }
 
         listHTML += `
@@ -1270,8 +1531,8 @@ function showToast(msg) {
             data-index="${i}"
           >
             ${isCurrent
-              ? `<span class="material-symbols-outlined text-primary text-[20px] select-none p-xs" title="Aktuell abgespielt">volume_up</span>`
-              : `<span class="material-symbols-outlined text-text-muted text-[20px] cursor-grab select-none opacity-40 group-hover:opacity-100" title="Ziehen zum Sortieren">drag_indicator</span>`
+              ? `<span class="material-symbols-outlined text-primary text-[20px] select-none p-xs" title="Currently playing">volume_up</span>`
+              : `<span class="material-symbols-outlined text-text-muted text-[20px] cursor-grab select-none opacity-40 group-hover:opacity-100" title="Drag to reorder">drag_indicator</span>`
             }
 
             <div class="w-12 h-12 rounded-lg overflow-hidden bg-surface-container-low flex-shrink-0 relative">
@@ -1286,12 +1547,12 @@ function showToast(msg) {
                 ${esc(song.title)}
               </div>
               <div class="text-body-sm text-text-muted truncate">
-                ${esc(song.artist_name || song.artist || 'Unbekannter Künstler')}
+                ${esc(song.artist_name || song.artist || 'Unknown artist')}
               </div>
             </div>
 
             ${!isCurrent ? `
-              <button class="w-8 h-8 rounded-full text-text-muted hover:text-red-500 hover:bg-red-500/10 flex items-center justify-center transition-colors flex-shrink-0" onclick="CumuApp.removeFromQueue(${i})" title="Entfernen">
+              <button class="w-8 h-8 rounded-full text-text-muted hover:text-red-500 hover:bg-red-500/10 flex items-center justify-center transition-colors flex-shrink-0" onclick="CumuApp.removeFromQueue(${i})" title="Remove">
                 <span class="material-symbols-outlined text-[18px]">close</span>
               </button>
             ` : `<div class="w-8 h-8 flex-shrink-0"></div>`}
@@ -1304,12 +1565,12 @@ function showToast(msg) {
       <div class="flex items-center justify-between p-md border-b border-border-subtle bg-surface-container-lowest flex-shrink-0">
         <div class="flex items-center gap-xs">
           <span class="material-symbols-outlined text-primary text-[24px]">queue_music</span>
-          <h2 class="text-title-md font-bold text-text-high-contrast">Warteschlange</h2>
+          <h2 class="text-title-md font-bold text-text-high-contrast">Queue</h2>
           <span class="text-body-sm text-text-muted font-mono">(${queue.length})</span>
         </div>
         <div class="flex items-center gap-xs">
-          ${queue.length > 1 ? `<button class="text-body-sm font-bold text-text-muted hover:text-red-500 px-sm py-xs rounded-lg hover:bg-surface-container-low transition-colors" onclick="CumuApp.clearQueue()">Leeren</button>` : ''}
-          <button class="w-9 h-9 rounded-full bg-surface-container-low text-text-muted hover:text-text-high-contrast flex items-center justify-center transition-colors hover:scale-105 active:scale-95" onclick="CumuApp.toggleQueue()" title="Schließen">
+          ${queue.length > 1 ? `<button class="text-body-sm font-bold text-text-muted hover:text-red-500 px-sm py-xs rounded-lg hover:bg-surface-container-low transition-colors" onclick="CumuApp.clearQueue()">Clear</button>` : ''}
+          <button class="w-9 h-9 rounded-full bg-surface-container-low text-text-muted hover:text-text-high-contrast flex items-center justify-center transition-colors hover:scale-105 active:scale-95" onclick="CumuApp.toggleQueue()" title="Close">
             <span class="material-symbols-outlined text-[20px]">close</span>
           </button>
         </div>
@@ -1395,7 +1656,7 @@ function showToast(msg) {
       <div id="cumuQueueBackdrop" class="fixed inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto transition-opacity duration-300"></div>
 
       <!-- Right Side Widget Drawer Container -->
-      <div role="dialog" aria-modal="true" aria-label="Warteschlange" class="queue-drawer-container pointer-events-auto relative w-full max-w-md h-full bg-background border-l border-border-subtle shadow-2xl flex flex-col z-10 animate-slide-in-right">
+      <div role="dialog" aria-modal="true" aria-label="Queue" class="queue-drawer-container pointer-events-auto relative w-full max-w-md h-full bg-background border-l border-border-subtle shadow-2xl flex flex-col z-10 animate-slide-in-right">
       </div>`;
 
     panel.querySelector('#cumuQueueBackdrop').addEventListener('click', () => panel.remove());
@@ -1436,7 +1697,7 @@ function showToast(msg) {
     return `<div class="w-full h-full bg-surface-container flex items-center justify-center text-text-muted rounded-lg"><span class="material-symbols-outlined text-[32px]">album</span></div>`;
   }
 
-  function renderArtistAvatarPlaceholder(name = 'Künstler', size = 'large') {
+  function renderArtistAvatarPlaceholder(name = 'Artist', size = 'large') {
     const initial = (name || '?')[0].toUpperCase();
     return `
       <div class="w-24 h-24 rounded-full bg-text-high-contrast text-on-primary flex items-center justify-center font-bold text-2xl">
@@ -1460,7 +1721,7 @@ function showToast(msg) {
         </div>
         <div class="flex-1 min-w-0">
           <div class="text-body-lg font-body-lg text-text-high-contrast truncate group-hover:text-interactive-hover transition-colors font-medium">${esc(s.title)}</div>
-          <div class="text-body-sm font-body-sm text-text-muted truncate mt-xs">${esc(s.artist_name || 'Unbekannter Künstler')} ${s.album_title ? '&middot; ' + esc(s.album_title) : ''}</div>
+          <div class="text-body-sm font-body-sm text-text-muted truncate mt-xs">${esc(s.artist_name || 'Unknown artist')} ${s.album_title ? '&middot; ' + esc(s.album_title) : ''}</div>
         </div>
         <div class="text-label-caps font-label-caps text-text-muted mr-md">${formatTime(s.duration)}</div>
         <button class="text-text-muted hover:text-text-high-contrast p-xs rounded-full hover:bg-surface-container transition-colors song-menu-btn" onclick="event.stopPropagation(); CumuApp.openSongMenu(event, this, '${s.id}')">
@@ -1500,10 +1761,6 @@ function showToast(msg) {
             ${cover ? `<img src="${cover}" class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105" loading="lazy" />` : `<div class="w-full h-full flex items-center justify-center text-text-muted"><span class="material-symbols-outlined text-[28px]">podcasts</span></div>`}
           </div>
           <div class="flex flex-col min-w-0 flex-1">
-            <h3 class="text-body-lg font-bold text-text-high-contrast truncate group-hover:text-primary transition-colors">${esc(p.title)}</h3>
-            <p class="text-body-sm text-text-muted truncate mt-[2px]">${esc(p.artist || 'Podcast')}</p>
-          </div>
-        </div>
         <div class="flex items-center gap-xs text-text-muted group-hover:text-text-high-contrast flex-shrink-0">
           <span class="text-label-caps font-label-caps uppercase bg-surface-container-low px-xs py-xxs rounded text-[11px] font-bold">Podcast</span>
           <span class="material-symbols-outlined text-[20px]">chevron_right</span>
@@ -1545,17 +1802,18 @@ function showToast(msg) {
   let searchTimeout;
   async function renderDiscover() {
     main.innerHTML = `
-      <div class="max-w-[1280px] mx-auto space-y-xl">
-        <!-- Search Header Area -->
-        <header class="w-full py-lg sticky top-0 z-40 bg-background/90 backdrop-blur-sm border-b border-border-subtle">
+      <div class="w-full">
+        <!-- Search Header: starts in normal flow, sticks on scroll -->
+        <header id="discoverSearchHeader" class="sticky top-0 z-40 w-full -mx-gutter md:-mx-margin-desktop px-gutter md:px-margin-desktop bg-background/90 backdrop-blur-xl border-b border-border-subtle/0 transition-all duration-300 pt-xs pb-sm mb-lg">
           <div class="max-w-4xl mx-auto relative flex items-center w-full search-input-container">
-            <span class="material-symbols-outlined search-icon text-text-muted text-[28px]">search</span>
-            <input id="searchInput" class="w-full pr-md py-md bg-surface-bright border-b border-border-subtle text-title-md font-title-md placeholder:text-text-muted focus:outline-none focus:border-primary transition-colors rounded-none bg-transparent" placeholder="Künstler, Songs oder Podcasts suchen" type="text" autofocus>
+            <span class="material-symbols-outlined search-icon text-text-muted text-[24px] absolute left-4 pointer-events-none">search</span>
+            <input id="searchInput" class="w-full h-11 pl-12 pr-lg bg-surface-container-low/90 border border-border-subtle rounded-full text-body-lg font-medium placeholder:text-text-muted/70 focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 shadow-sm transition-all text-on-surface" placeholder="Search artists, songs, or podcasts" type="text" autofocus>
           </div>
         </header>
 
-        <!-- Discovery Grid -->
-        <div id="searchResults">
+        <!-- Discovery Content -->
+        <div class="max-w-[1280px] mx-auto space-y-xl">
+          <div id="searchResults"></div>
         </div>
       </div>`;
 
@@ -1575,11 +1833,11 @@ function showToast(msg) {
           html += `<h2 class="text-title-md font-title-md font-bold mb-md">Songs</h2><div class="flex flex-col gap-xs mb-xl">${res.songs.map((s, i) => renderSongRow(s, i+1)).join('')}</div>`;
         }
         if (res.albums?.length) {
-          html += `<h2 class="text-title-md font-title-md font-bold mb-md">Alben</h2><div class="grid grid-cols-2 md:grid-cols-4 gap-md mb-xl">${res.albums.map(renderAlbumCard).join('')}</div>`;
+          html += `<h2 class="text-title-md font-title-md font-bold mb-md">Albums</h2><div class="grid grid-cols-2 md:grid-cols-4 gap-md mb-xl">${res.albums.map(renderAlbumCard).join('')}</div>`;
         }
         if (res.artists?.length) {
           html += `
-            <h2 class="text-title-md font-title-md font-bold mb-md">Künstler</h2>
+            <h2 class="text-title-md font-title-md font-bold mb-md">Artists</h2>
             <div class="grid grid-cols-2 md:grid-cols-4 gap-md mb-xl">
               ${res.artists.map(a => `
                 <div class="group cursor-pointer flex flex-col items-center gap-xs p-md rounded-xl bg-surface-container-low hover:bg-surface-bright transition-all" onclick="navigate('artist', '${esc(a.id)}')">
@@ -1598,8 +1856,8 @@ function showToast(msg) {
             <div class="grid grid-cols-2 md:grid-cols-4 gap-md mb-xl">
               ${res.playlists.map(pl => `
                 <div class="group cursor-pointer flex flex-col gap-xs p-md rounded-xl bg-surface-container-low hover:bg-surface-bright transition-all" onclick="navigate('playlist', '${esc(pl.id)}')">
-                  <div class="w-full aspect-square rounded-lg overflow-hidden bg-surface-container shadow-sm flex items-center justify-center text-text-muted">
-                    <span class="material-symbols-outlined text-[48px]">queue_music</span>
+                  <div class="w-full aspect-square rounded-xl overflow-hidden bg-surface-container shadow-sm flex items-center justify-center text-text-muted relative">
+                    ${getPlaylistCoverHtml(pl, 'medium')}
                   </div>
                   <span class="text-body-lg font-bold text-text-high-contrast truncate mt-xs">${esc(pl.name)}</span>
                 </div>
@@ -1615,15 +1873,75 @@ function showToast(msg) {
             </div>
           `;
         }
-        if (!html) html = `<p class="text-body-lg text-text-muted py-xl text-center">Keine Ergebnisse für "${esc(q)}"</p>`;
+        if (!html) html = `<p class="text-body-lg text-text-muted py-xl text-center">No results for "${esc(q)}"</p>`;
         container.innerHTML = html;
         bindSongRows();
         bindPodcastCards(container);
       }, 300);
     });
 
+    // Scroll listener: show border on search header only when sticky (scrolled away from top)
+    const _discoverScrollFn = () => {
+      const hdr = document.getElementById('discoverSearchHeader');
+      if (!hdr) { main.removeEventListener('scroll', _discoverScrollFn); return; }
+      if (main.scrollTop > 8) {
+        hdr.classList.add('border-border-subtle');
+        hdr.classList.remove('border-border-subtle/0');
+      } else {
+        hdr.classList.remove('border-border-subtle');
+        hdr.classList.add('border-border-subtle/0');
+      }
+    };
+    main.addEventListener('scroll', _discoverScrollFn, { passive: true });
+
     renderBrowseGrid();
   }
+
+  function getGenreStyle(genreName) {
+    const normName = (genreName || '').toLowerCase().trim();
+    const config = window._genreConfig || {};
+    let info = config[normName];
+    if (!info && config) {
+      info = Object.values(config).find(v => v.name && v.name.toLowerCase().trim() === normName);
+    }
+    if (!info && config) {
+      for (const [k, v] of Object.entries(config)) {
+        if (normName.includes(k) || k.includes(normName)) {
+          info = v;
+          break;
+        }
+      }
+    }
+
+    const hex = info?.color || '#5A5B6B';
+    let isLight = false;
+    try {
+      const cleanHex = hex.replace('#', '');
+      const num = parseInt(cleanHex, 16);
+      const r = (num >> 16) & 255;
+      const g = (num >> 8) & 255;
+      const b = num & 255;
+      const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+      isLight = brightness > 165;
+    } catch (_) {}
+
+    return {
+      hex,
+      textColor: isLight ? 'text-slate-950 font-black' : 'text-white font-black',
+      subtextColor: isLight ? 'text-slate-900/90 font-semibold' : 'text-white/90 font-medium',
+      borderColor: isLight ? 'border-slate-950/20' : 'border-white/20',
+      btnBg: isLight ? 'bg-slate-950 text-white' : 'bg-white text-slate-950',
+      description: info?.description || ''
+    };
+  }
+
+  window._discoverSectionState = window._discoverSectionState || { showAllNew: false, showAllRecent: false };
+  window.toggleDiscoverSection = function(section) {
+    if (!window._discoverSectionState) window._discoverSectionState = { showAllNew: false, showAllRecent: false };
+    if (section === 'newSongs') window._discoverSectionState.showAllNew = !window._discoverSectionState.showAllNew;
+    if (section === 'recentlyPlayed') window._discoverSectionState.showAllRecent = !window._discoverSectionState.showAllRecent;
+    renderBrowseGrid();
+  };
 
   async function renderBrowseGrid() {
     const container = document.getElementById('searchResults');
@@ -1633,68 +1951,184 @@ function showToast(msg) {
       <span class="material-symbols-outlined animate-spin text-[32px] text-primary">progress_activity</span>
     </div>`;
 
+    let homeData = { newSongs: [], recentlyPlayed: [], mostPlayed: [] };
     let stats = null;
-    try {
-      stats = await CumuApi.get('/api/genres/stats');
-    } catch (e) {
-      console.error(e);
-      container.innerHTML = '';
-      return;
-    }
+
+    try { homeData = await CumuApi.get('/api/home'); } catch (e) { console.error(e); }
+    try { stats = await CumuApi.get('/api/genres/stats'); } catch (e) { console.error(e); }
+    try { window._genreConfig = await CumuApi.get('/api/genres/config'); } catch (e) { console.error(e); }
 
     if (!document.getElementById('searchResults')) return;
 
-    if (!stats || (stats.topGenres.length === 0 && !stats.mostPlayedGenre)) {
-      container.innerHTML = '';
-      return;
+    let html = '';
+    const allPageSongs = [];
+    const discoverState = window._discoverSectionState || { showAllNew: false, showAllRecent: false };
+
+    // 1. Neu hinzugefügte Songs (5 Songs standardmäßig im 5-Spalten-Grid, Mehr anzeigen Button)
+    if (homeData.newSongs && homeData.newSongs.length > 0) {
+      const showAll = discoverState.showAllNew;
+      const displaySongs = showAll ? homeData.newSongs : homeData.newSongs.slice(0, 5);
+      allPageSongs.push(...displaySongs);
+      const hasMore = homeData.newSongs.length > 5;
+      html += `
+        <section class="mb-xl">
+          <div class="flex items-center justify-between mb-md">
+            <div>
+              <h2 class="text-headline-lg-mobile md:text-headline-lg font-headline-lg font-bold text-text-high-contrast flex items-center gap-xs">
+                <span class="material-symbols-outlined text-primary text-[28px]">auto_awesome</span> Recently Added Songs
+              </h2>
+              <p class="text-body-sm text-text-muted mt-xs">Recently added to your library</p>
+            </div>
+            ${hasMore ? `
+              <button onclick="toggleDiscoverSection('newSongs')" class="text-body-sm font-bold text-primary hover:text-interactive-hover flex items-center gap-xs cursor-pointer transition-colors bg-surface-container-low/60 hover:bg-surface-container-low px-md py-xs rounded-full">
+                ${showAll ? 'Show less <span class="material-symbols-outlined text-[18px]">expand_less</span>' : 'Show more <span class="material-symbols-outlined text-[18px]">expand_more</span>'}
+              </button>
+            ` : ''}
+          </div>
+          <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-md">
+            ${displaySongs.map(renderSongCard).join('')}
+          </div>
+        </section>
+      `;
     }
 
-    let html = `<h2 class="text-headline-lg-mobile md:text-headline-lg font-headline-lg mb-lg font-bold">Browse all</h2>
-      <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-md md:gap-gutter auto-rows-[160px] md:auto-rows-[200px]">`;
+    // 2. Zuletzt gehört (5 Songs standardmäßig im 5-Spalten-Grid, Mehr anzeigen Button)
+    if (homeData.recentlyPlayed && homeData.recentlyPlayed.length > 0) {
+      const showAll = discoverState.showAllRecent;
+      const displaySongs = showAll ? homeData.recentlyPlayed : homeData.recentlyPlayed.slice(0, 5);
+      allPageSongs.push(...displaySongs);
+      const hasMore = homeData.recentlyPlayed.length > 5;
+      html += `
+        <section class="mb-xl">
+          <div class="flex items-center justify-between mb-md">
+            <div>
+              <h2 class="text-headline-lg-mobile md:text-headline-lg font-headline-lg font-bold text-text-high-contrast flex items-center gap-xs">
+                <span class="material-symbols-outlined text-secondary text-[28px]">history</span> Recently Played
+              </h2>
+            </div>
+            ${hasMore ? `
+              <button onclick="toggleDiscoverSection('recentlyPlayed')" class="text-body-sm font-bold text-primary hover:text-interactive-hover flex items-center gap-xs cursor-pointer transition-colors bg-surface-container-low/60 hover:bg-surface-container-low px-md py-xs rounded-full">
+                ${showAll ? 'Show less <span class="material-symbols-outlined text-[18px]">expand_less</span>' : 'Show more <span class="material-symbols-outlined text-[18px]">expand_more</span>'}
+              </button>
+            ` : ''}
+          </div>
+          <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-md">
+            ${displaySongs.map(renderSongCard).join('')}
+          </div>
+        </section>
+      `;
+    }
 
-    const colors = ['bg-primary-fixed-dim', 'bg-secondary-fixed', 'bg-tertiary-fixed'];
+    window._currentPageSongs = allPageSongs;
 
-    stats.topGenres.forEach((g, idx) => {
-      const bg = colors[idx % colors.length];
-      if (idx === 0) {
+    // 3. Genres & Stöbern (Exakte 100 Hex-Farben & Universaldesign OHNE Icons)
+    if (stats && stats.topGenres && stats.topGenres.length > 0) {
+      html += `
+        <section class="mb-xl">
+          <h2 class="text-headline-lg-mobile md:text-headline-lg font-headline-lg font-bold mb-lg flex items-center gap-xs">
+            <span class="material-symbols-outlined text-tertiary text-[28px]">library_music</span> Browse & Genres
+          </h2>
+          <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-md md:gap-gutter">
+      `;
+
+      stats.topGenres.forEach((g, idx) => {
+        const style = getGenreStyle(g.genre);
+        const desc = (typeof GENRE_DESCRIPTIONS !== 'undefined' && GENRE_DESCRIPTIONS[g.genre]) || '';
+        const artistLabel = g.topArtist ? esc(g.topArtist) : (g.count ? g.count + ' Songs' : 'Entdecken');
+        if (idx === 0) {
+          html += `
+            <a class="col-span-2 row-span-2 rounded-2xl p-lg relative overflow-hidden group hover:scale-[1.02] transition-all duration-300 shadow-xl flex flex-col justify-between min-h-[220px]" style="background-color: ${style.hex};" href="#" onclick="navigate('genre','${esc(g.genre)}'); return false;">
+              <div class="relative z-10">
+                <span class="text-label-caps ${style.subtextColor} uppercase tracking-wider">Top Genre</span>
+                <h3 class="text-headline-md font-headline-md ${style.textColor} mt-xs drop-shadow-sm">${esc(g.genre)}</h3>
+                ${desc ? `<p class="text-body-sm ${style.subtextColor} mt-sm" style="display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;line-height:1.45;max-height:calc(1.45em * 3);">${esc(desc)}</p>` : ''}
+              </div>
+              <div class="relative z-10 flex items-center justify-between mt-xl border-t ${style.borderColor} pt-md">
+                <span class="text-body-sm ${style.subtextColor} font-medium">${artistLabel}</span>
+                <span class="${style.textColor} text-body-lg group-hover:translate-x-1 transition-transform">Genre öffnen →</span>
+              </div>
+            </a>
+          `;
+        } else {
+          html += `
+            <a class="rounded-2xl p-md relative overflow-hidden group hover:scale-[1.03] transition-all duration-300 shadow-md hover:shadow-xl flex flex-col justify-between min-h-[140px]" style="background-color: ${style.hex};" href="#" onclick="navigate('genre','${esc(g.genre)}'); return false;">
+              <div class="relative z-10">
+                <h3 class="text-title-md font-title-md ${style.textColor} drop-shadow-sm truncate">${esc(g.genre)}</h3>
+                ${g.topArtist ? `<span class="text-body-xs ${style.subtextColor} mt-xs block truncate opacity-80">${esc(g.topArtist)}</span>` : ''}
+              </div>
+              <div class="relative z-10 flex items-center justify-between mt-md pt-sm border-t ${style.borderColor}">
+                <span class="text-body-xs ${style.subtextColor}">${g.count ? g.count + ' Songs' : 'Entdecken'}</span>
+                <span class="${style.textColor} text-body-sm group-hover:translate-x-1 transition-transform">→</span>
+              </div>
+            </a>
+          `;
+        }
+      });
+
+      if (stats.mostPlayedGenre && !stats.topGenres.find(t => t.genre === stats.mostPlayedGenre)) {
+        const style = getGenreStyle(stats.mostPlayedGenre);
         html += `
-          <a class="col-span-2 row-span-2 rounded-lg bg-surface-container p-md relative overflow-hidden group hover:opacity-95 transition-opacity active:scale-95 duration-100" href="#" onclick="navigate('genre','${esc(g.genre)}'); return false;">
-            <div class="absolute inset-0 bg-gradient-to-br from-primary-fixed to-surface-variant opacity-50"></div>
-            <div class="relative z-10 flex flex-col h-full justify-between">
-              <span class="text-title-md font-title-md text-text-high-contrast font-bold">Top Genre: ${esc(g.genre)}</span>
+          <a class="rounded-2xl p-md relative overflow-hidden group hover:scale-[1.03] transition-all duration-300 shadow-md hover:shadow-xl flex flex-col justify-between min-h-[140px]" style="background-color: ${style.hex};" href="#" onclick="navigate('genre','${esc(stats.mostPlayedGenre)}'); return false;">
+            <div class="relative z-10">
+              <h3 class="text-title-md font-title-md ${style.textColor} drop-shadow-sm truncate">${esc(stats.mostPlayedGenre)}</h3>
+            </div>
+            <div class="relative z-10 flex items-center justify-between mt-md pt-sm border-t ${style.borderColor}">
+              <span class="text-body-xs ${style.subtextColor}">Your Favorite Genre</span>
+              <span class="${style.textColor} text-body-sm group-hover:translate-x-1 transition-transform">→</span>
             </div>
           </a>
         `;
-      } else {
+      }
+
+      if (currentUser?.enablePodcasts !== false) {
         html += `
-            <span class="text-title-md font-title-md text-text-high-contrast relative z-10 font-bold">${esc(g.genre)}</span>
-            <div class="absolute -bottom-4 -right-4 w-24 h-24 rounded bg-background/40 rotate-[25deg]"></div>
+          <a class="col-span-2 rounded-2xl p-md relative overflow-hidden group hover:scale-[1.02] transition-all duration-300 shadow-md bg-gradient-to-br from-slate-700 to-slate-900 flex items-center justify-between" href="#" onclick="navigate('podcasts'); return false;">
+            <div class="relative z-10">
+              <h3 class="text-title-md font-title-md text-white font-extrabold">Podcasts</h3>
+              <p class="text-body-xs text-white/70 mt-xs">Shows, episodes & radio</p>
+            </div>
+            <span class="text-white/90 text-body-lg font-bold group-hover:translate-x-1 transition-transform">Open →</span>
           </a>
         `;
       }
-    });
 
-    if (stats.mostPlayedGenre && !stats.topGenres.find(t => t.genre === stats.mostPlayedGenre)) {
-      html += `
-        <a class="rounded-lg bg-surface-container-low border border-border-subtle p-md relative overflow-hidden group hover:bg-surface-container transition-colors active:scale-95 duration-100" href="#" onclick="navigate('genre','${esc(stats.mostPlayedGenre)}'); return false;">
-          <span class="text-title-md font-title-md text-text-high-contrast relative z-10 font-bold">Your Favorite: ${esc(stats.mostPlayedGenre)}</span>
-          <div class="absolute -bottom-4 -right-4 w-24 h-24 rounded bg-surface-variant rotate-[25deg]"></div>
-        </a>
-      `;
+      html += `</div></section>`;
     }
 
-    if (currentUser?.enablePodcasts !== false) {
-      html += `
-        <a class="col-span-2 rounded-lg bg-surface-dim p-md relative overflow-hidden group hover:opacity-95 transition-opacity flex items-center justify-between active:scale-95 duration-100" href="#" onclick="navigate('podcasts'); return false;">
-          <span class="text-title-md font-title-md text-text-high-contrast relative z-10 font-bold">Live Sets & Podcasts</span>
-          <span class="material-symbols-outlined text-[48px] text-text-muted opacity-20 relative z-10">mic</span>
-        </a>
-      `;
+
+    if (!html) {
+      html = `<div class="p-xl text-center text-text-muted">No content found. Upload music in the Admin dashboard.</div>`;
     }
 
-    html += `</div>`;
     container.innerHTML = html;
+    bindSongRows();
   }
+
+
+  function renderSongCard(s) {
+    const coverSrc = s.cover ? `/stream/cover/${s.cover}` : null;
+    return `
+      <div class="group relative w-full bg-surface-bright border border-border-subtle p-md rounded-xl cursor-pointer hover:bg-surface-container-low transition-all duration-200 shadow-sm hover:shadow-md song-item" data-song-id="${s.id}">
+        <div class="w-full aspect-square bg-surface-container rounded-lg overflow-hidden mb-md flex items-center justify-center relative">
+          ${coverSrc
+            ? `<img src="${coverSrc}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" alt="${esc(s.title)}">`
+            : `<div class="w-full h-full flex items-center justify-center bg-surface-container-low text-text-muted"><span class="material-symbols-outlined text-[48px]">music_note</span></div>`
+          }
+          <div class="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+            <div class="w-12 h-12 rounded-full bg-primary text-on-primary flex items-center justify-center shadow-lg transform translate-y-2 group-hover:translate-y-0 transition-transform duration-200">
+              <span class="material-symbols-outlined text-[28px]" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
+            </div>
+            <button class="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/60 hover:bg-black/90 text-white flex items-center justify-center transition-all hover:scale-110 active:scale-95 song-menu-btn shadow-md z-10" onclick="event.stopPropagation(); CumuApp.openSongMenu(event, this, '${s.id}')" title="Optionen">
+              <span class="material-symbols-outlined text-[20px]">more_vert</span>
+            </button>
+          </div>
+        </div>
+        <h3 class="text-title-md font-title-md text-text-high-contrast font-bold truncate group-hover:text-primary transition-colors">${esc(s.title)}</h3>
+        <p class="text-body-sm text-text-muted truncate mt-xs">${esc(s.artist_name || 'Unknown Artist')}</p>
+        ${s.album_title ? `<p class="text-body-xs text-text-muted/70 truncate">${esc(s.album_title)}</p>` : ''}
+      </div>`;
+  }
+
 
 
   function renderAlbumCard(a) {
@@ -1708,12 +2142,12 @@ function showToast(msg) {
           }
         </div>
         <h3 class="text-title-md font-title-md text-text-high-contrast font-bold truncate">${esc(a.title)}</h3>
-        <p class="text-body-sm text-text-muted truncate mt-xs">${esc(a.artist_name || 'Unbekannter Künstler')} ${a.year ? '(' + a.year + ')' : ''}</p>
+        <p class="text-body-sm text-text-muted truncate mt-xs">${esc(a.artist_name || 'Unknown Artist')} ${a.year ? '(' + a.year + ')' : ''}</p>
       </div>`;
   }
 
   async function renderLibrary() {
-    main.innerHTML = '<div class="p-margin-desktop text-center text-text-muted">Lade Mediathek…</div>';
+    main.innerHTML = '<div class="p-margin-desktop text-center text-text-muted">Loading library…</div>';
     const lib = await CumuApi.get('/api/library');
     await loadPlaylists();
 
@@ -1727,7 +2161,7 @@ function showToast(msg) {
           pinnedCards.push({
             key,
             title: 'Podcasts',
-            subtitle: 'Shows & Episoden',
+            subtitle: 'Shows & episodes',
             typeLabel: 'Podcast',
             icon: 'podcasts',
             onClick: "navigate('podcasts')",
@@ -1738,9 +2172,9 @@ function showToast(msg) {
       } else if (key === PIN_KEYS.FAVORITES) {
         pinnedCards.push({
           key,
-          title: 'Lieblingslieder',
-          subtitle: `${favorites.size} Titel`,
-          typeLabel: 'Kategorie',
+          title: 'Favorite Songs',
+          subtitle: `${favorites.size} songs`,
+          typeLabel: 'Category',
           icon: 'favorite',
           onClick: "navigate('favorites')",
           bgClass: 'bg-error-container/30',
@@ -1770,7 +2204,7 @@ function showToast(msg) {
         <header class="mb-lg md:mb-xl flex flex-col md:flex-row md:items-center justify-between gap-md">
           <div>
             <h1 class="text-headline-lg-mobile md:text-headline-lg font-headline-lg text-text-high-contrast font-bold">Library</h1>
-            <p class="text-body-sm font-body-sm text-text-muted mt-xs">Deine persönliche Musiksammlung.</p>
+            <p class="text-body-sm font-body-sm text-text-muted mt-xs">Your personal music collection.</p>
           </div>
         </header>
 
@@ -1781,8 +2215,8 @@ function showToast(msg) {
             <div class="flex justify-between items-center mb-md border-b border-border-subtle pb-sm">
               <h2 class="text-title-md font-title-md text-text-high-contrast font-bold">Playlists</h2>
               <div class="flex items-center gap-md">
-                <button class="text-label-caps font-label-caps text-primary hover:underline font-bold uppercase text-xs" onclick="CumuApp.createPlaylist()">+ Neue Playlist</button>
-                <a class="text-label-caps font-label-caps text-text-muted hover:text-text-high-contrast transition-colors uppercase" href="#" onclick="navigate('playlists'); return false;">Alle anzeigen</a>
+                <button class="text-label-caps font-label-caps text-primary hover:underline font-bold uppercase text-xs" onclick="CumuApp.createPlaylist()">+ New Playlist</button>
+                <a class="text-label-caps font-label-caps text-text-muted hover:text-text-high-contrast transition-colors uppercase" href="#" onclick="navigate('playlists'); return false;">Show all</a>
               </div>
             </div>
             <div class="grid grid-cols-2 lg:grid-cols-3 gap-md flex-1">
@@ -1791,28 +2225,28 @@ function showToast(msg) {
                 const pPinned = pinnedKeys.includes(pKey);
                 return `
                   <div class="group relative bg-background border border-border-subtle rounded-xl p-md cursor-pointer hover:scale-[1.02] hover:border-primary/40 transition-all duration-200 flex flex-col justify-between" onclick="navigate('playlist','${p.id}')">
-                    <button class="absolute top-3 right-3 w-8 h-8 rounded-full ${pPinned ? 'text-primary bg-surface-container' : 'text-text-muted opacity-0 group-hover:opacity-100 hover:text-primary bg-surface-container'} flex items-center justify-center transition-all z-10 shadow-sm" onclick="CumuApp.togglePin('${pKey}', event)" title="${pPinned ? 'Abpinnen' : 'Anpinnen'}">
+                    <button class="absolute top-3 right-3 w-8 h-8 rounded-full ${pPinned ? 'text-primary bg-surface-container' : 'text-text-muted opacity-0 group-hover:opacity-100 hover:text-primary bg-surface-container'} flex items-center justify-center transition-all z-10 shadow-sm" onclick="CumuApp.togglePin('${pKey}', event)" title="${pPinned ? 'Unpin' : 'Pin'}">
                       <span class="material-symbols-outlined text-[18px]" style="${pPinned ? "font-variation-settings: 'FILL' 1;" : ''}">push_pin</span>
                     </button>
-                    <div class="aspect-square rounded-lg overflow-hidden mb-sm border border-border-subtle bg-surface-container-low flex items-center justify-center relative">
-                      ${p.cover ? `<img src="${p.cover}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />` : `<span class="material-symbols-outlined text-[44px] text-text-muted">queue_music</span>`}
+                    <div class="aspect-square rounded-xl overflow-hidden mb-sm border border-border-subtle bg-surface-container-low flex items-center justify-center relative">
+                      ${getPlaylistCoverHtml(p, 'medium')}
                     </div>
                     <div>
                       <div class="flex items-center gap-xs">
                         <h3 class="text-body-sm font-body-sm text-text-high-contrast font-medium truncate flex-1">${esc(p.name)}</h3>
-                        ${pPinned ? `<span class="material-symbols-outlined text-primary text-[14px]" style="font-variation-settings: 'FILL' 1;" title="Angepinnt">push_pin</span>` : ''}
+                        ${pPinned ? `<span class="material-symbols-outlined text-primary text-[14px]" style="font-variation-settings: 'FILL' 1;" title="Pinned">push_pin</span>` : ''}
                       </div>
-                      <p class="text-body-sm font-body-sm text-text-muted truncate">${esc(p.description || 'Playlist')}</p>
+                      <p class="text-body-sm font-body-sm text-text-muted truncate">${esc((p.description || 'Playlist').replace(/\s*\[dynamic:[^\]]+\]/, ''))}</p>
                     </div>
                   </div>`;
-              }).join('') || '<p class="text-body-sm text-text-muted col-span-full">Keine Playlists vorhanden.</p>'}
+              }).join('') || '<p class="text-body-sm text-text-muted col-span-full">No playlists available.</p>'}
             </div>
           </section>
 
           <!-- Schnellzugriff Section (4 cols) -->
           <section class="md:col-span-4 bg-surface-bright border border-border-subtle rounded-xl p-lg flex flex-col h-full">
             <div class="flex justify-between items-center mb-md border-b border-border-subtle pb-sm">
-              <h2 class="text-title-md font-title-md text-text-high-contrast font-bold">Schnellzugriff</h2>
+              <h2 class="text-title-md font-title-md text-text-high-contrast font-bold">Quick Access</h2>
             </div>
             <div class="flex flex-col gap-md">
               ${getShowFavorites() ? `
@@ -1822,8 +2256,8 @@ function showToast(msg) {
                       <span class="material-symbols-outlined text-[24px]">favorite</span>
                     </div>
                     <div>
-                      <h3 class="text-body-lg font-medium text-text-high-contrast">Lieblingslieder</h3>
-                      <p class="text-body-sm text-text-muted">${favorites.size} Titel</p>
+                      <h3 class="text-body-lg font-medium text-text-high-contrast">Favorite Songs</h3>
+                      <p class="text-body-sm text-text-muted">${favorites.size} songs</p>
                     </div>
                   </div>
                 </div>` : ''}
@@ -1836,13 +2270,13 @@ function showToast(msg) {
                     </div>
                     <div>
                       <h3 class="text-body-lg font-medium text-text-high-contrast">Podcasts</h3>
-                      <p class="text-body-sm text-text-muted">Shows & Episoden</p>
+                      <p class="text-body-sm text-text-muted">Shows & episodes</p>
                     </div>
                   </div>
                 </div>` : ''}
 
               ${(!getShowFavorites() && (!getShowPodcasts() || currentUser?.enablePodcasts === false)) ? `
-                <p class="text-body-sm text-text-muted py-md">Keine Elemente aktiviert. Aktiviere sie in den Einstellungen.</p>
+                <p class="text-body-sm text-text-muted py-md">No elements enabled. Enable them in settings.</p>
               ` : ''}
             </div>
           </section>
@@ -1850,9 +2284,9 @@ function showToast(msg) {
 
         <!-- Gespeicherte Songs Section -->
         <section class="bg-surface-bright border border-border-subtle rounded-xl p-lg">
-          <h2 class="text-title-md font-title-md text-text-high-contrast font-bold mb-md">Gespeicherte Songs</h2>
+          <h2 class="text-title-md font-title-md text-text-high-contrast font-bold mb-md">Saved Songs</h2>
           <div class="flex flex-col gap-xs">
-            ${(lib.songs || []).map((s, idx) => renderSongRow(s, idx + 1)).join('') || '<p class="text-body-sm text-text-muted">Keine Songs vorhanden.</p>'}
+            ${(lib.songs || []).map((s, idx) => renderSongRow(s, idx + 1)).join('') || '<p class="text-body-sm text-text-muted">No songs available.</p>'}
           </div>
         </section>
       </div>`;
@@ -1882,7 +2316,7 @@ function showToast(msg) {
         <div class="flex-1 flex flex-col justify-between w-full">
           <div>
             <div class="flex items-center gap-xs text-xs font-semibold text-primary uppercase tracking-wider mb-xs">
-              <span class="material-symbols-outlined text-[16px]">resume</span> Weiterhören
+              <span class="material-symbols-outlined text-[16px]">resume</span> Continue Listening
             </div>
             <h3 class="text-title-md font-bold text-text-high-contrast truncate">${esc(progress.episodeTitle)}</h3>
             <p class="text-body-sm text-text-muted truncate mt-[2px]">${esc(progress.podcastTitle)}</p>
@@ -1891,7 +2325,7 @@ function showToast(msg) {
           <div class="mt-md">
             <div class="flex items-center justify-between text-body-xs text-text-muted mb-xs font-mono">
               <span>${formatTime(cur)}</span>
-              <span>${remMinutes > 0 ? `Noch ca. ${remMinutes} Min.` : formatTime(dur)}</span>
+              <span>${remMinutes > 0 ? `Remaining approx. ${remMinutes} min.` : formatTime(dur)}</span>
             </div>
             <div class="w-full h-2 bg-surface-container rounded-full overflow-hidden">
               <div class="h-full bg-primary rounded-full transition-all duration-300" style="width: ${pct}%"></div>
@@ -1902,7 +2336,7 @@ function showToast(msg) {
         <div class="flex-shrink-0 self-end md:self-center">
           <button onclick='resumePodcastEpisode(${safeProgressStr})' class="flex items-center gap-xs px-lg py-md bg-primary text-on-primary rounded-lg font-bold hover:bg-primary-hover active:scale-95 transition-all shadow-sm">
             <span class="material-symbols-outlined text-[20px]">play_arrow</span>
-            Weiterhören
+            Continue
           </button>
         </div>
       </div>
@@ -1917,11 +2351,11 @@ function showToast(msg) {
           <div class="mb-xs">
             <h1 class="text-headline-lg-mobile md:text-headline-lg font-headline-lg-mobile md:font-headline-lg text-text-high-contrast font-bold">Podcasts</h1>
           </div>
-          <p class="text-body-lg font-body-lg text-text-muted mb-md">Entdecke neue Stimmen, Vorträge und Geschichten.</p>
+          <p class="text-body-lg font-body-lg text-text-muted mb-md">Discover new voices, talks, and stories.</p>
 
           <div class="relative flex items-center w-full max-w-xl search-input-container compact">
             <span class="material-symbols-outlined search-icon text-text-muted text-[24px]">search</span>
-            <input id="podcastSearchInput" class="w-full pr-md py-md bg-surface-bright border border-border-subtle rounded-lg text-body-md placeholder:text-text-muted focus:outline-none focus:border-text-high-contrast transition-colors text-text-high-contrast shadow-sm" placeholder="Podcast nach Name oder Thema suchen..." type="text">
+            <input id="podcastSearchInput" class="w-full pr-md py-md bg-surface-bright border border-border-subtle rounded-lg text-body-md placeholder:text-text-muted focus:outline-none focus:border-text-high-contrast transition-colors text-text-high-contrast shadow-sm" placeholder="Search podcasts by name or topic..." type="text">
           </div>
         </header>
 
@@ -1930,7 +2364,7 @@ function showToast(msg) {
           <div class="flex items-center justify-between mb-lg">
             <h2 id="podcastSearchResultTitle" class="text-title-md font-title-md text-text-high-contrast font-bold flex items-center gap-xs">
               <span class="material-symbols-outlined text-primary">search</span>
-              Suchergebnisse
+              Search Results
             </h2>
           </div>
           <div id="podcastSearchGrid" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-gutter"></div>
@@ -1943,7 +2377,7 @@ function showToast(msg) {
             <div class="flex items-center justify-between mb-md">
               <h2 class="text-title-md font-title-md text-text-high-contrast font-bold flex items-center gap-xs">
                 <span class="material-symbols-outlined text-primary">resume</span>
-                Weiterhören
+                Continue Listening
               </h2>
             </div>
             <div id="podcastContinueContainer"></div>
@@ -1954,7 +2388,7 @@ function showToast(msg) {
             <div class="flex items-center justify-between mb-lg">
               <h2 class="text-title-md font-title-md text-text-high-contrast font-bold flex items-center gap-xs">
                 <span class="material-symbols-outlined text-primary">history</span>
-                Oft gehört
+                Frequently Played
               </h2>
             </div>
             <div id="podcastFrequentlyGrid" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-gutter"></div>
@@ -1965,8 +2399,8 @@ function showToast(msg) {
             <div class="flex items-center justify-between mb-lg">
               <h2 class="text-title-md font-title-md text-text-high-contrast font-bold flex items-center gap-xs">
                 <span class="material-symbols-outlined text-primary">groups</span>
-                Empfohlen
-                <span class="text-body-sm font-normal text-text-muted ml-xs">(Beliebt in deiner Cumu-Instanz)</span>
+                Recommended
+                <span class="text-body-sm font-normal text-text-muted ml-xs">(Popular in your Cumu instance)</span>
               </h2>
             </div>
             <div id="podcastRecommendedGrid" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-gutter"></div>
@@ -1977,11 +2411,11 @@ function showToast(msg) {
             <div class="flex items-center justify-between mb-lg">
               <h2 class="text-title-md font-title-md text-text-high-contrast font-bold flex items-center gap-xs">
                 <span class="material-symbols-outlined text-primary">public</span>
-                Weltweite Trends
+                Global Trends
               </h2>
             </div>
             <div id="podcastGlobalGrid" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-gutter">
-              <div class="col-span-full text-center text-text-muted py-xl">Lade Podcasts...</div>
+              <div class="col-span-full text-center text-text-muted py-xl">Loading podcasts...</div>
             </div>
           </section>
         </div>
@@ -2006,19 +2440,19 @@ function showToast(msg) {
           }
           if (searchSection) searchSection.classList.remove('hidden');
           if (mainSections) mainSections.classList.add('hidden');
-          if (searchTitle) searchTitle.textContent = `Suchergebnisse für "${esc(q)}"`;
-          if (searchGrid) searchGrid.innerHTML = '<div class="col-span-full text-center text-text-muted py-xl">Suche Podcasts...</div>';
+          if (searchTitle) searchTitle.textContent = `Search results for "${esc(q)}"`;
+          if (searchGrid) searchGrid.innerHTML = '<div class="col-span-full text-center text-text-muted py-xl">Searching podcasts...</div>';
           try {
             const res = await CumuApi.get(`/api/podcasts/search?q=${encodeURIComponent(q)}`);
             if (res && res.success && res.podcasts && res.podcasts.length > 0) {
               searchGrid.innerHTML = res.podcasts.map(renderPodcastCard).join('');
               bindPodcastCards(searchGrid);
             } else {
-              searchGrid.innerHTML = `<div class="col-span-full text-center text-text-muted py-xl">Keine Podcasts für "${esc(q)}" gefunden.</div>`;
+              searchGrid.innerHTML = `<div class="col-span-full text-center text-text-muted py-xl">No podcasts found for "${esc(q)}".</div>`;
             }
           } catch (err) {
             console.error(err);
-            if (searchGrid) searchGrid.innerHTML = '<div class="col-span-full text-center text-red-400 py-xl">Fehler bei der Podcast-Suche.</div>';
+            if (searchGrid) searchGrid.innerHTML = '<div class="col-span-full text-center text-red-400 py-xl">Error searching podcasts.</div>';
           }
         }, 300);
       });
@@ -2049,7 +2483,7 @@ function showToast(msg) {
           // Section 2: Oft gehört
           if (res.frequentlyListened && res.frequentlyListened.length > 0 && freqSection && freqGrid) {
             freqSection.classList.remove('hidden');
-            freqGrid.innerHTML = res.frequentlyListened.map(p => renderPodcastCard({ ...p, badge: 'Oft gehört' })).join('');
+            freqGrid.innerHTML = res.frequentlyListened.map(p => renderPodcastCard({ ...p, badge: 'Frequently played' })).join('');
             bindPodcastCards(freqGrid);
           }
 
@@ -2065,13 +2499,13 @@ function showToast(msg) {
             globalGrid.innerHTML = res.globalTrending.map(renderPodcastCard).join('');
             bindPodcastCards(globalGrid);
           } else if (globalGrid) {
-            globalGrid.innerHTML = '<div class="col-span-full text-center text-text-muted py-xl">Keine Trends gefunden.</div>';
+            globalGrid.innerHTML = '<div class="col-span-full text-center text-text-muted py-xl">No trends found.</div>';
           }
         }
       } catch (e) {
         console.error(e);
         const globalGrid = document.getElementById('podcastGlobalGrid');
-        if (globalGrid) globalGrid.innerHTML = '<div class="col-span-full text-center text-red-400 py-xl">Fehler beim Laden.</div>';
+        if (globalGrid) globalGrid.innerHTML = '<div class="col-span-full text-center text-red-400 py-xl">Error loading.</div>';
       }
     }
 
@@ -2087,13 +2521,13 @@ function showToast(msg) {
           </div>
           <div class="flex flex-col gap-xs">
             <h1 class="text-headline-lg-mobile md:text-headline-lg font-headline-lg-mobile md:font-headline-lg text-text-high-contrast font-bold">${esc(title)}</h1>
-            <p class="text-body-lg font-body-lg text-text-muted">Podcast laden...</p>
+            <p class="text-body-lg font-body-lg text-text-muted">Loading podcast...</p>
           </div>
         </header>
         <section>
-          <h2 class="text-title-md font-title-md text-text-high-contrast border-b border-border-subtle pb-sm mb-md font-bold">Episoden</h2>
+          <h2 class="text-title-md font-title-md text-text-high-contrast border-b border-border-subtle pb-sm mb-md font-bold">Episodes</h2>
           <div id="podcastEpisodes" class="flex flex-col gap-xs">
-            <div class="text-center text-text-muted py-xl">Lade Episoden...</div>
+            <div class="text-center text-text-muted py-xl">Loading episodes...</div>
           </div>
         </section>
       </div>`;
@@ -2127,11 +2561,11 @@ function showToast(msg) {
           </div>
         `).join('');
       } else {
-        container.innerHTML = '<div class="text-center text-text-muted py-xl">Keine Episoden gefunden.</div>';
+        container.innerHTML = '<div class="text-center text-text-muted py-xl">No episodes found.</div>';
       }
     } catch (e) {
       console.error(e);
-      document.getElementById('podcastEpisodes').innerHTML = '<div class="text-center text-red-400 py-xl">Fehler beim Laden der Episoden.</div>';
+      document.getElementById('podcastEpisodes').innerHTML = '<div class="text-center text-red-400 py-xl">Error loading episodes.</div>';
     }
   };
 
@@ -2141,64 +2575,95 @@ function showToast(msg) {
     navigate('nowplaying');
   };
 
+  function isGeneratedPlaylist(pl) {
+    if (!pl) return false;
+    if (pl.is_generated === 1 || pl.is_generated === true) return true;
+    if (pl.description && pl.description.includes('[dynamic:')) return true;
+    return false;
+  }
+
   async function renderPlaylists() {
     await loadPlaylists();
     const pinnedKeys = getPinnedKeys();
     main.innerHTML = `
       <div class="p-md md:p-margin-desktop max-w-[1280px] mx-auto w-full">
-        <div class="flex items-center justify-between mb-xl">
+        <div class="flex items-center justify-between mb-xl flex-wrap gap-md">
           <div>
             <h1 class="text-headline-lg font-headline-lg text-text-high-contrast font-bold mb-xs">Playlists</h1>
-            <p class="text-body-sm text-text-muted">Deine persönlichen Musiksammlungen</p>
+            <p class="text-body-sm text-text-muted">Your personal music collections & automatically created Cumu playlists</p>
           </div>
-          <button class="py-md px-lg bg-text-high-contrast text-on-primary rounded-lg text-label-caps font-bold hover:bg-interactive-hover transition-all" onclick="CumuApp.createPlaylist()">
-            + Neue Playlist
-          </button>
+          <div class="flex items-center gap-md flex-wrap">
+            ${playlists.length > 3 ? `
+              <div class="relative flex items-center w-full sm:w-64">
+                <span class="material-symbols-outlined text-text-muted text-[18px] absolute left-3 pointer-events-none">search</span>
+                <input type="text" id="playlistsFilterInput" placeholder="Playlists filtern..." class="w-full bg-surface-bright border border-border-subtle rounded-full pl-9 pr-md py-xs text-body-sm text-on-surface focus:border-primary outline-none transition-colors" />
+              </div>
+            ` : ''}
+            <button class="py-md px-lg bg-text-high-contrast text-on-primary rounded-lg text-label-caps font-bold hover:bg-interactive-hover transition-all cursor-pointer" onclick="CumuApp.createPlaylist()">
+              + New Playlist
+            </button>
+          </div>
         </div>
         ${playlists.length ? `
           <div class="grid grid-cols-2 md:grid-cols-4 gap-md">
             ${playlists.map(p => {
               const pKey = `playlist:${p.id}`;
               const pPinned = pinnedKeys.includes(pKey);
+              const isGen = isGeneratedPlaylist(p);
               return `
                 <div class="group relative bg-surface-bright border border-border-subtle p-md rounded-lg cursor-pointer hover:bg-surface-container-low transition-all" onclick="navigate('playlist','${p.id}')">
-                  <button class="absolute top-3 right-3 w-8 h-8 rounded-full ${pPinned ? 'text-primary bg-surface-container' : 'text-text-muted opacity-0 group-hover:opacity-100 hover:text-primary bg-surface-container'} flex items-center justify-center transition-all z-10 shadow-sm" onclick="CumuApp.togglePin('${pKey}', event)" title="${pPinned ? 'Vom Dashboard abpinnen' : 'An Mediathek anpinnen'}">
+                  <button class="absolute top-3 right-3 w-8 h-8 rounded-full ${pPinned ? 'text-primary bg-surface-container' : 'text-text-muted opacity-0 group-hover:opacity-100 hover:text-primary bg-surface-container'} flex items-center justify-center transition-all z-10 shadow-sm" onclick="CumuApp.togglePin('${pKey}', event)" title="${pPinned ? 'Unpin from dashboard' : 'Pin to library'}">
                     <span class="material-symbols-outlined text-[18px]" style="${pPinned ? "font-variation-settings: 'FILL' 1;" : ''}">push_pin</span>
                   </button>
-                  <div class="w-full aspect-square bg-surface-container rounded-lg flex items-center justify-center text-text-muted mb-md relative overflow-hidden">
-                    ${p.cover ? `<img src="${p.cover}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />` : `<span class="material-symbols-outlined text-[48px]">queue_music</span>`}
+                  <div class="w-full aspect-square bg-surface-container rounded-xl flex items-center justify-center text-text-muted mb-md relative overflow-hidden">
+                    ${getPlaylistCoverHtml(p, 'medium')}
+                    ${isGen ? `<span class="absolute bottom-2 left-2 inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-background/85 text-primary backdrop-blur-md border border-primary/30 shadow-sm"><span class="material-symbols-outlined text-[12px]">auto_awesome</span> Cumu</span>` : ''}
                   </div>
                   <div class="flex items-center gap-xs">
                     <h3 class="text-title-md font-title-md text-text-high-contrast font-bold truncate flex-1">${esc(p.name)}</h3>
-                    ${pPinned ? `<span class="material-symbols-outlined text-primary text-[16px]" style="font-variation-settings: 'FILL' 1;" title="Angepinnt">push_pin</span>` : ''}
+                    ${isGen ? `<span class="material-symbols-outlined text-primary text-[15px]" title="Von Cumu automatisch erstellt">auto_awesome</span>` : ''}
+                    ${pPinned ? `<span class="material-symbols-outlined text-primary text-[16px]" style="font-variation-settings: 'FILL' 1;" title="Pinned">push_pin</span>` : ''}
                   </div>
-                  <p class="text-body-sm text-text-muted truncate mt-xs">${esc(p.description || 'Playlist')}</p>
+                  <p class="text-body-sm text-text-muted truncate mt-xs">${esc((p.description || (isGen ? 'Automatisch von Cumu erstellt' : 'Playlist')).replace(/\s*\[dynamic:[^\]]+\]/, ''))}</p>
                 </div>`;
             }).join('')}
           </div>`
           : `<div class="p-xl bg-surface-container-low border border-border-subtle rounded-xl text-center">
               <span class="material-symbols-outlined text-[48px] text-text-muted mb-md">queue_music</span>
-              <h2 class="text-title-md font-bold mb-xs">Keine Playlists vorhanden</h2>
-              <p class="text-body-sm text-text-muted mb-lg">Erstelle deine erste eigene Playlist!</p>
-              <button class="py-md px-lg bg-text-high-contrast text-on-primary rounded-lg text-label-caps font-bold hover:bg-interactive-hover transition-all" onclick="CumuApp.createPlaylist()">Playlist erstellen</button>
+              <h2 class="text-title-md font-bold mb-xs">No playlists found</h2>
+              <p class="text-body-sm text-text-muted mb-lg">Create your first custom playlist!</p>
+              <button class="py-md px-lg bg-text-high-contrast text-on-primary rounded-lg text-label-caps font-bold hover:bg-interactive-hover transition-all" onclick="CumuApp.createPlaylist()">Create Playlist</button>
             </div>`}
       </div>`;
+
+    const plFilter = document.getElementById('playlistsFilterInput');
+    if (plFilter) {
+      plFilter.addEventListener('input', (e) => {
+        const q = e.target.value.toLowerCase().trim();
+        const grid = main.querySelector('.grid');
+        if (grid) {
+          Array.from(grid.children).forEach(card => {
+            card.style.display = card.textContent.toLowerCase().includes(q) ? 'block' : 'none';
+          });
+        }
+      });
+    }
   }
 
   async function renderFavorites() {
-    main.innerHTML = '<div class="p-margin-desktop text-center text-text-muted">Lade Favoriten…</div>';
+    main.innerHTML = '<div class="p-margin-desktop text-center text-text-muted">Loading favorites…</div>';
     const favArray = Array.from(favorites);
 
     if (!favArray.length) {
       main.innerHTML = `
         <div class="p-md md:p-margin-desktop max-w-[1280px] mx-auto w-full">
           <div class="flex items-center justify-between mb-lg">
-            <h1 class="text-headline-lg font-headline-lg text-text-high-contrast font-bold">Favoriten</h1>
+            <h1 class="text-headline-lg font-headline-lg text-text-high-contrast font-bold">Favorites</h1>
           </div>
           <div class="p-xl bg-surface-container-low border border-border-subtle rounded-xl text-center">
             <span class="material-symbols-outlined text-[48px] text-text-muted mb-md">favorite</span>
-            <h2 class="text-title-md font-bold mb-xs">Noch keine Favoriten</h2>
-            <p class="text-body-sm text-text-muted">Klicke auf das Herz-Symbol bei einem Song, um ihn hier zu speichern.</p>
+            <h2 class="text-title-md font-bold mb-xs">No favorites yet</h2>
+            <p class="text-body-sm text-text-muted">Click the heart icon on any song to save it here.</p>
           </div>
         </div>`;
       return;
@@ -2213,7 +2678,7 @@ function showToast(msg) {
     main.innerHTML = `
       <div class="p-md md:p-margin-desktop max-w-[1280px] mx-auto w-full">
         <div class="flex items-center justify-between mb-lg">
-          <h1 class="text-headline-lg font-headline-lg text-text-high-contrast font-bold">Favoriten</h1>
+          <h1 class="text-headline-lg font-headline-lg text-text-high-contrast font-bold">Favorites</h1>
         </div>
         <div class="flex flex-col gap-xs">
           ${songs.map((s, idx) => renderSongRow(s, idx + 1)).join('')}
@@ -2223,25 +2688,570 @@ function showToast(msg) {
   }
 
   async function renderGenre(genreName) {
-    main.innerHTML = '<div class="p-margin-desktop text-center text-text-muted">Lade Genre…</div>';
+    main.innerHTML = '<div class="p-margin-desktop text-center text-text-muted">Loading genre…</div>';
     try {
-      const res = await CumuApi.get(`/api/search?q=${encodeURIComponent(genreName || '')}`);
-      main.innerHTML = `
-        <div class="p-md md:p-margin-desktop max-w-[1280px] mx-auto w-full">
-          <header class="mb-xl">
-            <span class="text-label-caps font-label-caps text-text-muted lowercase">Genre Overview</span>
-            <h1 class="text-headline-lg font-headline-lg text-text-high-contrast font-bold mb-xs">${esc(genreName || 'Genre')}</h1>
-            ${(typeof GENRE_DESCRIPTIONS !== 'undefined' && GENRE_DESCRIPTIONS[genreName]) ? `<p class="text-body-lg text-text-muted mt-sm">${esc(GENRE_DESCRIPTIONS[genreName])}</p>` : ''}
+      const data = await CumuApi.get(`/api/genres/detail/${encodeURIComponent(genreName || '')}`);
+      const songs = data.songs || [];
+      const topSongs = data.topSongs || [];
+      const featuredArtists = data.featuredArtists || [];
+      const albums = data.albums || [];
+
+      window._currentGenreSongs = songs;
+      window._genreConfig = await CumuApi.get('/api/genres/config').catch(() => ({}));
+      const style = getGenreStyle(data.genre || genreName);
+
+      let html = `
+        <div class="p-md md:p-margin-desktop max-w-[1280px] mx-auto w-full space-y-xl">
+          <!-- Hero Header with Exact User Hex Color & Description -->
+          <header class="p-xl rounded-2xl ${style.textColor} shadow-xl flex flex-col justify-between min-h-[180px] md:min-h-[200px] relative overflow-hidden" style="background-color: ${style.hex};">
+            <div class="relative z-10 max-w-3xl mb-md">
+              <span class="text-label-caps font-label-caps ${style.subtextColor} uppercase tracking-wider font-bold">Genre & Category</span>
+              <h1 class="text-headline-lg font-headline-lg ${style.textColor} font-black mt-xs mb-xs drop-shadow-sm">${esc(data.genre || genreName)}</h1>
+              ${style.description ? `<p class="text-body-md ${style.subtextColor} leading-relaxed mb-sm drop-shadow-sm">${esc(style.description)}</p>` : ''}
+            </div>
+            <div class="flex items-end justify-between w-full relative z-10 mt-auto pt-md gap-md">
+              <p class="text-body-sm ${style.subtextColor} font-medium">${songs.length} ${songs.length === 1 ? 'Song' : 'Songs'} in this category</p>
+              ${songs.length ? `
+                <button class="py-md px-lg ${style.btnBg} rounded-xl font-bold flex items-center gap-xs transition-all shadow-lg hover:scale-105 active:scale-95 flex-shrink-0 cursor-pointer" onclick="CumuApp.playQueue(window._currentGenreSongs, 0)">
+                  <span class="material-symbols-outlined text-[24px]" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
+                  Play genre
+                </button>
+              ` : ''}
+            </div>
           </header>
-          <div class="flex flex-col gap-xs">
-            ${res.songs?.length ? res.songs.map((s, idx) => renderSongRow(s, idx + 1)).join('') : '<p class="text-body-sm text-text-muted">Keine Tracks in dieser Kategorie gefunden.</p>'}
+      `;
+
+      if (!songs.length) {
+        html += `
+          <div class="p-xl bg-surface-container-low border border-border-subtle rounded-xl text-center">
+            <span class="material-symbols-outlined text-[48px] text-text-muted mb-md">queue_music</span>
+            <h2 class="text-title-md font-bold mb-xs">No songs in this genre</h2>
+            <p class="text-body-sm text-text-muted">No tracks found in the category "${esc(genreName)}".</p>
+          </div></div>`;
+        main.innerHTML = html;
+        return;
+      }
+
+      // Section 1: Top Songs
+      if (topSongs.length > 0) {
+        html += `
+          <section>
+            <h2 class="text-title-md font-title-md font-bold text-text-high-contrast mb-md flex items-center gap-xs">
+              <span class="material-symbols-outlined text-primary">trending_up</span> Top songs in ${esc(data.genre || genreName)}
+            </h2>
+            <div class="flex flex-col gap-xs rounded-xl border border-border-subtle bg-surface-bright/50 p-sm">
+              ${topSongs.map((s, idx) => renderSongRow(s, idx + 1)).join('')}
+            </div>
+          </section>
+        `;
+      }
+
+      // Section 2: Vorgestellte Künstler
+      if (featuredArtists.length > 0) {
+        html += `
+          <section>
+            <h2 class="text-title-md font-title-md font-bold text-text-high-contrast mb-md flex items-center gap-xs">
+              <span class="material-symbols-outlined text-secondary">person</span> Featured artists
+            </h2>
+            <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-md">
+              ${featuredArtists.map(a => `
+                <div class="group cursor-pointer flex flex-col items-center gap-xs p-md rounded-xl bg-surface-container-low hover:bg-surface-bright transition-all" onclick="navigate('artist', '${esc(a.id)}')">
+                  <div class="w-20 h-20 rounded-full overflow-hidden bg-surface-container shadow-sm">
+                    ${a.image ? `<img src="${a.image}" class="w-full h-full object-cover" />` : `<div class="w-full h-full flex items-center justify-center text-text-muted"><span class="material-symbols-outlined text-[32px]">person</span></div>`}
+                  </div>
+                  <span class="text-body-md font-bold text-text-high-contrast truncate mt-xs text-center">${esc(a.name)}</span>
+                </div>
+              `).join('')}
+            </div>
+          </section>
+        `;
+      }
+
+      // Section 3: Alben
+      if (albums.length > 0) {
+        html += `
+          <section>
+            <h2 class="text-title-md font-title-md font-bold text-text-high-contrast mb-md flex items-center gap-xs">
+              <span class="material-symbols-outlined text-tertiary">album</span> Alben in diesem Genre
+            </h2>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-md">
+              ${albums.map(renderAlbumCard).join('')}
+            </div>
+          </section>
+        `;
+      }
+
+      // Section 4: Alle Songs Playlist
+      html += `
+        <section>
+          <h2 class="text-title-md font-title-md font-bold text-text-high-contrast mb-md flex items-center gap-xs">
+            <span class="material-symbols-outlined text-primary">queue_music</span> Alle Songs (${songs.length})
+          </h2>
+          <div class="flex flex-col gap-xs rounded-xl border border-border-subtle bg-surface-bright/50 p-sm">
+            ${songs.map((s, idx) => renderSongRow(s, idx + 1)).join('')}
           </div>
-        </div>`;
+        </section>
+      `;
+
+      // Section 5: Kuratierte 3 Genre Playlists ([Genre], Best of [Genre], Upcoming [Genre])
+      await loadPlaylists();
+      const libData = await CumuApi.get('/api/library').catch(() => ({ songs: [] }));
+      const userFavSongs = libData.songs || [];
+
+      window._currentGenreName = data.genre || genreName;
+
+      // 1. [Genre] (Alle Songs)
+      const plAll = {
+        name: data.genre || genreName,
+        desc: `Alle Songs aus dem Genre ${data.genre || genreName}`,
+        songs: [...songs]
+      };
+
+      // 2. Best of [Genre] (Top Hits nach Wiedergaben)
+      const bestOfTracks = [...songs].sort((a, b) => (b.play_count || 0) - (a.play_count || 0));
+      const plBestOf = {
+        name: `Best of ${data.genre || genreName}`,
+        desc: `Die beliebtesten & meistgehörten Tracks in ${data.genre || genreName}`,
+        songs: bestOfTracks
+      };
+
+      // 3. Upcoming [Genre] (Mix des Genres mit deinen Lieblings-Liedern)
+      const upcomingMixed = [];
+      const addedUpcomingIds = new Set();
+      const maxLen = Math.max(songs.length, userFavSongs.length);
+      for (let i = 0; i < maxLen; i++) {
+        if (i < songs.length && !addedUpcomingIds.has(songs[i].id)) {
+          upcomingMixed.push(songs[i]);
+          addedUpcomingIds.add(songs[i].id);
+        }
+        if (i < userFavSongs.length && !addedUpcomingIds.has(userFavSongs[i].id)) {
+          upcomingMixed.push(userFavSongs[i]);
+          addedUpcomingIds.add(userFavSongs[i].id);
+        }
+      }
+      const plUpcoming = {
+        name: `Upcoming: ${data.genre || genreName}`,
+        desc: `Ein beliebter Mix aus ${data.genre || genreName} und deinen Lieblings-Songs`,
+        songs: upcomingMixed
+      };
+
+      window._genrePlaylistsData = {
+        all: plAll,
+        bestOf: plBestOf,
+        upcoming: plUpcoming
+      };
+
+      html += `
+        <section class="mt-2xl pt-xl border-t border-border-subtle/80">
+          <div class="mb-lg flex items-center justify-between">
+            <div>
+              <span class="text-label-caps font-label-caps text-primary uppercase tracking-wider font-bold">Kuratierte Sammlungen</span>
+              <h2 class="text-headline-lg-mobile md:text-headline-lg font-headline-lg text-text-high-contrast font-bold mt-xs flex items-center gap-xs">
+                <span class="material-symbols-outlined text-primary text-[28px]">auto_awesome</span>
+                Playlists für ${esc(data.genre || genreName)}
+              </h2>
+              <p class="text-body-sm text-text-muted mt-xs">Klicke auf eine Playlist für die eigene Übersichtsseite & Speichermöglichkeiten.</p>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-lg">
+            ${[
+              { key: 'all', data: plAll, icon: 'library_music', badge: 'Alle Songs' },
+              { key: 'bestOf', data: plBestOf, icon: 'star', badge: 'Top Hits' },
+              { key: 'upcoming', data: plUpcoming, icon: 'dynamic_feed', badge: 'Upcoming Mix' }
+            ].map(pItem => {
+              const pData = pItem.data;
+              const existingPl = playlists.find(p => p.name.toLowerCase() === pData.name.toLowerCase());
+              const isSaved = !!existingPl;
+              const targetNav = existingPl ? `navigate('playlist','${existingPl.id}')` : `navigate('genrePlaylist','${encodeURIComponent(data.genre || genreName)}:${pItem.key}')`;
+              const durSec = pData.songs.reduce((acc, s) => acc + (s.duration || 0), 0);
+              const durMin = durSec > 0 ? `${Math.floor(durSec / 60)} Min.` : '';
+
+              return `
+                <div class="group relative bg-surface-bright border border-border-subtle hover:border-primary/60 p-md rounded-2xl flex flex-col justify-between shadow-sm hover:shadow-xl transition-all duration-300 cursor-pointer overflow-hidden" onclick="${targetNav}">
+                  <!-- Cover & Header Image Box -->
+                  <div class="w-full aspect-square bg-surface-container-low rounded-xl mb-md relative overflow-hidden group">
+                    ${renderPlaylistCoverCollage(pData.songs, pItem.icon, style.hex)}
+
+                    <!-- Top Badge -->
+                    <div class="absolute top-3 left-3 z-10">
+                      <span class="text-label-caps font-label-caps px-sm py-xs rounded-full bg-black/60 backdrop-blur-md text-white font-bold shadow-md flex items-center gap-xs">
+                        <span class="material-symbols-outlined text-[14px] text-primary">${pItem.icon}</span>
+                        ${pItem.badge}
+                      </span>
+                    </div>
+
+                    <!-- Hover Play Button Overlay -->
+                    <div class="absolute inset-0 bg-black/40 backdrop-blur-[2px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all duration-300 z-10">
+                      <button class="w-14 h-14 rounded-full bg-primary text-on-primary flex items-center justify-center shadow-2xl transform scale-90 group-hover:scale-100 transition-all duration-300 hover:scale-105 active:scale-95 cursor-pointer" onclick="event.stopPropagation(); CumuApp.playGenrePlaylist('${pItem.key}')" title="Playlist abspielen">
+                        <span class="material-symbols-outlined text-[32px]" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- Card Content Info -->
+                  <div class="flex-1 flex flex-col justify-between">
+                    <div>
+                      <h3 class="text-title-md font-title-md text-text-high-contrast font-bold group-hover:text-primary transition-colors truncate mb-xs flex items-center justify-between">
+                        <span>${esc(pData.name)}</span>
+                        <span class="material-symbols-outlined text-text-muted text-[18px] opacity-0 group-hover:opacity-100 transition-opacity">arrow_forward</span>
+                      </h3>
+                      <p class="text-body-sm text-text-muted line-clamp-2 min-h-[2.5rem] mb-sm">${esc(pData.desc)}</p>
+                    </div>
+
+                    <div class="flex items-center justify-between pt-sm border-t border-border-subtle/60 mt-xs">
+                      <span class="text-label-caps font-label-caps text-text-muted font-medium">${pData.songs.length} ${pData.songs.length === 1 ? 'Song' : 'Songs'} ${durMin ? '· ' + durMin : ''}</span>
+                      <button class="py-xs px-sm rounded-lg text-body-xs font-bold flex items-center gap-xs transition-all cursor-pointer ${isSaved ? 'bg-surface-container-low text-primary border border-primary/30' : 'bg-surface-container-low text-text-high-contrast border border-border-subtle hover:bg-surface-bright active:scale-95'}" onclick="event.stopPropagation(); CumuApp.toggleSaveGenrePlaylist('${pItem.key}')" title="${isSaved ? 'Already in your library' : 'Add to library'}">
+                        <span class="material-symbols-outlined text-[16px]">${isSaved ? 'bookmark_added' : 'bookmark_add'}</span>
+                        <span>${isSaved ? 'In Library' : '+ Save'}</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </section>
+      </div>`;
+
+      main.innerHTML = html;
       bindSongRows();
-    } catch (_) {
+    } catch (err) {
+      console.error(err);
       renderHome();
     }
   }
+
+  function renderPlaylistCoverCollage(songs, defaultIcon = 'queue_music', hexColor = '#5A5B6B') {
+    const covers = [];
+    if (Array.isArray(songs)) {
+      for (const s of songs) {
+        if (s && s.cover && !covers.includes(s.cover)) {
+          covers.push(s.cover);
+          if (covers.length >= 4) break;
+        }
+      }
+    }
+
+    if (covers.length >= 4) {
+      return `
+        <div class="w-full h-full grid grid-cols-2 grid-rows-2 rounded-xl overflow-hidden shadow-sm">
+          <img src="/stream/cover/${covers[0]}" class="w-full h-full object-cover" />
+          <img src="/stream/cover/${covers[1]}" class="w-full h-full object-cover" />
+          <img src="/stream/cover/${covers[2]}" class="w-full h-full object-cover" />
+          <img src="/stream/cover/${covers[3]}" class="w-full h-full object-cover" />
+        </div>`;
+    } else if (covers.length > 0) {
+      return `
+        <div class="w-full h-full rounded-xl overflow-hidden shadow-sm relative">
+          <img src="/stream/cover/${covers[0]}" class="w-full h-full object-cover" />
+        </div>`;
+    } else {
+      return `
+        <div class="w-full h-full rounded-xl flex items-center justify-center text-white shadow-inner relative overflow-hidden" style="background: linear-gradient(135deg, ${hexColor}, #1a1c1c);">
+          <span class="material-symbols-outlined text-[48px] drop-shadow-md">${defaultIcon}</span>
+        </div>`;
+    }
+  }
+
+  function getPlaylistCoverHtml(playlist, size = 'medium') {
+    if (!playlist) {
+      return `<div class="w-full h-full bg-surface-container flex items-center justify-center text-text-muted rounded-xl"><span class="material-symbols-outlined text-[32px]">queue_music</span></div>`;
+    }
+
+    if (playlist.cover) {
+      return `<img src="${playlist.cover}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 rounded-xl" alt="${esc(playlist.name || '')}" />`;
+    }
+
+    const songs = playlist.songs || [];
+    const covers = [];
+    if (Array.isArray(songs)) {
+      for (const s of songs) {
+        if (s && s.cover && !covers.includes(s.cover)) {
+          covers.push(s.cover);
+          if (covers.length >= 4) break;
+        }
+      }
+    }
+
+    if (covers.length >= 4) {
+      return `
+        <div class="w-full h-full grid grid-cols-2 grid-rows-2 rounded-xl overflow-hidden shadow-sm bg-surface-container">
+          <img src="/stream/cover/${covers[0]}" class="w-full h-full object-cover" />
+          <img src="/stream/cover/${covers[1]}" class="w-full h-full object-cover" />
+          <img src="/stream/cover/${covers[2]}" class="w-full h-full object-cover" />
+          <img src="/stream/cover/${covers[3]}" class="w-full h-full object-cover" />
+        </div>`;
+    }
+
+    if (covers.length > 0) {
+      return `
+        <div class="w-full h-full rounded-xl overflow-hidden shadow-sm bg-surface-container">
+          <img src="/stream/cover/${covers[0]}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+        </div>`;
+    }
+
+    const iconSize = size === 'large' ? 'text-[56px]' : 'text-[36px]';
+    return `
+      <div class="w-full h-full rounded-xl flex items-center justify-center text-white/90 shadow-inner relative overflow-hidden bg-gradient-to-br from-slate-700 via-slate-800 to-zinc-900">
+        <span class="material-symbols-outlined ${iconSize} drop-shadow-md">queue_music</span>
+      </div>`;
+  }
+
+  async function renderGenrePlaylist(params) {
+    main.innerHTML = '<div class="p-margin-desktop text-center text-text-muted">Lade Playlist…</div>';
+
+    let genreName = '';
+    let typeKey = 'all';
+
+    if (typeof params === 'string') {
+      const parts = params.split(':');
+      genreName = decodeURIComponent(parts[0] || '');
+      typeKey = parts[1] || 'all';
+    } else if (params && typeof params === 'object') {
+      genreName = params.genre || '';
+      typeKey = params.type || 'all';
+    }
+
+    if (!genreName) {
+      renderHome();
+      return;
+    }
+
+    try {
+      const data = await CumuApi.get(`/api/genres/detail/${encodeURIComponent(genreName)}`);
+      const songs = data.songs || [];
+      await loadPlaylists();
+      const libData = await CumuApi.get('/api/library').catch(() => ({ songs: [] }));
+      const userFavSongs = libData.songs || [];
+      const style = getGenreStyle(data.genre || genreName);
+
+      window._currentGenreName = data.genre || genreName;
+
+      let plTitle = data.genre || genreName;
+      let plDesc = `Alle Songs aus dem Genre ${data.genre || genreName}`;
+      let plSongs = [...songs];
+      let badgeLabel = 'Alle Songs';
+      let iconName = 'library_music';
+
+      if (typeKey === 'bestOf') {
+        plTitle = `Best of ${data.genre || genreName}`;
+        plDesc = `Die beliebtesten & meistgehörten Tracks in ${data.genre || genreName}`;
+        plSongs = [...songs].sort((a, b) => (b.play_count || 0) - (a.play_count || 0));
+        badgeLabel = 'Top Hits';
+        iconName = 'star';
+      } else if (typeKey === 'upcoming') {
+        plTitle = `Upcoming: ${data.genre || genreName}`;
+        plDesc = `Ein beliebter Mix aus ${data.genre || genreName} und deinen Lieblings-Songs`;
+        const upcomingMixed = [];
+        const addedIds = new Set();
+        const maxLen = Math.max(songs.length, userFavSongs.length);
+        for (let i = 0; i < maxLen; i++) {
+          if (i < songs.length && !addedIds.has(songs[i].id)) {
+            upcomingMixed.push(songs[i]);
+            addedIds.add(songs[i].id);
+          }
+          if (i < userFavSongs.length && !addedIds.has(userFavSongs[i].id)) {
+            upcomingMixed.push(userFavSongs[i]);
+            addedIds.add(userFavSongs[i].id);
+          }
+        }
+        plSongs = upcomingMixed;
+        badgeLabel = 'Upcoming Mix';
+        iconName = 'dynamic_feed';
+      }
+
+      window._currentPlaylistSongs = plSongs;
+      window._genrePlaylistsData = window._genrePlaylistsData || {};
+      window._genrePlaylistsData[typeKey] = { name: plTitle, desc: plDesc, songs: plSongs };
+
+      const totalDur = plSongs.reduce((acc, s) => acc + (s.duration || 0), 0);
+      const durStr = formatTotalDuration(totalDur);
+
+      const existingPl = playlists.find(p => p.name.toLowerCase() === plTitle.toLowerCase());
+      const isSaved = !!existingPl;
+      const creator = 'cumu';
+      const isThisPlPlaying = isPlaying && currentSong && plSongs.some(s => s.id === currentSong.id);
+
+      let html = `
+        <div class="p-md md:p-margin-desktop max-w-[1280px] mx-auto w-full space-y-lg">
+          <!-- Navigation Back Button -->
+          <div class="flex items-center gap-xs text-text-muted hover:text-text-high-contrast cursor-pointer transition-colors w-fit mb-xs" onclick="navigate('genre', '${esc(data.genre || genreName)}')">
+            <span class="material-symbols-outlined text-[20px]">arrow_back</span>
+            <span class="text-body-sm font-medium">Zurück zu ${esc(data.genre || genreName)}</span>
+          </div>
+
+          <!-- Hero Banner for Genre / Custom Playlist (Matches normal playlist design) -->
+          <div class="page-hero relative bg-surface-container-low border border-border-subtle p-6 md:p-8 rounded-2xl md:rounded-3xl mb-8 flex flex-col md:flex-row items-center md:items-start gap-6 md:gap-8 shadow-lg overflow-hidden">
+            <!-- Cover Artwork Collage -->
+            <div class="w-40 h-40 md:w-48 md:h-48 flex-shrink-0 shadow-xl rounded-2xl overflow-hidden border border-border-subtle/30">
+              ${renderPlaylistCoverCollage(plSongs, iconName, style.hex)}
+            </div>
+
+            <!-- Info & Controls -->
+            <div class="page-hero-info flex-1 min-w-0 w-full flex flex-col justify-center">
+              <div class="text-xs uppercase tracking-widest font-bold text-text-muted mb-1 flex items-center gap-2">
+                <span class="material-symbols-outlined text-[16px] text-primary">queue_music</span>
+                <span>KURATIERTE PLAYLIST</span>
+              </div>
+
+              <h1 class="text-3xl md:text-4xl font-extrabold text-text-high-contrast tracking-tight mb-2 truncate">${esc(plTitle)}</h1>
+              ${plDesc ? `<p class="text-body-md text-text-muted mb-3 line-clamp-2 max-w-2xl">${esc(plDesc)}</p>` : ''}
+
+              <!-- Playlist Details (Ersteller: cumu, Songs, Gesamtlänge) -->
+              <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-body-sm font-medium text-text-muted mb-6">
+                <span class="inline-flex items-center gap-1.5 text-text-high-contrast font-semibold">
+                  <span class="material-symbols-outlined text-[18px] text-text-muted">person</span>
+                  ${creator}
+                </span>
+                <span>&middot;</span>
+                <span>${plSongs.length} ${plSongs.length === 1 ? 'Song' : 'Songs'}</span>
+                ${totalDur > 0 ? `<span>&middot;</span><span class="font-mono text-xs">${durStr} Gesamtlänge</span>` : ''}
+              </div>
+
+              <!-- Icon Action Bar (No text labels) -->
+              <div class="flex items-center gap-3 flex-wrap">
+                ${plSongs.length ? `
+                  <button id="genrePlPlayBtn_${typeKey}"
+                          class="w-12 h-12 rounded-full bg-primary text-on-primary flex items-center justify-center hover:scale-110 active:scale-95 transition-all duration-200 shadow-md hover:shadow-primary/40 cursor-pointer ${isThisPlPlaying ? 'ring-4 ring-primary/30' : ''}"
+                          onclick="CumuApp.playQueue(window._currentPlaylistSongs, 0)"
+                          title="${isThisPlPlaying ? 'Pause' : 'Playlist abspielen'}">
+                    <span class="material-symbols-outlined text-[28px]" style="font-variation-settings: 'FILL' 1;">${isThisPlPlaying ? 'pause' : 'play_arrow'}</span>
+                  </button>
+                  <button id="genrePlShuffleBtn_${typeKey}"
+                          class="w-10 h-10 rounded-full ${isShuffle ? 'bg-primary/20 text-primary border-primary/40' : 'bg-surface-container-high hover:bg-surface-bright hover:border-primary/50 text-text-high-contrast border-border-subtle'} flex items-center justify-center hover:scale-110 active:scale-95 transition-all duration-200 border shadow-sm cursor-pointer"
+                          onclick="CumuApp.toggleShuffle()"
+                          title="${isShuffle ? 'Disable shuffle' : 'Enable shuffle'}">
+                    <span class="material-symbols-outlined text-[20px]" style="${isShuffle ? "font-variation-settings: 'FILL' 1;" : ''}">shuffle</span>
+                  </button>
+                ` : ''}
+
+                <button class="w-10 h-10 rounded-full ${isSaved ? 'bg-primary/20 text-primary border-primary/40' : 'bg-surface-container-high hover:bg-surface-bright hover:border-primary/50 text-text-high-contrast border-border-subtle'} flex items-center justify-center hover:scale-110 active:scale-95 transition-all duration-200 border shadow-sm cursor-pointer"
+                        onclick="CumuApp.toggleSaveGenrePlaylist('${typeKey}')"
+                        title="${isSaved ? 'Saved in library' : 'Add to library'}">
+                  <span class="material-symbols-outlined text-[20px]">${isSaved ? 'bookmark_added' : 'bookmark_add'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Song Table Section -->
+          <section>
+            <div class="flex items-center justify-between mb-md">
+              <h2 class="text-title-md font-title-md font-bold text-text-high-contrast flex items-center gap-xs">
+                <span class="material-symbols-outlined text-primary">queue_music</span> Tracks (${plSongs.length})
+              </h2>
+            </div>
+            <div class="flex flex-col gap-xs rounded-xl border border-border-subtle bg-surface-bright/50 p-sm">
+              ${plSongs.length ? plSongs.map((s, idx) => renderSongRow(s, idx + 1)).join('') : '<p class="text-body-sm text-text-muted p-md text-center">Keine Tracks in dieser Playlist gefunden.</p>'}
+            </div>
+          </section>
+        </div>
+      `;
+
+      main.innerHTML = html;
+      bindSongRows();
+    } catch (err) {
+      console.error(err);
+      renderHome();
+    }
+  }
+
+  async function syncDynamicPlaylist(pl) {
+    if (!pl || !pl.description) return pl;
+    const match = pl.description.match(/\[dynamic:([^:]+):([^\]]+)\]/);
+    if (!match) return pl;
+
+    const genreName = match[1];
+    const typeKey = match[2];
+
+    try {
+      const data = await CumuApi.get(`/api/genres/detail/${encodeURIComponent(genreName)}`);
+      const songs = data.songs || [];
+      const libData = await CumuApi.get('/api/library').catch(() => ({ songs: [] }));
+      const userFavSongs = libData.songs || [];
+
+      let freshSongs = [];
+      if (typeKey === 'all') {
+        freshSongs = [...songs];
+      } else if (typeKey === 'bestOf') {
+        freshSongs = [...songs].sort((a, b) => (b.play_count || 0) - (a.play_count || 0));
+      } else if (typeKey === 'upcoming') {
+        const addedIds = new Set();
+        const maxLen = Math.max(songs.length, userFavSongs.length);
+        for (let i = 0; i < maxLen; i++) {
+          if (i < songs.length && !addedIds.has(songs[i].id)) {
+            freshSongs.push(songs[i]);
+            addedIds.add(songs[i].id);
+          }
+          if (i < userFavSongs.length && !addedIds.has(userFavSongs[i].id)) {
+            freshSongs.push(userFavSongs[i]);
+            addedIds.add(userFavSongs[i].id);
+          }
+        }
+      }
+
+      if (freshSongs.length) {
+        await CumuApi.post(`/api/playlists/${pl.id}/sync-songs`, { songIds: freshSongs.map(s => s.id), isSystemSync: true }).catch(() => {});
+        pl.songs = freshSongs;
+      }
+    } catch (e) {
+      console.error('Dynamic playlist sync failed:', e);
+    }
+
+    return pl;
+  }
+
+  function playGenrePlaylist(key) {
+    const pl = window._genrePlaylistsData ? window._genrePlaylistsData[key] : null;
+    if (pl && pl.songs && pl.songs.length) {
+      playQueue(pl.songs, 0);
+    }
+  }
+
+  async function toggleSaveGenrePlaylist(key) {
+    const pl = window._genrePlaylistsData ? window._genrePlaylistsData[key] : null;
+    if (!pl) return;
+    await loadPlaylists();
+
+    const existingPl = playlists.find(p => p.name.toLowerCase() === pl.name.toLowerCase());
+    if (existingPl) {
+      const pKey = `playlist:${existingPl.id}`;
+      if (!isPinned(pKey)) {
+        togglePin(pKey);
+        showToast(`Playlist "${pl.name}" an Mediathek angepinnt!`);
+      } else {
+        showToast(`Playlist "${pl.name}" ist bereits in deiner Bibliothek.`);
+      }
+    } else {
+      try {
+        const genreName = window._currentGenreName || pl.name.replace(/^(Best of |Upcoming: )/, '');
+        const dynamicDesc = `${pl.desc} [dynamic:${genreName}:${key}]`;
+        const created = await CumuApi.post('/api/playlists', { name: pl.name, description: dynamicDesc, is_generated: 1 });
+        if (created && created.id) {
+          for (const s of pl.songs) {
+            await CumuApi.post(`/api/playlists/${created.id}/songs`, { songId: s.id, isSystemSync: true });
+          }
+          const pKey = `playlist:${created.id}`;
+          togglePin(pKey);
+          await loadPlaylists();
+          showToast(`Playlist "${pl.name}" erfolgreich erstellt & in Bibliothek gespeichert!`);
+        }
+      } catch (e) {
+        console.error(e);
+        showToast('Fehler beim Speichern der Playlist.');
+      }
+    }
+
+    if (currentPage === 'genre' && window._lastNavParams) {
+      renderGenre(window._lastNavParams);
+    } else if (currentPage === 'library') {
+      renderLibrary();
+    } else if (currentPage === 'playlists') {
+      renderPlaylists();
+    }
+  }
+
 
   async function createPlaylist(initialSongId) {
     let modal = document.getElementById('createPlaylistModal');
@@ -2255,21 +3265,21 @@ function showToast(msg) {
     modal.innerHTML = `
       <div class="w-full max-w-[480px] bg-surface-container rounded-xl shadow-2xl border border-border-subtle p-lg flex flex-col gap-md">
         <div class="flex flex-col">
-          <h2 class="font-title-lg text-title-lg text-on-surface font-bold m-0">Neue Playlist erstellen</h2>
-          <p class="font-body-sm text-body-sm text-text-muted mt-xs">Gib der Playlist einen Namen, um Songs hinzuzufügen.</p>
+          <h2 class="font-title-lg text-title-lg text-on-surface font-bold m-0">Create New Playlist</h2>
+          <p class="font-body-sm text-body-sm text-text-muted mt-xs">Give the playlist a name to start adding songs.</p>
         </div>
         <form id="createPlaylistForm" class="flex flex-col gap-md mt-md">
           <div class="flex flex-col gap-xs">
             <label class="font-body-sm text-body-sm text-on-surface font-medium">Playlist Name *</label>
-            <input type="text" id="newPlName" required placeholder="z. B. Meine Favoriten" autofocus class="w-full bg-surface-container-low border border-border-subtle rounded-lg px-md py-sm font-body-lg text-body-lg text-on-surface focus:border-text-muted focus:ring-0 outline-none transition-colors" />
+            <input type="text" id="newPlName" required placeholder="e.g. My Favorites" autofocus class="w-full bg-surface-container-low border border-border-subtle rounded-lg px-md py-sm font-body-lg text-body-lg text-on-surface focus:border-text-muted focus:ring-0 outline-none transition-colors" />
           </div>
           <div class="flex flex-col gap-xs">
-            <label class="font-body-sm text-body-sm text-text-muted">Beschreibung (optional)</label>
-            <input type="text" id="newPlDesc" placeholder="z. B. Entspannte Musik für unterwegs" class="w-full bg-surface-container-low border border-border-subtle rounded-lg px-md py-sm font-body-sm text-body-sm text-on-surface focus:border-text-muted focus:ring-0 outline-none transition-colors" />
+            <label class="font-body-sm text-body-sm text-text-muted">Description (optional)</label>
+            <input type="text" id="newPlDesc" placeholder="e.g. Chill music for the road" class="w-full bg-surface-container-low border border-border-subtle rounded-lg px-md py-sm font-body-sm text-body-sm text-on-surface focus:border-text-muted focus:ring-0 outline-none transition-colors" />
           </div>
           <div class="flex items-center justify-end gap-sm mt-md pt-md border-t border-border-subtle">
-            <button type="button" class="px-md py-sm rounded-lg font-body-sm text-body-sm text-text-muted hover:text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="document.getElementById('createPlaylistModal').style.display='none'">Abbrechen</button>
-            <button type="submit" class="px-md py-sm rounded-lg font-body-sm text-body-sm bg-text-muted text-on-primary hover:scale-105 active:scale-95 transition-transform duration-200">Playlist erstellen</button>
+            <button type="button" class="px-md py-sm rounded-lg font-body-sm text-body-sm text-text-muted hover:text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="document.getElementById('createPlaylistModal').style.display='none'">Cancel</button>
+            <button type="submit" class="px-md py-sm rounded-lg font-body-sm text-body-sm bg-text-muted text-on-primary hover:scale-105 active:scale-95 transition-transform duration-200">Create Playlist</button>
           </div>
         </form>
       </div>
@@ -2301,12 +3311,19 @@ function showToast(msg) {
   }
 
   async function renderAlbum(albumId) {
-    main.innerHTML = '<div class="page-section"><div class="spinner">Lade Album…</div></div>';
+    if (typeof albumId === 'string' && albumId.startsWith('edit:')) {
+      return renderEditAlbum(albumId.replace('edit:', ''));
+    }
+    main.innerHTML = '<div class="page-section"><div class="spinner">Loading album…</div></div>';
     const album = await CumuApi.get(`/api/albums/${albumId}`);
+    if (!album || album.error) {
+      main.innerHTML = '<div class="page-section"><div class="card p-xl text-center">Album not found</div></div>';
+      return;
+    }
     const coverSrc = album.cover ? `/stream/cover/${album.cover}` : null;
 
     const totalDur = (album.songs || []).reduce((s, t) => s + (t.duration || 0), 0);
-    const dur = totalDur > 0 ? `${Math.floor(totalDur/60)} Min.` : '';
+    const dur = totalDur > 0 ? `${Math.floor(totalDur/60)} min.` : '';
 
     main.innerHTML = `
       <div class="page-hero" style="display:flex;align-items:center;gap:24px;flex-wrap:wrap;padding:32px 24px;background:var(--surface-soft);border-radius:var(--radius-lg,16px);margin-bottom:32px">
@@ -2317,11 +3334,12 @@ function showToast(msg) {
         <div class="page-hero-info" style="flex:1;min-width:240px">
           <div class="mute" style="font-size:12px;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">Album</div>
           <h1 style="font-size:32px;font-weight:800;margin:0 0 6px 0">${esc(album.title)}</h1>
-          <p class="mute" style="margin:0 0 16px 0">${esc(album.artist_name || 'Unbekannter Künstler')}${album.year ? ' &middot; ' + album.year : ''}${dur ? ' &middot; ' + dur : ''}</p>
+          <p class="mute" style="margin:0 0 16px 0">${esc(album.artist_name || 'Unknown Artist')}${album.year ? ' &middot; ' + album.year : ''}${dur ? ' &middot; ' + dur : ''}</p>
           <div style="display:flex;gap:12px;flex-wrap:wrap">
-            <button class="btn-primary" onclick="CumuApp.playAlbum('${album.id}')">${CumuIcons.get('play')} Album abspielen</button>
-            <button class="btn-secondary" onclick="CumuApp.playNextPlaylist(window._currentAlbumSongs)">${CumuIcons.get('next')} Als Nächstes</button>
-            <button class="btn-secondary" onclick="navigate('artist','${album.artist_id}')">Zum Künstler</button>
+            <button class="btn-primary" onclick="CumuApp.playAlbum('${album.id}')">${CumuIcons.get('play')} Play Album</button>
+            <button class="btn-secondary" onclick="CumuApp.playNextPlaylist(window._currentAlbumSongs)">${CumuIcons.get('next')} Play Next</button>
+            <button class="btn-secondary" onclick="navigate('artist','${album.artist_id}')">Go to Artist</button>
+            <button class="btn-secondary" onclick="navigate('album','edit:${album.id}')">${CumuIcons.get('edit')} Edit</button>
           </div>
         </div>
       </div>
@@ -2332,6 +3350,67 @@ function showToast(msg) {
 
     window._currentAlbumSongs = album.songs || [];
     bindSongRows();
+  }
+
+  async function renderEditAlbum(albumId) {
+    main.innerHTML = '<div class="page-section"><div class="spinner">Loading album editor…</div></div>';
+    const album = await CumuApi.get(`/api/albums/${albumId}`);
+    if (!album || album.error) {
+      main.innerHTML = '<div class="page-section"><div class="card p-xl text-center">Album not found</div></div>';
+      return;
+    }
+
+    const coverSrc = album.cover ? `/stream/cover/${album.cover}` : null;
+
+    main.innerHTML = `
+      <div class="p-md md:p-margin-desktop max-w-4xl mx-auto space-y-lg">
+        <div class="flex items-center justify-between pb-md border-b border-border-subtle">
+          <div class="flex items-center gap-sm">
+            <button class="w-9 h-9 rounded-full bg-surface-container-low hover:bg-surface-bright flex items-center justify-center transition-transform active:scale-95 cursor-pointer" onclick="history.back()" title="Back">
+              <span class="material-symbols-outlined text-[20px]">arrow_back</span>
+            </button>
+            <h1 class="text-headline-md font-bold text-text-high-contrast m-0">Edit Album</h1>
+          </div>
+        </div>
+
+        <div class="bg-surface-container-low border border-border-subtle rounded-2xl p-lg shadow-lg flex flex-col md:flex-row gap-lg">
+          <div class="w-36 h-36 flex-shrink-0 rounded-xl overflow-hidden bg-surface-container shadow-md border border-border-subtle/40 self-center md:self-start">
+            ${coverSrc ? `<img src="${coverSrc}" class="w-full h-full object-cover" />` : `<div class="w-full h-full flex items-center justify-center text-text-muted"><span class="material-symbols-outlined text-[48px]">library_music</span></div>`}
+          </div>
+
+          <form id="editAlbumForm" onsubmit="CumuApp.saveAlbumEdit(event, '${album.id}'); return false;" class="flex-1 flex flex-col gap-md">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-md">
+              <div class="flex flex-col gap-xs col-span-2">
+                <label class="text-label-caps font-label-caps text-text-muted">Album Title</label>
+                <input type="text" id="editAlbumTitle" value="${esc(album.title || '')}" required class="bg-surface-container border border-border-subtle rounded-lg px-md py-sm text-body-md text-on-surface focus:border-primary outline-none transition-colors" />
+              </div>
+
+              <div class="flex flex-col gap-xs">
+                <label class="text-label-caps font-label-caps text-text-muted">Artist</label>
+                <input type="text" id="editAlbumArtist" value="${esc(album.artist_name || '')}" class="bg-surface-container border border-border-subtle rounded-lg px-md py-sm text-body-md text-on-surface focus:border-primary outline-none transition-colors" />
+              </div>
+
+              <div class="flex flex-col gap-xs">
+                <label class="text-label-caps font-label-caps text-text-muted">Genre</label>
+                <input type="text" id="editAlbumGenre" value="${esc(album.genre || '')}" class="bg-surface-container border border-border-subtle rounded-lg px-md py-sm text-body-md text-on-surface focus:border-primary outline-none transition-colors" />
+              </div>
+
+              <div class="flex flex-col gap-xs">
+                <label class="text-label-caps font-label-caps text-text-muted">Release Year</label>
+                <input type="number" id="editAlbumYear" value="${album.year || ''}" placeholder="e.g. 2024" class="bg-surface-container border border-border-subtle rounded-lg px-md py-sm text-body-md text-on-surface focus:border-primary outline-none transition-colors" />
+              </div>
+            </div>
+
+            <div class="flex items-center justify-end gap-md mt-md pt-md border-t border-border-subtle">
+              <button type="button" class="px-lg py-sm rounded-lg font-body-sm text-text-muted hover:text-on-surface hover:bg-surface-bright transition-colors cursor-pointer" onclick="history.back()">Cancel</button>
+              <button type="submit" id="editAlbumSaveBtn" class="px-xl py-sm rounded-lg font-body-sm font-semibold bg-primary text-on-primary hover:scale-105 active:scale-95 transition-all shadow-md cursor-pointer flex items-center gap-xs">
+                <span class="material-symbols-outlined text-[18px]">save</span> Save
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    `;
   }
 
   async function playAlbum(albumId) {
@@ -2394,86 +3473,151 @@ function showToast(msg) {
 
   async function renderPlaylist(playlistId) {
     main.innerHTML = '<div class="page-section"><div class="spinner">Lade Playlist…</div></div>';
-    const pl = await CumuApi.get(`/api/playlists/${playlistId}`);
+    let pl = await CumuApi.get(`/api/playlists/${playlistId}`);
     if (!pl) return;
+    pl = await syncDynamicPlaylist(pl);
+
+    const isGen = isGeneratedPlaylist(pl);
+    window._currentPlaylistIsGenerated = isGen;
 
     const songs = pl.songs || [];
     window._currentPlaylistSongs = songs;
     const totalDur = songs.reduce((acc, t) => acc + (t.duration || 0), 0);
-    const durStr = totalDur > 0 ? `${Math.floor(totalDur / 60)} Min.` : '';
+    const durStr = formatTotalDuration(totalDur);
+    const cleanDesc = (pl.description || '').replace(/\s*\[dynamic:[^\]]+\]/, '');
+    const creator = isGen ? 'Cumu (Automatisch)' : (pl.owner_username || pl.creator || pl.username || 'System');
 
     const pKey = `playlist:${pl.id}`;
     const pPinned = isPinned(pKey);
-    const pinBtnHtml = `
-      <button class="btn-secondary flex items-center gap-xs" onclick="CumuApp.togglePin('${pKey}', event)" title="${pPinned ? 'Vom Dashboard abpinnen' : 'An Mediathek anpinnen'}">
-        <span class="material-symbols-outlined text-[18px]" style="${pPinned ? "font-variation-settings: 'FILL' 1;" : ''}">push_pin</span> ${pPinned ? 'Angepinnt' : 'Anpinnen'}
-      </button>`;
 
-    let offlineBtnHtml = '';
+    let isOffline = false;
     if (songs.length && window.CumuOfflineStore) {
-      const isOffline = await CumuOfflineStore.isPlaylistOffline(pl.id);
-      if (isOffline) {
-        offlineBtnHtml = `
-          <button id="dlPlBtn_${pl.id}" class="btn-secondary flex items-center gap-xs" style="border-color:rgba(16,185,129,0.3);color:rgb(16,185,129)" onclick="CumuApp.togglePlaylistOffline('${pl.id}')" title="Offline geladen (Klick zum Entfernen)">
-            <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 1;">download_done</span> Offline
-          </button>`;
-      } else {
-        offlineBtnHtml = `
-          <button id="dlPlBtn_${pl.id}" class="btn-secondary flex items-center gap-xs" onclick="CumuApp.togglePlaylistOffline('${pl.id}')" title="Offline speichern">
-            <span class="material-symbols-outlined text-[18px]">download</span> Offline speichern
-          </button>`;
-      }
+      isOffline = await CumuOfflineStore.isPlaylistOffline(pl.id);
     }
 
+    const isThisPlPlaying = isPlaying && currentSong && songs.some(s => s.id === currentSong.id);
+
     main.innerHTML = `
-      <div class="page-hero" style="background:var(--surface-soft);padding:32px 24px;border-radius:var(--radius-lg, 16px);margin-bottom:32px;display:flex;align-items:center;gap:24px;flex-wrap:wrap">
-        <div style="width:160px;height:160px;flex-shrink:0">
-          ${renderCoverPlaceholder('playlist', 'large')}
+      <div class="page-hero relative bg-surface-container-low border border-border-subtle p-6 md:p-8 rounded-2xl md:rounded-3xl mb-8 flex flex-col md:flex-row items-center md:items-start gap-6 md:gap-8 shadow-lg overflow-hidden">
+        <!-- 3-Dots Button Top Right for options -->
+        <button id="plMenuBtn_${pl.id}" class="pl-menu-btn absolute top-4 right-4 md:top-6 md:right-6 w-10 h-10 rounded-full bg-surface-container-high/80 hover:bg-surface-bright hover:border-primary/50 text-text-high-contrast flex items-center justify-center transition-all duration-200 hover:scale-110 active:scale-95 border border-border-subtle/60 backdrop-blur-sm z-10 shadow-sm cursor-pointer"
+                onclick="CumuApp.openPlaylistMenu(event, this, '${pl.id}')"
+                title="Weitere Optionen">
+          <span class="material-symbols-outlined text-[22px]">more_vert</span>
+        </button>
+
+        <!-- Cover Image Collage / Artwork -->
+        <div class="w-40 h-40 md:w-48 md:h-48 flex-shrink-0 shadow-xl rounded-2xl overflow-hidden border border-border-subtle/30 relative">
+          ${getPlaylistCoverHtml(pl, 'large')}
+          ${isGen ? `<span class="absolute bottom-3 left-3 inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-full bg-background/90 text-primary backdrop-blur-md border border-primary/40 shadow-md"><span class="material-symbols-outlined text-[14px]">auto_awesome</span> Cumu Playlist</span>` : ''}
         </div>
-        <div class="page-hero-info" style="flex:1;min-width:240px">
-          <div class="mute" style="font-size:12px;text-transform:uppercase;letter-spacing:.1em;font-weight:700;margin-bottom:6px">Playlist</div>
-          <h1 style="font-size:36px;font-weight:800;margin:0 0 8px 0">${esc(pl.name)}</h1>
-          ${pl.description ? `<p class="mute" style="margin:0 0 10px 0;font-size:15px">${esc(pl.description)}</p>` : ''}
-          <p class="mute" style="margin:0 0 20px 0;font-size:14px">
-            ${songs.length} Songs ${durStr ? '&middot; ' + durStr : ''}
-          </p>
-          <div style="display:flex;gap:12px;flex-wrap:wrap">
+
+        <!-- Info & Controls -->
+        <div class="page-hero-info flex-1 min-w-0 w-full flex flex-col justify-center">
+          <div class="text-xs uppercase tracking-widest font-bold text-text-muted mb-1 flex items-center gap-2">
+            <span class="material-symbols-outlined text-[16px] text-primary">${isGen ? 'auto_awesome' : 'queue_music'}</span>
+            <span>${isGen ? 'AUTOMATISCHE CUMU PLAYLIST' : 'PLAYLIST'}</span>
+          </div>
+
+          <h1 class="text-3xl md:text-4xl font-extrabold text-text-high-contrast tracking-tight mb-2 truncate">${esc(pl.name)}</h1>
+          ${cleanDesc ? `<p class="text-body-md text-text-muted mb-3 line-clamp-2 max-w-2xl">${esc(cleanDesc)}</p>` : ''}
+
+          <!-- Playlist Details (Ersteller, Songs, Gesamtlänge) -->
+          <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-body-sm font-medium text-text-muted mb-6">
+            <span class="inline-flex items-center gap-1.5 text-text-high-contrast font-semibold">
+              <span class="material-symbols-outlined text-[18px] ${isGen ? 'text-primary' : 'text-text-muted'}">${isGen ? 'auto_awesome' : 'person'}</span>
+              ${esc(creator)}
+            </span>
+            <span>&middot;</span>
+            <span>${songs.length} ${songs.length === 1 ? 'Song' : 'Songs'}</span>
+            ${totalDur > 0 ? `<span>&middot;</span><span class="font-mono text-xs">${durStr} Gesamtlänge</span>` : ''}
+            ${isGen ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-surface-container-high text-text-muted border border-border-subtle ml-1" title="Read-only Playlist"><span class="material-symbols-outlined text-[13px]">lock</span> schreibgeschützt</span>` : ''}
+          </div>
+
+          <!-- Icon Action Bar (No text labels) -->
+          <div class="flex items-center gap-3 flex-wrap">
             ${songs.length ? `
-              <button class="btn-primary" onclick="CumuApp.playPlaylist('${pl.id}')">
-                <span class="menu-icon">${CumuIcons.get('play')}</span> Abspielen
+              <button id="plPlayBtn_${pl.id}"
+                      class="w-12 h-12 rounded-full bg-primary text-on-primary flex items-center justify-center hover:scale-110 active:scale-95 transition-all duration-200 shadow-md hover:shadow-primary/40 cursor-pointer ${isThisPlPlaying ? 'ring-4 ring-primary/30' : ''}"
+                      onclick="${isThisPlPlaying ? 'CumuApp.togglePlay()' : `CumuApp.playPlaylist('${pl.id}')`}"
+                      title="${isThisPlPlaying ? 'Pause' : 'Playlist abspielen'}">
+                <span class="material-symbols-outlined text-[28px]" style="font-variation-settings: 'FILL' 1;">${isThisPlPlaying ? 'pause' : 'play_arrow'}</span>
               </button>
-              <button class="btn-secondary" onclick="CumuApp.playNextPlaylist(window._currentPlaylistSongs)">
-                <span class="menu-icon">${CumuIcons.get('next')}</span> Als Nächstes
+              <button id="plShuffleBtn_${pl.id}"
+                      class="w-10 h-10 rounded-full ${isShuffle ? 'bg-primary/20 text-primary border-primary/40' : 'bg-surface-container-high hover:bg-surface-bright hover:border-primary/50 text-text-high-contrast border-border-subtle'} flex items-center justify-center hover:scale-110 active:scale-95 transition-all duration-200 border shadow-sm cursor-pointer"
+                      onclick="CumuApp.toggleShuffle()"
+                      title="${isShuffle ? 'Zufallswiedergabe deaktivieren' : 'Zufallswiedergabe aktivieren'}">
+                <span class="material-symbols-outlined text-[20px]" style="${isShuffle ? "font-variation-settings: 'FILL' 1;" : ''}">shuffle</span>
               </button>
-              <button class="btn-secondary" onclick="CumuApp.addToQueuePlaylist(window._currentPlaylistSongs)">
-                <span class="menu-icon">${CumuIcons.get('add')}</span> Zur Warteschlange
-              </button>
-              ${offlineBtnHtml}
             ` : ''}
-            ${pinBtnHtml}
-            <button class="btn-secondary" onclick="CumuApp.openAddSongsModal('${pl.id}')">
-              <span class="menu-icon">${CumuIcons.get('add')}</span> Songs suchen
+
+            ${!isGen ? `
+              <button id="plAddSongsBtn_${pl.id}"
+                      class="w-10 h-10 rounded-full bg-surface-container-high hover:bg-surface-bright hover:border-primary/50 text-text-high-contrast flex items-center justify-center hover:scale-110 active:scale-95 transition-all duration-200 border border-border-subtle shadow-sm cursor-pointer"
+                      onclick="CumuApp.openAddSongsModal('${pl.id}')"
+                      title="Songs suchen & hinzufügen">
+                <span class="material-symbols-outlined text-[20px]">playlist_add</span>
+              </button>
+            ` : ''}
+
+            ${songs.length && window.CumuOfflineStore ? `
+              <button id="dlPlBtn_${pl.id}" class="w-10 h-10 rounded-full ${isOffline ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40' : 'bg-surface-container-high hover:bg-surface-bright hover:border-emerald-500/40 text-text-high-contrast border-border-subtle'} flex items-center justify-center hover:scale-110 active:scale-95 transition-all duration-200 border shadow-sm cursor-pointer"
+                      onclick="CumuApp.togglePlaylistOffline('${pl.id}')"
+                      title="${isOffline ? 'Offline geladen (Klick zum Entfernen)' : 'Offline speichern'}">
+                <span class="material-symbols-outlined text-[20px]" style="${isOffline ? "font-variation-settings: 'FILL' 1;" : ''}">${isOffline ? 'download_done' : 'download'}</span>
+              </button>
+            ` : ''}
+
+            <button id="plPinBtn_${pl.id}"
+                    class="w-10 h-10 rounded-full ${pPinned ? 'bg-primary/20 text-primary border-primary/40' : 'bg-surface-container-high hover:bg-surface-bright hover:border-primary/50 text-text-high-contrast border-border-subtle'} flex items-center justify-center hover:scale-110 active:scale-95 transition-all duration-200 border shadow-sm cursor-pointer"
+                    onclick="CumuApp.togglePin('${pKey}', event)"
+                    title="${pPinned ? 'Vom Dashboard abpinnen' : 'An Mediathek anpinnen'}">
+              <span class="material-symbols-outlined text-[20px]" style="${pPinned ? "font-variation-settings: 'FILL' 1;" : ''}">push_pin</span>
             </button>
-            <button class="btn-danger" onclick="CumuApp.deletePlaylist('${pl.id}')">
-              <span class="menu-icon">${CumuIcons.get('trash')}</span> Löschen
+
+            <button id="plDeleteBtn_${pl.id}"
+                    class="w-10 h-10 rounded-full bg-surface-container-high hover:bg-red-500/15 hover:text-red-400 hover:border-red-500/30 text-text-muted flex items-center justify-center hover:scale-110 active:scale-95 transition-all duration-200 border border-border-subtle shadow-sm cursor-pointer"
+                    onclick="CumuApp.deletePlaylist('${pl.id}')"
+                    title="Playlist löschen">
+              <span class="material-symbols-outlined text-[20px]">delete</span>
             </button>
           </div>
         </div>
       </div>
 
       <div class="page-section">
-        <h2 style="font-size:22px;font-weight:700;margin-bottom:16px">Titelliste</h2>
+        <div class="flex items-center justify-between mb-md flex-wrap gap-sm">
+          <h2 style="font-size:22px;font-weight:700;margin:0">Tracklist (${songs.length})</h2>
+          ${songs.length > 2 ? `
+            <div class="relative flex items-center w-full sm:w-64">
+              <span class="material-symbols-outlined text-text-muted text-[18px] absolute left-3 pointer-events-none">search</span>
+              <input type="text" id="playlistTrackFilterInput" placeholder="Tracks in Playlist suchen..." class="w-full bg-surface-bright border border-border-subtle rounded-full pl-9 pr-md py-xs text-body-sm text-on-surface focus:border-primary outline-none transition-colors" />
+            </div>
+          ` : ''}
+        </div>
         ${songs.length
           ? `<div class="song-list">${songs.map((s, i) => renderSongRow(s, i + 1)).join('')}</div>`
           : `<div class="card" style="text-align:center;padding:48px 16px;border-radius:var(--radius-lg,16px)">
               <div style="margin-bottom:12px;display:flex;justify-content:center">${renderCoverPlaceholder('playlist', 'medium')}</div>
-              <h3 style="margin:0 0 6px 0">Diese Playlist ist leer</h3>
-              <p class="mute caption" style="margin-bottom:20px">Füge Songs hinzu, um deine Playlist zu füllen!</p>
-              <button class="btn-primary" onclick="CumuApp.openAddSongsModal('${pl.id}')">Songs suchen & hinzufügen</button>
+              <h3 style="margin:0 0 6px 0">${isGen ? 'Noch keine Songs in dieser automatischen Playlist' : 'This playlist is empty'}</h3>
+              <p class="mute caption" style="margin-bottom:20px">${isGen ? 'Cumu wird hier automatisch passende Songs einfügen.' : 'Add songs to fill your playlist!'}</p>
+              ${!isGen ? `<button class="btn-primary" onclick="CumuApp.openAddSongsModal('${pl.id}')">Search & add songs</button>` : ''}
             </div>`
         }
       </div>`;
     bindSongRows();
+
+    const trackFilter = document.getElementById('playlistTrackFilterInput');
+    if (trackFilter) {
+      trackFilter.addEventListener('input', (e) => {
+        const q = e.target.value.toLowerCase().trim();
+        const rows = main.querySelectorAll('.song-list .song-item');
+        rows.forEach(row => {
+          const text = row.textContent.toLowerCase();
+          row.style.display = text.includes(q) ? 'flex' : 'none';
+        });
+      });
+    }
   }
 
   async function openAddSongsModal(playlistId) {
@@ -2488,22 +3632,24 @@ function showToast(msg) {
     modal.innerHTML = `
       <div class="w-full max-w-[540px] max-h-[85vh] bg-surface-container rounded-xl shadow-2xl border border-border-subtle p-lg flex flex-col gap-md overflow-hidden">
         <div class="flex items-center justify-between pb-sm border-b border-border-subtle">
-          <h2 class="font-title-lg text-title-lg text-on-surface font-bold m-0">Songs zur Playlist hinzufügen</h2>
-          <button class="text-text-muted hover:text-on-surface transition-colors rounded-full p-xs hover:bg-surface-bright" onclick="document.getElementById('addSongsToPlaylistModal').style.display='none'">
+          <h2 class="font-title-lg text-title-lg text-on-surface font-bold m-0">Add Songs to Playlist</h2>
+          <button class="text-text-muted hover:text-on-surface transition-colors rounded-full p-xs hover:bg-surface-bright cursor-pointer" onclick="document.getElementById('addSongsToPlaylistModal').style.display='none'">
             <span class="material-symbols-outlined text-[20px]">close</span>
           </button>
         </div>
         <div class="flex flex-col gap-xs mt-sm">
           <div class="relative flex items-center w-full search-input-container compact">
             <span class="material-symbols-outlined search-icon text-text-muted text-[20px]">search</span>
-            <input type="search" id="modalPlSearchInput" placeholder="Titel, Künstler oder Album suchen..." autofocus class="w-full bg-surface-container-low border border-border-subtle rounded-lg pr-md py-sm font-body-lg text-body-lg text-on-surface focus:border-text-muted focus:ring-0 outline-none transition-colors" />
+            <input type="search" id="modalPlSearchInput" placeholder="Search title, artist, or album..." autofocus class="w-full bg-surface-container-low border border-border-subtle rounded-lg pr-md py-sm font-body-lg text-body-lg text-on-surface focus:border-text-muted focus:ring-0 outline-none transition-colors" />
           </div>
         </div>
         <div id="modalPlSearchResults" class="flex-1 overflow-y-auto flex flex-col gap-sm min-h-[200px] py-xs pr-xs scrollbar-thin">
-          <p class="font-body-sm text-body-sm text-text-muted text-center py-xl">Gib einen Suchbegriff ein...</p>
+          <p class="font-body-sm text-body-sm text-text-muted text-center py-xl">Enter a search term...</p>
         </div>
         <div class="flex items-center justify-end mt-sm pt-md border-t border-border-subtle">
-          <button class="px-md py-sm rounded-lg font-body-sm text-body-sm text-on-surface bg-surface-container-high hover:bg-surface-bright transition-colors active:scale-95" onclick="document.getElementById('addSongsToPlaylistModal').style.display='none'">Fertig</button>
+          <button class="px-md py-sm rounded-lg font-body-sm text-body-sm text-on-surface bg-surface-container-high hover:bg-surface-bright transition-colors active:scale-95 flex items-center gap-xs cursor-pointer" onclick="document.getElementById('addSongsToPlaylistModal').style.display='none'">
+            <span class="material-symbols-outlined text-[18px]">arrow_back</span> Back to playlist
+          </button>
         </div>
       </div>
     `;
@@ -2519,74 +3665,318 @@ function showToast(msg) {
       const q = e.target.value;
       searchTimeout = setTimeout(async () => {
         if (!q.trim()) {
-          results.innerHTML = '<p class="font-body-sm text-body-sm text-text-muted text-center py-xl">Gib einen Suchbegriff ein...</p>';
+          results.innerHTML = '<p class="font-body-sm text-body-sm text-text-muted text-center py-xl">Enter a search term...</p>';
           return;
         }
         const res = await CumuApi.get(`/api/search?q=${encodeURIComponent(q)}`);
+        const currentSongIds = new Set((window._currentPlaylistSongs || []).map(s => s.id));
+
         if (res.songs?.length) {
-          results.innerHTML = res.songs.map(s => `
-            <div class="flex items-center justify-between p-sm border border-border-subtle rounded-lg bg-surface-container-low hover:bg-surface-bright transition-colors">
-              <div class="flex-1 overflow-hidden mr-md">
-                <div class="font-bold text-on-surface whitespace-nowrap overflow-hidden text-ellipsis">${esc(s.title)}</div>
-                <div class="font-body-sm text-body-sm text-text-muted whitespace-nowrap overflow-hidden text-ellipsis">${esc(s.artist_name || 'unbekannt')} ${s.album_title ? '&middot; ' + esc(s.album_title) : ''}</div>
+          results.innerHTML = res.songs.map(s => {
+            const isAlready = currentSongIds.has(s.id);
+            return `
+              <div class="flex items-center justify-between p-sm border border-border-subtle rounded-lg bg-surface-container-low hover:bg-surface-bright transition-colors">
+                <div class="flex-1 overflow-hidden mr-md">
+                  <div class="font-bold text-on-surface whitespace-nowrap overflow-hidden text-ellipsis">${esc(s.title)}</div>
+                  <div class="font-body-sm text-body-sm text-text-muted whitespace-nowrap overflow-hidden text-ellipsis">${esc(s.artist_name || 'unknown')} ${s.album_title ? '&middot; ' + esc(s.album_title) : ''}</div>
+                </div>
+                ${isAlready ? `
+                  <button class="px-sm py-xs bg-emerald-600/30 text-emerald-400 border border-emerald-500/40 rounded text-xs flex items-center gap-xs whitespace-nowrap pointer-events-none opacity-90">
+                    <span class="material-symbols-outlined text-[16px]">check</span> Already in Playlist
+                  </button>
+                ` : `
+                  <button class="px-sm py-xs bg-text-muted text-on-primary rounded text-xs hover:scale-105 active:scale-95 transition-transform flex items-center gap-xs whitespace-nowrap cursor-pointer" onclick="CumuApp.handleAddSongToPlaylistFromModal(this, '${playlistId}', '${s.id}')">
+                    <span class="material-symbols-outlined text-[16px]">add</span> Add
+                  </button>
+                `}
               </div>
-              <button class="px-sm py-xs bg-text-muted text-on-primary rounded text-xs hover:scale-105 active:scale-95 transition-transform flex items-center gap-xs whitespace-nowrap" onclick="CumuApp.addSongToPlaylist('${playlistId}', '${s.id}', ''); renderPlaylist('${playlistId}')">
-                <span class="material-symbols-outlined text-[16px]">add</span> Hinzufügen
-              </button>
-            </div>
-          `).join('');
+            `;
+          }).join('');
         } else {
-          results.innerHTML = `<p class="font-body-sm text-body-sm text-text-muted text-center py-xl">Keine Songs gefunden für "${esc(q)}"</p>`;
+          results.innerHTML = `<p class="font-body-sm text-body-sm text-text-muted text-center py-xl">No songs found for "${esc(q)}"</p>`;
         }
       }, 250);
     });
   }
 
   async function deletePlaylist(id) {
-    if (!confirm('Playlist wirklich löschen?')) return;
+    if (!confirm('Are you sure you want to delete this playlist?')) return;
     await CumuApi.del(`/api/playlists/${id}`);
     await loadPlaylists();
     navigate('library');
   }
 
   async function renderSong(songId) {
-    main.innerHTML = '<div class="page-section"><div class="spinner">Lade Details…</div></div>';
-    const s = await CumuApi.get(`/api/songs/${songId}`);
+    if (typeof songId === 'string' && songId.startsWith('edit:')) {
+      return renderEditSong(songId.replace('edit:', ''));
+    }
+    main.innerHTML = '<div class="p-md md:p-margin-desktop flex items-center justify-center min-h-[300px]"><span class="material-symbols-outlined text-[36px] animate-spin text-primary">sync</span></div>';
+    
+    let s;
+    try {
+      s = await CumuApi.get(`/api/songs/${songId}`);
+    } catch (err) {
+      console.error(err);
+    }
+
+    if (!s || s.error) {
+      main.innerHTML = `
+        <div class="p-md md:p-margin-desktop max-w-4xl mx-auto text-center py-xl">
+          <div class="bg-surface-container-low border border-border-subtle rounded-2xl p-xl shadow-lg">
+            <span class="material-symbols-outlined text-[48px] text-text-muted mb-md">music_off</span>
+            <h2 class="text-title-md font-bold text-text-high-contrast mb-xs">Song not found</h2>
+            <p class="text-body-sm text-text-muted mb-md">The requested track could not be loaded.</p>
+            <button class="px-md py-sm bg-primary text-on-primary rounded-lg font-semibold cursor-pointer" onclick="history.back()">Back</button>
+          </div>
+        </div>`;
+      return;
+    }
+
     const coverSrc = s.cover ? `/stream/cover/${s.cover}` : null;
 
     main.innerHTML = `
-      <div class="page-hero">
-        ${coverSrc
-          ? `<img src="${coverSrc}" class="page-hero-cover" alt="cover">`
-          : `<div class="page-hero-cover" style="display:flex;align-items:center;justify-content:center;background:var(--surface-card);font-size:48px">🎵</div>`
-        }
-        <div class="page-hero-info">
-          <div class="mute" style="font-size:12px;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">Song</div>
-          <h1>${esc(s.title)}</h1>
-          <p class="mute" style="margin-top:6px">
-            ${s.artist_name ? `<a style="color:var(--ink);text-decoration:none;cursor:pointer" onclick="navigate('artist','${s.artist_id}')">${esc(s.artist_name)}</a>` : 'Unbekannter Künstler'}
-            ${s.album_title ? ` &middot; <a style="color:var(--mute);text-decoration:none;cursor:pointer" onclick="navigate('album','${s.album_id}')">${esc(s.album_title)}</a>` : ''}
-          </p>
-          <div style="display:flex;gap:12px;margin-top:16px;flex-wrap:wrap">
-            <button class="btn-primary" onclick="CumuApp.playSingleSong('${s.id}')">${CumuIcons.get('play')} Abspielen</button>
-            <button class="btn-secondary" onclick="CumuApp.playNextById('${s.id}')">${CumuIcons.get('next')} Als Nächstes</button>
-            <button class="btn-secondary" onclick="CumuApp.addToQueueById('${s.id}')">${CumuIcons.get('add')} Zur Warteschlange</button>
-            <a class="btn-secondary" href="${CumuApi.downloadUrl(s.id)}" download>${CumuIcons.get('download')} Download</a>
+      <div class="p-md md:p-margin-desktop max-w-4xl mx-auto space-y-lg">
+        <!-- Hero Section -->
+        <div class="relative bg-surface-container-low border border-border-subtle p-md md:p-lg rounded-2xl md:rounded-3xl shadow-lg flex flex-col md:flex-row items-center md:items-start gap-md md:gap-lg overflow-hidden">
+          <div class="w-44 h-44 md:w-52 md:h-52 flex-shrink-0 rounded-2xl overflow-hidden bg-surface-container shadow-md border border-border-subtle/50 relative">
+            ${coverSrc
+              ? `<img src="${coverSrc}" class="w-full h-full object-cover" alt="Cover" />`
+              : `<div class="w-full h-full flex items-center justify-center text-text-muted"><span class="material-symbols-outlined text-[64px]">music_note</span></div>`
+            }
+          </div>
+
+          <div class="flex-1 min-w-0 w-full flex flex-col justify-center text-center md:text-left">
+            <div class="text-label-caps font-label-caps tracking-widest uppercase text-text-muted mb-xs flex items-center justify-center md:justify-start gap-xs">
+              <span class="material-symbols-outlined text-[16px] text-primary">audiotrack</span> Song Details
+            </div>
+            <h1 class="text-headline-md md:text-headline-lg font-bold text-text-high-contrast truncate mb-xs">${esc(s.title)}</h1>
+            <p class="text-body-lg text-text-muted mb-md truncate">
+              ${s.artist_name ? `<a class="text-text-high-contrast hover:underline cursor-pointer font-semibold" onclick="navigate('artist','${s.artist_id}')">${esc(s.artist_name)}</a>` : 'Unbekannter Künstler'}
+              ${s.album_title ? ` &middot; <a class="text-text-muted hover:underline cursor-pointer" onclick="navigate('album','${s.album_id}')">${esc(s.album_title)}</a>` : ''}
+            </p>
+
+            <div class="flex items-center justify-center md:justify-start gap-sm flex-wrap">
+              <button class="px-lg py-sm bg-primary text-on-primary hover:scale-105 active:scale-95 transition-all rounded-full font-semibold flex items-center gap-xs shadow-md cursor-pointer" onclick="CumuApp.playSingleSong('${s.id}')">
+                <span class="material-symbols-outlined text-[20px]">play_arrow</span> Play
+              </button>
+              <button class="px-md py-sm bg-surface-bright border border-border-subtle hover:bg-surface-container-high text-on-surface hover:scale-105 active:scale-95 transition-all rounded-full font-semibold flex items-center gap-xs cursor-pointer" onclick="CumuApp.playNextById('${s.id}')">
+                <span class="material-symbols-outlined text-[20px]">queue_music</span> Play Next
+              </button>
+              <button class="px-md py-sm bg-surface-bright border border-border-subtle hover:bg-surface-container-high text-on-surface hover:scale-105 active:scale-95 transition-all rounded-full font-semibold flex items-center gap-xs cursor-pointer" onclick="CumuApp.addToQueueById('${s.id}')">
+                <span class="material-symbols-outlined text-[20px]">add</span> Add to Queue
+              </button>
+              <button class="px-md py-sm bg-surface-bright border border-border-subtle hover:bg-surface-container-high text-on-surface hover:scale-105 active:scale-95 transition-all rounded-full font-semibold flex items-center gap-xs cursor-pointer" onclick="navigate('song','edit:${s.id}')">
+                <span class="material-symbols-outlined text-[20px]">edit</span> Edit
+              </button>
+              <a class="px-md py-sm bg-surface-bright border border-border-subtle hover:bg-surface-container-high text-on-surface hover:scale-105 active:scale-95 transition-all rounded-full font-semibold flex items-center gap-xs cursor-pointer" href="${CumuApi.downloadUrl(s.id)}" download>
+                <span class="material-symbols-outlined text-[20px]">download</span> Download
+              </a>
+            </div>
           </div>
         </div>
-      </div>
-      <div class="page-section">
-        <div class="card">
-          <h2 style="margin-bottom:16px">Details</h2>
-          <table>
-            <tr><td class="mute">Dauer</td><td>${formatTime(s.duration)}</td></tr>
-            ${s.genre   ? `<tr><td class="mute">Genre</td><td>${esc(s.genre)}</td></tr>` : ''}
-            ${s.year    ? `<tr><td class="mute">Jahr</td><td>${s.year}</td></tr>` : ''}
-            <tr><td class="mute">Wiedergaben</td><td>${s.play_count || 0}</td></tr>
-            <tr><td class="mute">Format</td><td><code>${esc(s.mime_type || '—')}</code></td></tr>
-          </table>
+
+        <!-- Details Card -->
+        <div class="bg-surface-container-low border border-border-subtle rounded-2xl p-lg shadow-lg">
+          <h2 class="text-title-md font-bold text-text-high-contrast mb-md flex items-center gap-xs">
+            <span class="material-symbols-outlined text-primary">info</span> Metadata &amp; Details
+          </h2>
+          <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-md">
+            <div class="bg-surface-container/60 border border-border-subtle/40 rounded-xl p-md flex flex-col gap-xs">
+              <span class="text-label-caps font-label-caps text-text-muted uppercase">Duration</span>
+              <span class="text-body-lg font-semibold text-on-surface">${formatTime(s.duration)}</span>
+            </div>
+            <div class="bg-surface-container/60 border border-border-subtle/40 rounded-xl p-md flex flex-col gap-xs">
+              <span class="text-label-caps font-label-caps text-text-muted uppercase">Genre</span>
+              <span class="text-body-lg font-semibold text-on-surface">${esc(s.genre || 'Unknown')}</span>
+            </div>
+            <div class="bg-surface-container/60 border border-border-subtle/40 rounded-xl p-md flex flex-col gap-xs">
+              <span class="text-label-caps font-label-caps text-text-muted uppercase">Release Year</span>
+              <span class="text-body-lg font-semibold text-on-surface">${s.year || 'Unknown'}</span>
+            </div>
+            <div class="bg-surface-container/60 border border-border-subtle/40 rounded-xl p-md flex flex-col gap-xs">
+              <span class="text-label-caps font-label-caps text-text-muted uppercase">Plays</span>
+              <span class="text-body-lg font-semibold text-on-surface">${s.play_count || 0} times</span>
+            </div>
+            <div class="bg-surface-container/60 border border-border-subtle/40 rounded-xl p-md flex flex-col gap-xs">
+              <span class="text-label-caps font-label-caps text-text-muted uppercase">Audio Type</span>
+              <span class="text-body-lg font-semibold text-on-surface">${s.is_audiobook ? 'Audiobook / Spoken Word' : 'Music Track'}</span>
+            </div>
+            <div class="bg-surface-container/60 border border-border-subtle/40 rounded-xl p-md flex flex-col gap-xs">
+              <span class="text-label-caps font-label-caps text-text-muted uppercase">Format</span>
+              <span class="text-body-sm font-mono text-text-muted truncate">${esc(s.mime_type || 'Audio')}</span>
+            </div>
+          </div>
         </div>
       </div>`;
+  }
+
+  async function renderEditSong(songId) {
+    main.innerHTML = '<div class="page-section"><div class="spinner">Loading song editor…</div></div>';
+    const s = await CumuApi.get(`/api/songs/${songId}`);
+    if (!s || s.error) {
+      main.innerHTML = '<div class="page-section"><div class="card p-xl text-center">Song not found</div></div>';
+      return;
+    }
+
+    const coverSrc = s.cover ? `/stream/cover/${s.cover}` : null;
+
+    main.innerHTML = `
+      <div class="p-md md:p-margin-desktop max-w-4xl mx-auto space-y-lg">
+        <div class="flex items-center justify-between pb-md border-b border-border-subtle">
+          <div class="flex items-center gap-sm">
+            <button class="w-9 h-9 rounded-full bg-surface-container-low hover:bg-surface-bright flex items-center justify-center transition-transform active:scale-95 cursor-pointer" onclick="history.back()" title="Back">
+              <span class="material-symbols-outlined text-[20px]">arrow_back</span>
+            </button>
+            <h1 class="text-headline-md font-bold text-text-high-contrast m-0">Edit Song</h1>
+          </div>
+          ${currentUser?.role === 'admin' || currentUser?.role === 'creator' ? `
+            <button id="editSongAiLookupBtn" class="px-md py-sm bg-primary/20 text-primary border border-primary/40 hover:bg-primary/30 rounded-lg text-body-sm font-semibold flex items-center gap-xs transition-all active:scale-95 cursor-pointer" onclick="CumuApp.lookupSongMetadata('${s.id}')">
+              <span class="material-symbols-outlined text-[18px]">auto_fix_high</span> Auto-Lookup (AI)
+            </button>
+          ` : ''}
+        </div>
+
+        <div class="bg-surface-container-low border border-border-subtle rounded-2xl p-lg shadow-lg flex flex-col md:flex-row gap-lg">
+          <div class="w-36 h-36 flex-shrink-0 rounded-xl overflow-hidden bg-surface-container shadow-md border border-border-subtle/40 self-center md:self-start">
+            ${coverSrc ? `<img src="${coverSrc}" class="w-full h-full object-cover" />` : `<div class="w-full h-full flex items-center justify-center text-text-muted"><span class="material-symbols-outlined text-[48px]">music_note</span></div>`}
+          </div>
+
+          <form id="editSongForm" onsubmit="CumuApp.saveSongEdit(event, '${s.id}'); return false;" class="flex-1 flex flex-col gap-md">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-md">
+              <div class="flex flex-col gap-xs col-span-2">
+                <label class="text-label-caps font-label-caps text-text-muted">Title</label>
+                <input type="text" id="editSongTitle" value="${esc(s.title || '')}" required class="bg-surface-container border border-border-subtle rounded-lg px-md py-sm text-body-md text-on-surface focus:border-primary outline-none transition-colors" />
+              </div>
+
+              <div class="flex flex-col gap-xs">
+                <label class="text-label-caps font-label-caps text-text-muted">Artist</label>
+                <input type="text" id="editSongArtist" value="${esc(s.artist_name || '')}" class="bg-surface-container border border-border-subtle rounded-lg px-md py-sm text-body-md text-on-surface focus:border-primary outline-none transition-colors" />
+              </div>
+
+              <div class="flex flex-col gap-xs">
+                <label class="text-label-caps font-label-caps text-text-muted">Album</label>
+                <input type="text" id="editSongAlbum" value="${esc(s.album_title || '')}" class="bg-surface-container border border-border-subtle rounded-lg px-md py-sm text-body-md text-on-surface focus:border-primary outline-none transition-colors" />
+              </div>
+
+              <div class="flex flex-col gap-xs">
+                <label class="text-label-caps font-label-caps text-text-muted">Genre</label>
+                <input type="text" id="editSongGenre" value="${esc(s.genre || '')}" class="bg-surface-container border border-border-subtle rounded-lg px-md py-sm text-body-md text-on-surface focus:border-primary outline-none transition-colors" />
+              </div>
+
+              <div class="flex flex-col gap-xs">
+                <label class="text-label-caps font-label-caps text-text-muted">Release Year</label>
+                <input type="number" id="editSongYear" value="${s.year || ''}" placeholder="e.g. 2024" class="bg-surface-container border border-border-subtle rounded-lg px-md py-sm text-body-md text-on-surface focus:border-primary outline-none transition-colors" />
+              </div>
+
+              <div class="flex flex-col gap-xs">
+                <label class="text-label-caps font-label-caps text-text-muted">Track Number</label>
+                <input type="number" id="editSongTrackNumber" value="${s.track_number || ''}" placeholder="e.g. 1" class="bg-surface-container border border-border-subtle rounded-lg px-md py-sm text-body-md text-on-surface focus:border-primary outline-none transition-colors" />
+              </div>
+
+              <div class="flex items-center gap-sm mt-xs">
+                <input type="checkbox" id="editSongAudiobook" ${s.is_audiobook ? 'checked' : ''} class="w-4 h-4 accent-primary rounded cursor-pointer" />
+                <label for="editSongAudiobook" class="text-body-sm text-on-surface cursor-pointer select-none">Audiobook / Spoken Word Track</label>
+              </div>
+            </div>
+
+            <div class="flex items-center justify-end gap-md mt-md pt-md border-t border-border-subtle">
+              <button type="button" class="px-lg py-sm rounded-lg font-body-sm text-text-muted hover:text-on-surface hover:bg-surface-bright transition-colors cursor-pointer" onclick="history.back()">Cancel</button>
+              <button type="submit" id="editSongSaveBtn" class="px-xl py-sm rounded-lg font-body-sm font-semibold bg-primary text-on-primary hover:scale-105 active:scale-95 transition-all shadow-md cursor-pointer flex items-center gap-xs">
+                <span class="material-symbols-outlined text-[18px]">save</span> Save
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    `;
+  }
+
+  async function saveSongEdit(e, songId) {
+    if (e) e.preventDefault();
+    const btn = document.getElementById('editSongSaveBtn');
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = `<span class="material-symbols-outlined text-[18px] animate-spin">sync</span> Saving…`;
+    }
+
+    const title = document.getElementById('editSongTitle')?.value;
+    const artist = document.getElementById('editSongArtist')?.value;
+    const album = document.getElementById('editSongAlbum')?.value;
+    const genre = document.getElementById('editSongGenre')?.value;
+    const year = document.getElementById('editSongYear')?.value;
+    const track_number = document.getElementById('editSongTrackNumber')?.value;
+    const is_audiobook = document.getElementById('editSongAudiobook')?.checked;
+
+    try {
+      const res = await CumuApi.put(`/api/songs/${songId}`, {
+        title, artist, album, genre,
+        year: year ? parseInt(year, 10) : null,
+        track_number: track_number ? parseInt(track_number, 10) : null,
+        is_audiobook
+      });
+      if (res && res.error) {
+        showToast(`Error: ${res.error}`);
+        if (btn) { btn.disabled = false; btn.innerHTML = `<span class="material-symbols-outlined text-[18px]">save</span> Save`; }
+        return;
+      }
+      showToast('Song saved successfully');
+      navigate('song', songId);
+    } catch (err) {
+      showToast(`Error saving: ${err.message}`);
+      if (btn) { btn.disabled = false; btn.innerHTML = `<span class="material-symbols-outlined text-[18px]">save</span> Save`; }
+    }
+  }
+
+  async function saveAlbumEdit(e, albumId) {
+    if (e) e.preventDefault();
+    const btn = document.getElementById('editAlbumSaveBtn');
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = `<span class="material-symbols-outlined text-[18px] animate-spin">sync</span> Saving…`;
+    }
+
+    const title = document.getElementById('editAlbumTitle')?.value;
+    const artist = document.getElementById('editAlbumArtist')?.value;
+    const genre = document.getElementById('editAlbumGenre')?.value;
+    const year = document.getElementById('editAlbumYear')?.value;
+
+    try {
+      const res = await CumuApi.put(`/api/albums/${albumId}`, {
+        title, artist, genre,
+        year: year ? parseInt(year, 10) : null
+      });
+      if (res && res.error) {
+        showToast(`Error: ${res.error}`);
+        if (btn) { btn.disabled = false; btn.innerHTML = `<span class="material-symbols-outlined text-[18px]">save</span> Save`; }
+        return;
+      }
+      showToast('Album saved successfully');
+      navigate('album', albumId);
+    } catch (err) {
+      showToast(`Error saving: ${err.message}`);
+      if (btn) { btn.disabled = false; btn.innerHTML = `<span class="material-symbols-outlined text-[18px]">save</span> Save`; }
+    }
+  }
+
+  async function lookupSongMetadata(songId) {
+    const btn = document.getElementById('editSongAiLookupBtn');
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = `<span class="material-symbols-outlined text-[18px] animate-spin">sync</span> Requesting…`;
+    }
+    try {
+      const res = await CumuApi.post(`/admin/songs/${songId}/lookup`, {});
+      if (res && res.ok) {
+        showToast('Metadata updated via AI/MusicBrainz');
+        renderEditSong(songId);
+      } else {
+        showToast(`Lookup: ${res?.reasoning || res?.error || 'No results'}`);
+        if (btn) { btn.disabled = false; btn.innerHTML = `<span class="material-symbols-outlined text-[18px]">auto_fix_high</span> Auto-Lookup (AI)`; }
+      }
+    } catch (err) {
+      showToast(`Lookup Error: ${err.message}`);
+      if (btn) { btn.disabled = false; btn.innerHTML = `<span class="material-symbols-outlined text-[18px]">auto_fix_high</span> Auto-Lookup (AI)`; }
+    }
   }
 
   async function playSingleSong(songId) {
@@ -2896,23 +4286,26 @@ function showToast(msg) {
     if (!ctxMenu) return;
 
     ctxMenu.innerHTML = `
+      <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="navigate('song','edit:${currentSong.id}'); CumuApp.closeContextMenu()">
+        <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('edit')}</span> Edit Song Info
+      </button>
       <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="navigate('album','${currentSong.album_id || ''}'); CumuApp.closeContextMenu()">
-        <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('album')}</span> Zum Album
+        <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('album')}</span> Go to Album
       </button>
       <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="navigate('artist','${currentSong.artist_id || ''}'); CumuApp.closeContextMenu()">
-        <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('artist')}</span> Zum Künstler
+        <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('artist')}</span> Go to Artist
       </button>
       <a class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" href="${CumuApi.downloadUrl(currentSong.id)}" download onclick="CumuApp.closeContextMenu()">
-        <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('download')}</span> Downloaden
+        <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('download')}</span> Download
       </a>
       <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.playNextById('${currentSong.id}'); CumuApp.closeContextMenu()">
-        <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('next')}</span> Als Nächstes spielen
+        <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('next')}</span> Play Next
       </button>
       <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.addToQueueById('${currentSong.id}'); CumuApp.closeContextMenu()">
-        <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('queue')}</span> Zur Warteschlange hinzufügen
+        <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('queue')}</span> Add to Queue
       </button>
       <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.openAddToPlaylistModal('${currentSong.id}'); CumuApp.closeContextMenu()">
-        <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('playlist')}</span> Zu Playlist hinzufügen
+        <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('playlist')}</span> Add to Playlist
       </button>
     `;
 
@@ -2934,28 +4327,88 @@ function showToast(msg) {
 
     const isPlaylistView = currentPage === 'playlist';
     const currentPlaylistId = window._lastNavParams;
+    const isCurrentPlGen = window._currentPlaylistIsGenerated;
 
     ctxMenu.innerHTML = `
       <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.playSingleSong('${song.id}'); CumuApp.closeContextMenu()">
-        <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('play')}</span> Jetzt Abspielen
+        <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('play')}</span> Play Now
       </button>
       <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.playNextById('${song.id}'); CumuApp.closeContextMenu()">
-        <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('next')}</span> Als Nächstes spielen
+        <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('next')}</span> Play Next
       </button>
       <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.addToQueueById('${song.id}'); CumuApp.closeContextMenu()">
-        <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('queue')}</span> Zur Warteschlange hinzufügen
+        <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('queue')}</span> Add to Queue
       </button>
       <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.openAddToPlaylistModal('${song.id}'); CumuApp.closeContextMenu()">
-        <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('playlist')}</span> Zu Playlist hinzufügen
+        <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('playlist')}</span> Add to Playlist
+      </button>
+      <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="navigate('song','edit:${song.id}'); CumuApp.closeContextMenu()">
+        <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('edit')}</span> Edit
       </button>
       <a class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" href="${CumuApi.downloadUrl(song.id)}" download onclick="CumuApp.closeContextMenu()">
-        <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('download')}</span> Downloaden
+        <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('download')}</span> Download
       </a>
-      ${isPlaylistView && currentPlaylistId ? `
+      ${isPlaylistView && currentPlaylistId && !isCurrentPlGen ? `
         <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-red-400 hover:bg-surface-bright hover:text-red-300 transition-colors active:scale-95" onclick="CumuApp.removeFromPlaylist('${currentPlaylistId}', '${song.id}'); CumuApp.closeContextMenu()">
-          <span class="text-red-400 flex items-center justify-center w-5 h-5">${CumuIcons.get('trash')}</span> Aus Playlist entfernen
+          <span class="text-red-400 flex items-center justify-center w-5 h-5">${CumuIcons.get('trash')}</span> Remove from Playlist
         </button>
       ` : ''}
+    `;
+
+    positionDropdownMenu(ctxMenu, targetEl, event);
+  }
+
+  async function openPlaylistMenu(event, btnEl, playlistId) {
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    const targetEl = btnEl || (event ? event.currentTarget : null);
+
+    let pl = await CumuApi.get(`/api/playlists/${playlistId}`);
+    if (!pl) return;
+    const isGen = isGeneratedPlaylist(pl);
+    const songs = pl.songs || [];
+    const pKey = `playlist:${pl.id}`;
+    const pPinned = isPinned(pKey);
+
+    let isOffline = false;
+    if (songs.length && window.CumuOfflineStore) {
+      isOffline = await CumuOfflineStore.isPlaylistOffline(pl.id);
+    }
+
+    const ctxMenu = document.getElementById('contextMenu');
+    if (!ctxMenu) return;
+
+    ctxMenu.innerHTML = `
+      ${!isGen ? `
+        <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.openAddSongsModal('${pl.id}'); CumuApp.closeContextMenu()">
+          <span class="text-text-muted flex items-center justify-center w-5 h-5"><span class="material-symbols-outlined text-[20px]">playlist_add</span></span> Search & add songs
+        </button>
+      ` : ''}
+      ${songs.length ? `
+        <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.playPlaylist('${pl.id}'); CumuApp.closeContextMenu()">
+          <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('play')}</span> Play Playlist
+        </button>
+        <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.playNextPlaylist(window._currentPlaylistSongs); CumuApp.closeContextMenu()">
+          <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('next')}</span> Play Next
+        </button>
+        <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.addToQueuePlaylist(window._currentPlaylistSongs); CumuApp.closeContextMenu()">
+          <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('queue')}</span> Add to Queue
+        </button>
+        ${window.CumuOfflineStore ? `
+          <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.togglePlaylistOffline('${pl.id}'); CumuApp.closeContextMenu()">
+            <span class="text-text-muted flex items-center justify-center w-5 h-5"><span class="material-symbols-outlined text-[20px]" style="${isOffline ? "font-variation-settings: 'FILL' 1;" : ''}">${isOffline ? 'download_done' : 'download'}</span></span> ${isOffline ? 'Remove from offline storage' : 'Save offline'}
+          </button>
+        ` : ''}
+      ` : ''}
+      <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.togglePin('${pKey}', event); CumuApp.closeContextMenu()">
+        <span class="text-text-muted flex items-center justify-center w-5 h-5"><span class="material-symbols-outlined text-[20px]" style="${pPinned ? "font-variation-settings: 'FILL' 1;" : ''}">push_pin</span></span> ${pPinned ? 'Unpin from sidebar' : 'Pin to sidebar'}
+      </button>
+      <div class="my-xs border-t border-border-subtle"></div>
+      <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-red-400 hover:bg-surface-bright hover:text-red-300 transition-colors active:scale-95" onclick="CumuApp.deletePlaylist('${pl.id}'); CumuApp.closeContextMenu()">
+        <span class="text-red-400 flex items-center justify-center w-5 h-5">${CumuIcons.get('trash')}</span> Delete Playlist
+      </button>
     `;
 
     positionDropdownMenu(ctxMenu, targetEl, event);
@@ -2970,7 +4423,7 @@ function showToast(msg) {
   }
 
   document.addEventListener('click', (e) => {
-    if (!e.target.closest('#contextMenu') && !e.target.closest('.song-menu-btn') && !e.target.closest('.np-menu-btn')) {
+    if (!e.target.closest('#contextMenu') && !e.target.closest('.song-menu-btn') && !e.target.closest('.np-menu-btn') && !e.target.closest('.pl-menu-btn')) {
       closeContextMenu();
     }
   });
@@ -2978,6 +4431,7 @@ function showToast(msg) {
   async function openAddToPlaylistModal(songId) {
     await loadPlaylists();
     const song = await CumuApi.get(`/api/songs/${songId}`);
+    const availablePlaylists = playlists.filter(p => !isGeneratedPlaylist(p));
     
     let modal = document.getElementById('addToPlaylistModal');
     if (!modal) {
@@ -2990,34 +4444,80 @@ function showToast(msg) {
     modal.innerHTML = `
       <div class="w-full max-w-[440px] bg-surface-container rounded-xl shadow-2xl border border-border-subtle p-lg flex flex-col gap-md">
         <div class="flex flex-col pb-sm border-b border-border-subtle">
-          <h2 class="font-title-lg text-title-lg text-on-surface font-bold m-0">Zu Playlist hinzufügen</h2>
-          <p class="font-body-sm text-body-sm text-text-muted mt-xs truncate">"${esc(song?.title || 'Song')}" zu...</p>
+          <h2 class="font-title-lg text-title-lg text-on-surface font-bold m-0">Add to Playlist</h2>
+          <p class="font-body-sm text-body-sm text-text-muted mt-xs truncate">"${esc(song?.title || 'Song')}" to...</p>
+          ${availablePlaylists.length > 2 ? `
+            <div class="relative flex items-center w-full mt-sm">
+              <span class="material-symbols-outlined text-text-muted text-[18px] absolute left-3 pointer-events-none">search</span>
+              <input type="search" id="addToPlSearchInput" placeholder="Playlists filtern..." class="w-full bg-surface-container-low border border-border-subtle rounded-lg pl-9 pr-md py-xs text-body-sm text-on-surface focus:border-primary outline-none transition-colors" />
+            </div>
+          ` : ''}
         </div>
-        <div class="flex flex-col gap-sm max-h-[50vh] overflow-y-auto py-xs scrollbar-thin">
-          ${playlists.length ? playlists.map(p => `
-            <button class="flex items-center gap-md w-full p-sm text-left font-body-sm text-body-sm text-on-surface bg-surface-container-low hover:bg-surface-bright rounded-lg transition-colors active:scale-95 border border-border-subtle hover:border-text-muted" onclick="document.getElementById('addToPlaylistModal').style.display='none'; CumuApp.addSongToPlaylist('${p.id}', '${songId}', '${esc(p.name)}')">
+        <div id="addToPlList" class="flex flex-col gap-sm max-h-[50vh] overflow-y-auto py-xs scrollbar-thin">
+          ${availablePlaylists.length ? availablePlaylists.map(p => `
+            <button class="flex items-center gap-md w-full p-sm text-left font-body-sm text-body-sm text-on-surface bg-surface-container-low hover:bg-surface-bright rounded-lg transition-colors active:scale-95 border border-border-subtle hover:border-text-muted cursor-pointer" onclick="CumuApp.handleAddToPlaylistClick(this, '${p.id}', '${songId}', '${esc(p.name)}')">
               <span class="material-symbols-outlined text-text-muted text-[20px]">queue_music</span> <span class="truncate">${esc(p.name)}</span>
             </button>
-          `).join('') : '<p class="font-body-sm text-body-sm text-text-muted text-center py-md">Keine Playlists vorhanden.</p>'}
+          `).join('') : '<p class="font-body-sm text-body-sm text-text-muted text-center py-md">Keine bearbeitbaren eigenen Playlisten vorhanden.</p>'}
         </div>
         <div class="flex items-center justify-between mt-sm pt-md border-t border-border-subtle">
           <button class="flex items-center justify-center gap-xs px-md py-sm rounded-lg font-body-sm text-body-sm bg-text-muted text-on-primary hover:scale-105 active:scale-95 transition-transform" onclick="document.getElementById('addToPlaylistModal').style.display='none'; CumuApp.createPlaylist('${songId}')">
-            <span class="material-symbols-outlined text-[18px]">add</span> Neue Playlist
+            <span class="material-symbols-outlined text-[18px]">add</span> New Playlist
           </button>
           <button class="px-md py-sm rounded-lg font-body-sm text-body-sm text-text-muted hover:text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="document.getElementById('addToPlaylistModal').style.display='none'">
-            Abbrechen
+            Cancel
           </button>
         </div>
       </div>
     `;
     modal.style.display = 'flex';
+
+    const addToPlSearch = document.getElementById('addToPlSearchInput');
+    if (addToPlSearch) {
+      addToPlSearch.addEventListener('input', (e) => {
+        const q = e.target.value.toLowerCase().trim();
+        const listContainer = document.getElementById('addToPlList');
+        if (listContainer) {
+          const btns = listContainer.querySelectorAll('button');
+          btns.forEach(b => {
+            b.style.display = b.textContent.toLowerCase().includes(q) ? 'flex' : 'none';
+          });
+        }
+      });
+    }
+  }
+
+  async function handleAddSongToPlaylistFromModal(btn, playlistId, songId) {
+    if (btn) {
+      btn.disabled = true;
+      btn.className = 'px-sm py-xs bg-emerald-600/30 text-emerald-400 border border-emerald-500/40 rounded text-xs transition-all duration-200 flex items-center gap-xs whitespace-nowrap shadow-sm scale-105 pointer-events-none opacity-90';
+      btn.innerHTML = '<span class="material-symbols-outlined text-[16px]">check</span> Already in Playlist';
+    }
+    if (window._currentPlaylistSongs && !window._currentPlaylistSongs.some(s => s.id === songId)) {
+      window._currentPlaylistSongs.push({ id: songId });
+    }
+    await addSongToPlaylist(playlistId, songId, '');
+    if (currentPage === 'playlist' && window._lastNavParams === playlistId) {
+      renderPlaylist(playlistId);
+    }
+  }
+
+  async function handleAddToPlaylistClick(btn, playlistId, songId, playlistName) {
+    if (btn) {
+      btn.style.pointerEvents = 'none';
+      btn.className = 'flex items-center gap-md w-full p-sm text-left font-body-sm text-body-sm text-emerald-400 bg-emerald-500/15 border border-emerald-500/40 rounded-lg transition-all duration-200 scale-[1.02] shadow-sm';
+      btn.innerHTML = `<span class="material-symbols-outlined text-[20px] text-emerald-400">check_circle</span> <span class="truncate font-bold">${esc(playlistName)} (Added)</span>`;
+    }
+    await addSongToPlaylist(playlistId, songId, playlistName);
+    setTimeout(() => {
+      const modal = document.getElementById('addToPlaylistModal');
+      if (modal) modal.style.display = 'none';
+    }, 400);
   }
 
   async function addSongToPlaylist(playlistId, songId, playlistName) {
     await CumuApi.post(`/api/playlists/${playlistId}/songs`, { songId });
-    const modal = document.getElementById('addToPlaylistModal');
-    if (modal) modal.style.display = 'none';
-    showToast(`Zu "${playlistName || 'Playlist'}" hinzugefügt`);
+    showToast(`Added to "${playlistName || 'Playlist'}"`);
     if (currentPage === 'playlist' && window._lastNavParams === playlistId) {
       renderPlaylist(playlistId);
     }
@@ -3025,7 +4525,7 @@ function showToast(msg) {
 
   async function removeFromPlaylist(playlistId, songId) {
     await CumuApi.del(`/api/playlists/${playlistId}/songs/${songId}`);
-    showToast('Aus Playlist entfernt');
+    showToast('Removed from playlist');
     renderPlaylist(playlistId);
   }
 
@@ -3041,7 +4541,7 @@ function showToast(msg) {
 
   async function togglePlaylistOffline(playlistId) {
     if (!window.CumuOfflineStore) {
-      showToast('Offline-Speicher nicht verfügbar');
+      showToast('Offline storage not available');
       return;
     }
     const isOffline = await CumuOfflineStore.isPlaylistOffline(playlistId);
@@ -3049,7 +4549,7 @@ function showToast(msg) {
 
     if (isOffline) {
       await CumuOfflineStore.removePlaylistOffline(playlistId);
-      showToast('Playlist aus Offline-Speicher entfernt');
+      showToast('Playlist removed from offline storage');
       if (currentPage === 'playlist' && window._lastNavParams === playlistId) {
         renderPlaylist(playlistId);
       }
@@ -3058,14 +4558,15 @@ function showToast(msg) {
 
     if (btn) {
       btn.disabled = true;
-      btn.innerHTML = `<span class="material-symbols-outlined text-[18px] animate-spin">sync</span> Vorbereiten...`;
+      btn.innerHTML = `<span class="material-symbols-outlined text-[20px] animate-spin">sync</span>`;
+      btn.title = "Downloading...";
     }
 
     try {
       const pl = await CumuApi.get(`/api/playlists/${playlistId}`);
       const songs = pl.songs || [];
       if (!songs.length) {
-        showToast('Playlist hat keine Songs');
+        showToast('Playlist has no songs');
         if (btn) renderPlaylist(playlistId);
         return;
       }
@@ -3073,14 +4574,15 @@ function showToast(msg) {
       await CumuOfflineStore.savePlaylistOffline(pl, songs, (current, total, title) => {
         const b = document.getElementById(`dlPlBtn_${playlistId}`);
         if (b) {
-          b.innerHTML = `<span class="material-symbols-outlined text-[18px] animate-spin">sync</span> ${current}/${total}`;
+          b.innerHTML = `<span class="material-symbols-outlined text-[20px] animate-spin">sync</span>`;
+          b.title = `Downloading: ${current}/${total}`;
         }
       });
 
-      showToast(`Playlist "${pl.name}" offline gespeichert (${songs.length} Songs)`);
+      showToast(`Playlist "${pl.name}" saved offline (${songs.length} songs)`);
     } catch (err) {
       console.error('[cumu] offline download failed:', err);
-      showToast('Fehler beim Herunterladen der Playlist');
+      showToast('Error downloading playlist');
     }
 
     if (currentPage === 'playlist' && window._lastNavParams === playlistId) {
@@ -3089,10 +4591,10 @@ function showToast(msg) {
   }
 
   window.addEventListener('online', () => {
-    showToast('Internetverbindung wiederhergestellt');
+    showToast('Internet connection restored');
   });
   window.addEventListener('offline', () => {
-    showToast('Du bist offline. Nur heruntergeladene Playlists verfügbar.');
+    showToast('You are offline. Only downloaded playlists available.');
   });
 
   // ── Public Export ──────────────────────────────────────────────────────────
@@ -3103,7 +4605,9 @@ function showToast(msg) {
   }
 
   async function playPlaylist(playlistId) {
-    const pl = await CumuApi.get(`/api/playlists/${playlistId}`);
+    let pl = await CumuApi.get(`/api/playlists/${playlistId}`);
+    if (!pl) return;
+    pl = await syncDynamicPlaylist(pl);
     if (pl.songs?.length) playQueue(pl.songs, 0);
   }
 
@@ -3282,10 +4786,15 @@ function showToast(msg) {
     createPlaylist,
     deletePlaylist,
     togglePlaylistOffline,
+    openPlaylistMenu,
     openSongMenu,
     closeContextMenu,
     openAddToPlaylistModal,
-    addSongToPlaylist,
+    saveSongEdit,
+    saveAlbumEdit,
+    lookupSongMetadata,
+    handleAddSongToPlaylistFromModal,
+    handleAddToPlaylistClick,
     playNext,
     playNextById,
     addToQueue,
@@ -3300,11 +4809,21 @@ function showToast(msg) {
     showQueuePanel,
     toggleQueue,
     jumpToQueueIndex,
+    playQueue,
+    playGenrePlaylist,
+    toggleSaveGenrePlaylist,
+    renderGenrePlaylist,
+    renderPlaylistCoverCollage,
   };
+
+  window.playQueue = playQueue;
 
   window.CumuAudioEngine = {
     setCrossfade: (seconds) => { crossfadeDuration = seconds; },
     setGapless: (enabled) => { gaplessEnabled = enabled; },
+    setAudioOutputDevice: setAudioOutputDevice,
+    getAudioOutputDevices: getAudioOutputDevices,
+    getCurrentAudioDeviceId: () => currentAudioDeviceId,
   };
 
   document.addEventListener('DOMContentLoaded', init);

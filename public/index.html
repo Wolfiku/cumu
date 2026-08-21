@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="de" class="h-full" data-theme="standard">
+<html lang="en" class="h-full" data-theme="standard">
 <head>
   <meta charset="utf-8">
   <meta content="width=device-width, initial-scale=1.0" name="viewport">
@@ -193,11 +193,11 @@
       <span class="font-label-caps text-label-caps text-text-muted truncate lowercase" id="npArtist">Artist Name</span>
     </div>
     <div class="flex items-center justify-center gap-md md:gap-lg flex-1" id="npControls">
-      <span class="material-symbols-outlined hover:scale-105 transition-transform duration-200 active:scale-95 text-text-muted cursor-pointer text-[22px]" id="npShuffleBtn" onclick="CumuApp.toggleShuffle()" title="Zufallswiedergabe">shuffle</span>
+      <span class="material-symbols-outlined hover:scale-105 transition-transform duration-200 active:scale-95 text-text-muted cursor-pointer text-[22px]" id="npShuffleBtn" onclick="CumuApp.toggleShuffle()" title="Shuffle">shuffle</span>
       <span class="material-symbols-outlined hover:scale-105 transition-transform duration-200 active:scale-95 text-text-muted cursor-pointer" data-icon="skip_previous" id="npPrevBtn" onclick="CumuApp.prevTrack()">skip_previous</span>
       <span class="material-symbols-outlined hover:scale-105 transition-transform duration-200 active:scale-95 text-on-surface cursor-pointer text-4xl" data-icon="play_circle" style="font-variation-settings: 'FILL' 1;" id="npPlayIcon" onclick="CumuApp.togglePlay()">play_circle</span>
       <span class="material-symbols-outlined hover:scale-105 transition-transform duration-200 active:scale-95 text-text-muted cursor-pointer" data-icon="skip_next" id="npNextBtn" onclick="CumuApp.nextTrack()">skip_next</span>
-      <span class="material-symbols-outlined hover:scale-105 transition-transform duration-200 active:scale-95 text-text-muted cursor-pointer text-[22px]" id="npRepeatBtn" onclick="CumuApp.toggleRepeat()" title="Wiederholung">repeat</span>
+      <span class="material-symbols-outlined hover:scale-105 transition-transform duration-200 active:scale-95 text-text-muted cursor-pointer text-[22px]" id="npRepeatBtn" onclick="CumuApp.toggleRepeat()" title="Repeat">repeat</span>
     </div>
     <div class="flex justify-end gap-md w-1/3 text-text-muted">
       <span class="material-symbols-outlined hover:scale-105 transition-transform duration-200 active:scale-95 text-text-muted cursor-pointer" data-icon="favorite_border" id="npFavIcon" onclick="if(window._currentSongId) CumuApp.toggleFavorite(window._currentSongId)">favorite_border</span>
@@ -238,8 +238,8 @@
   <div id="dragDropOverlay" class="hidden fixed inset-0 bg-black/80 backdrop-blur-md z-[99999] flex flex-col items-center justify-center p-xl text-center pointer-events-none transition-all duration-300">
     <div class="p-2xl border-2 border-dashed border-text-muted rounded-2xl bg-surface-bright/80 flex flex-col items-center gap-md max-w-lg shadow-2xl">
       <span class="material-symbols-outlined text-6xl text-on-surface" style="font-variation-settings: 'FILL' 1;">cloud_upload</span>
-      <h2 class="font-headline-md text-headline-md text-on-surface font-bold">Musik hier ablegen</h2>
-      <p class="font-body-md text-body-md text-text-muted">Ziehe Audiodateien (MP3, FLAC, M4A, WAV, etc.) oder ganze Ordner hierher zum sofortigen Import.</p>
+      <h2 class="font-headline-md text-headline-md text-on-surface font-bold">Drop music here</h2>
+      <p class="font-body-md text-body-md text-text-muted">Drag audio files (MP3, FLAC, M4A, WAV, etc.) or entire folders here for instant import.</p>
     </div>
   </div>
 
@@ -247,8 +247,8 @@
   <div id="uploadToast" class="hidden fixed bottom-24 right-6 bg-surface-bright border border-border-subtle p-md rounded-xl shadow-2xl z-[9999] flex items-center gap-md max-w-md">
     <span class="material-symbols-outlined text-on-surface text-2xl animate-spin" id="uploadToastSpinner">sync</span>
     <div class="flex flex-col gap-xs flex-1">
-      <span class="font-label-caps text-label-caps text-on-surface font-bold" id="uploadToastTitle">Upload läuft...</span>
-      <span class="font-body-sm text-body-sm text-text-muted" id="uploadToastStatus">Verarbeite Dateien...</span>
+      <span class="font-label-caps text-label-caps text-on-surface font-bold" id="uploadToastTitle">Upload in progress...</span>
+      <span class="font-body-sm text-body-sm text-text-muted" id="uploadToastStatus">Processing files...</span>
     </div>
   </div>
 

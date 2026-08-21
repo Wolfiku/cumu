@@ -1,37 +1,42 @@
-# cumu v0.3.0 | Installation Update
+# cumu v0.3.0 — Auto Song Lookup, Smarter Recognitions & More Designs
 
-[Latest](https://github.com/Wolfiku/cumu/releases/latest)
-[github-actions](https://github.com/apps/github-actions) released this 2 hours ago
-· [1 commit](https://github.com/Wolfiku/cumu/compare/v0.3.0...main) to main since this release
+This release introduces automatic song metadata lookup, improved audio recognition accuracy, and additional UI designs.
 
-[v0.3.0](https://github.com/Wolfiku/cumu/tree/v0.3.0)
-[<commit_sha_placeholder>](https://github.com/Wolfiku/cumu/commit/<commit_sha_placeholder>)
+---
 
 ## Highlights & New Features
 
-- **Auto Song Lookup**: Automatic detection and retrieval of song metadata.
-- **Smarter Recognitions**: Improved audio fingerprinting and recognition accuracy.
-- **More Designs**: Additional UI designs and themes for a richer user experience.
+- **Auto Song Lookup:**
+  Songs are now automatically matched against an online metadata database. Missing titles, artists, album names, and artwork are filled in automatically without manual input.
+
+- **Smarter Recognitions:**
+  Improved audio fingerprinting engine with higher accuracy and faster recognition times for scanned library tracks.
+
+- **More Designs:**
+  Additional UI themes and visual styles available in the settings panel for a more personalized listening experience.
+
+---
 
 ## Installation Options
 
-_The installation methods remain the same as previous versions._
+### Option 1: One-Line Installer (Recommended for Linux / LXC)
+```bash
+curl -fsSL https://raw.githubusercontent.com/Wolfiku/cumu/main/scripts/install.sh | bash
+```
 
-- **One-Line Installer (Recommended for Linux / LXC)**
-  ```sh
-  curl -fsSL https://raw.githubusercontent.com/Wolfiku/cumu/main/scripts/install.sh | bash
-  ```
-- **Docker Compose**
-  ```sh
-  git clone https://github.com/Wolfiku/cumu.git
-  cd cumu
-  docker compose up -d
-  ```
-- **Debian / Ubuntu Package (.deb)**
-  ```sh
-  dpkg -i cumu_0.3.0_amd64.deb
-  ```
+### Option 2: Docker Compose
+```bash
+git clone https://github.com/Wolfiku/cumu.git
+cd cumu
+docker compose up -d
+```
+
+### Option 3: Debian / Ubuntu Package (.deb)
+```bash
+dpkg -i cumu_0.3.0_amd64.deb
+```
+
+---
 
 ## Full Documentation
-
 See [INSTALL.md](https://github.com/Wolfiku/cumu/blob/main/INSTALL.md) for full deployment instructions.

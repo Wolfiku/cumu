@@ -82,6 +82,7 @@ function initDB() {
       user_id TEXT NOT NULL,
       description TEXT,
       cover TEXT,
+      is_generated INTEGER DEFAULT 0,
       created_at INTEGER DEFAULT (unixepoch()),
       FOREIGN KEY (user_id) REFERENCES users(id)
     );
@@ -187,8 +188,12 @@ function initDB() {
   if (!userCols.includes('updated_at')) db.exec("ALTER TABLE users ADD COLUMN updated_at INTEGER DEFAULT (unixepoch())");
 
   const songCols = db.prepare('PRAGMA table_info(songs)').all().map(c => c.name);
-  if (!songCols.includes('mime_type')) db.exec("ALTER TABLE songs ADD COLUMN mime_type TEXT");
-  if (!songCols.includes('cover'))     db.exec("ALTER TABLE songs ADD COLUMN cover TEXT");
+  if (!songCols.includes('mime_type'))      db.exec("ALTER TABLE songs ADD COLUMN mime_type TEXT");
+  if (!songCols.includes('cover'))          db.exec("ALTER TABLE songs ADD COLUMN cover TEXT");
+  if (!songCols.includes('is_user_edited')) db.exec("ALTER TABLE songs ADD COLUMN is_user_edited INTEGER DEFAULT 0");
+
+  const playlistCols = db.prepare('PRAGMA table_info(playlists)').all().map(c => c.name);
+  if (!playlistCols.includes('is_generated')) db.exec("ALTER TABLE playlists ADD COLUMN is_generated INTEGER DEFAULT 0");
 
   // ── Seed built-in web client ───────────────────────────────────────────────
 
@@ -217,8 +222,90 @@ function initDB() {
     db.prepare("UPDATE user_state SET theme = 'standard'").run();
   } catch {}
 
+  cleanupOrphanedAlbums(db);
+  mergeDuplicateArtists(db);
+
   return db;
 }
+
+function cleanupOrphanedAlbums(db) {
+  try {
+    const orphaned = db.prepare(`
+      SELECT a.* FROM albums a
+      LEFT JOIN songs s ON s.album_id = a.id
+      WHERE s.id IS NULL
+    `).all();
+
+    for (const emptyAlbum of orphaned) {
+      if (emptyAlbum.title) {
+        const activeAlbum = db.prepare(`
+          SELECT a.* FROM albums a
+          JOIN songs s ON s.album_id = a.id
+          WHERE a.title = ? AND a.id != ?
+          LIMIT 1
+        `).get(emptyAlbum.title, emptyAlbum.id);
+
+        if (activeAlbum && !activeAlbum.cover && emptyAlbum.cover) {
+          db.prepare('UPDATE albums SET cover = ? WHERE id = ?').run(emptyAlbum.cover, activeAlbum.id);
+        }
+      }
+      db.prepare('DELETE FROM albums WHERE id = ?').run(emptyAlbum.id);
+    }
+  } catch (err) {
+    console.error('[cumu] cleanupOrphanedAlbums error:', err.message);
+  }
+}
+
+function mergeDuplicateArtists(db) {
+  try {
+    const allArtists = db.prepare('SELECT * FROM artists ORDER BY created_at ASC').all();
+    const map = new Map();
+
+    for (const artist of allArtists) {
+      const key = (artist.name || '').trim().toLowerCase();
+      if (!key) continue;
+
+      if (!map.has(key)) {
+        map.set(key, artist);
+      } else {
+        const primary = map.get(key);
+        const duplicateId = artist.id;
+
+        if (artist.name !== primary.name && artist.name[0] === artist.name[0].toUpperCase() && primary.name[0] !== primary.name[0].toUpperCase()) {
+          db.prepare('UPDATE artists SET name = ? WHERE id = ?').run(artist.name, primary.id);
+          primary.name = artist.name;
+        }
+
+        db.prepare('UPDATE songs SET artist_id = ? WHERE artist_id = ?').run(primary.id, duplicateId);
+        db.prepare('UPDATE albums SET artist_id = ? WHERE artist_id = ?').run(primary.id, duplicateId);
+        db.prepare('DELETE FROM artists WHERE id = ?').run(duplicateId);
+        console.log(`[cumu] Merged duplicate artist "${artist.name}" (${duplicateId}) into primary (${primary.id})`);
+      }
+    }
+  } catch (err) {
+    console.error('[cumu] mergeDuplicateArtists error:', err.message);
+  }
+}
+
+function getOrCreateArtist(db, name) {
+  if (!name || !name.trim()) return null;
+  const trimmed = name.trim();
+
+  let row = db.prepare('SELECT id, name FROM artists WHERE LOWER(TRIM(name)) = LOWER(?)').get(trimmed);
+  if (row) {
+    if (row.name !== trimmed && trimmed[0] === trimmed[0].toUpperCase() && row.name[0] !== row.name[0].toUpperCase()) {
+      db.prepare('UPDATE artists SET name = ? WHERE id = ?').run(trimmed, row.id);
+    }
+    return row.id;
+  }
+
+  const { v4: uuidv4 } = require('uuid');
+  const id = uuidv4();
+  db.prepare('INSERT INTO artists (id, name) VALUES (?, ?)').run(id, trimmed);
+  return id;
+}
+
+
 
 function getConfig() {
   const db = getDB();
@@ -245,4 +332,5 @@ function log(level, category, message) {
   }
 }
 
-module.exports = { getDB, initDB, getConfig, setConfig, log };
+module.exports = { getDB, initDB, getConfig, setConfig, log, getOrCreateArtist, mergeDuplicateArtists };
+

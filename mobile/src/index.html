@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
@@ -20,23 +20,23 @@
           <p class="caption" style="margin-top:4px">Self-hosted music streaming</p>
         </div>
         <div class="setup-form">
-          <span class="section-label">Server verbinden</span>
+          <span class="section-label">Connect to Server</span>
           <div class="form-section">
             <div class="form-row">
               <label for="inp-url">Server URL</label>
-              <input type="url" id="inp-url" placeholder="https://mein-server.de" autocomplete="url" />
+              <input type="url" id="inp-url" placeholder="https://my-server.com" autocomplete="url" />
             </div>
             <div class="form-row">
-              <label for="inp-user">Benutzername</label>
+              <label for="inp-user">Username</label>
               <input type="text" id="inp-user" placeholder="admin" autocomplete="username" />
             </div>
             <div class="form-row">
-              <label for="inp-pass">Passwort</label>
+              <label for="inp-pass">Password</label>
               <input type="password" id="inp-pass" placeholder="••••••••" autocomplete="current-password" />
             </div>
           </div>
           <p id="setup-error" class="error-msg" style="display:none"></p>
-          <button id="btn-connect" class="btn-primary" style="width:100%">Verbinden</button>
+          <button id="btn-connect" class="btn-primary" style="width:100%">Connect</button>
         </div>
       </div>
     </div>
@@ -61,7 +61,7 @@
       <div id="search-overlay" style="display:none; padding:16px">
         <div class="search-bar">
           <span class="search-icon">&#x1F50D;</span>
-          <input type="search" id="search-input" placeholder="Suchen nach Titeln, Künstlern, Alben…" />
+          <input type="search" id="search-input" placeholder="Search tracks, artists, albums…" />
         </div>
         <div id="search-results"></div>
       </div>
@@ -70,19 +70,19 @@
       <div id="view-home">
         <div class="page-section">
           <div class="section-header">
-            <span class="section-label">Zuletzt gespielt</span>
+            <span class="section-label">Recently Played</span>
           </div>
-          <ul class="song-list" id="list-recent"><li class="empty-state">Noch nichts gespielt.</li></ul>
+          <ul class="song-list" id="list-recent"><li class="empty-state">Nothing played yet.</li></ul>
         </div>
         <div class="page-section" style="margin-top:16px">
           <div class="section-header">
-            <span class="section-label">Meistgehört</span>
+            <span class="section-label">Most Played</span>
           </div>
           <ul class="song-list" id="list-most"></ul>
         </div>
         <div class="page-section" style="margin-top:16px">
           <div class="section-header">
-            <span class="section-label">Neu hinzugefügt</span>
+            <span class="section-label">Recently Added</span>
           </div>
           <ul class="song-list" id="list-new"></ul>
         </div>
@@ -91,15 +91,15 @@
       <!-- Library view -->
       <div id="view-library" style="display:none">
         <div class="page-section">
-          <div class="section-header"><span class="section-label">Alle Songs</span></div>
+          <div class="section-header"><span class="section-label">All Songs</span></div>
           <ul class="song-list" id="list-all-songs"></ul>
         </div>
         <div class="page-section" style="margin-top:16px">
-          <div class="section-header"><span class="section-label">Alben</span></div>
+          <div class="section-header"><span class="section-label">Albums</span></div>
           <div class="card-scroll" id="list-albums"></div>
         </div>
         <div class="page-section" style="margin-top:16px">
-          <div class="section-header"><span class="section-label">Künstler</span></div>
+          <div class="section-header"><span class="section-label">Artists</span></div>
           <ul class="song-list" id="list-artists"></ul>
         </div>
       </div>
@@ -109,7 +109,7 @@
         <div class="page-section">
           <div class="section-header">
             <span class="section-label">Playlists</span>
-            <button class="btn-secondary" id="btn-new-playlist">+ Neue Playlist</button>
+            <button class="btn-secondary" id="btn-new-playlist">+ New Playlist</button>
           </div>
           <ul class="song-list" id="list-playlists"></ul>
         </div>
@@ -118,10 +118,10 @@
       <!-- Playlist detail view -->
       <div id="view-playlist-detail" style="display:none">
         <div class="page-section">
-          <button class="btn-secondary" id="btn-back-playlists" style="margin-bottom:16px">← Zurück</button>
+          <button class="btn-secondary" id="btn-back-playlists" style="margin-bottom:16px">← Back</button>
           <div class="section-header">
             <span class="section-label" id="playlist-detail-name"></span>
-            <button class="btn-danger" id="btn-delete-playlist">Löschen</button>
+            <button class="btn-danger" id="btn-delete-playlist">Delete</button>
           </div>
           <ul class="song-list" id="list-playlist-songs"></ul>
         </div>
@@ -130,7 +130,7 @@
       <!-- Offline view -->
       <div id="view-offline" style="display:none">
         <div class="page-section">
-          <div class="section-header"><span class="section-label">Offline Lieder</span></div>
+          <div class="section-header"><span class="section-label">Offline Tracks</span></div>
           <ul class="song-list" id="list-offline"></ul>
         </div>
       </div>
@@ -155,9 +155,9 @@
         </div>
         <!-- Right: 3 controls only -->
         <div class="np-controls">
-          <button class="np-btn" id="np-prev" aria-label="Zurück">⏮</button>
+          <button class="np-btn" id="np-prev" aria-label="Previous">⏮</button>
           <button class="np-btn np-btn--play" id="np-play" aria-label="Play/Pause">▶</button>
-          <button class="np-btn" id="np-next" aria-label="Weiter">⏭</button>
+          <button class="np-btn" id="np-next" aria-label="Next">⏭</button>
         </div>
       </div>
       <!-- Hidden time spans (kept for JS compatibility) -->
@@ -168,7 +168,7 @@
     <!-- Bottom Nav -->
     <nav class="bottom-nav">
       <button class="nav-tab active" data-view="home">&#127968;<br/><span style="font-size:10px">Home</span></button>
-      <button class="nav-tab" data-view="library">&#127925;<br/><span style="font-size:10px">Bibliothek</span></button>
+      <button class="nav-tab" data-view="library">&#127925;<br/><span style="font-size:10px">Library</span></button>
       <button class="nav-tab" data-view="playlists">&#128196;<br/><span style="font-size:10px">Playlists</span></button>
       <button class="nav-tab" data-view="offline">&#128190;<br/><span style="font-size:10px">Offline</span></button>
     </nav>

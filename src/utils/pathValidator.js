@@ -15,7 +15,7 @@ const path = require('path');
  */
 function validateMusicPath(targetPath) {
   if (!targetPath || typeof targetPath !== 'string' || !targetPath.trim()) {
-    return { ok: false, error: 'Musik-Pfad darf nicht leer sein.' };
+    return { ok: false, error: 'Music directory path cannot be empty.' };
   }
 
   const resolved = path.resolve(targetPath.trim());
@@ -28,7 +28,7 @@ function validateMusicPath(targetPath) {
   } catch (err) {
     return {
       ok: false,
-      error: `Ordner '${resolved}' konnte nicht erstellt werden: ${err.message || 'Zugriff verweigert'}. Bitte erstelle den Ordner auf dem Server oder wähle einen gültigen Pfad.`
+      error: `Directory '${resolved}' could not be created: ${err.message || 'Access denied'}. Please create the folder on the server or select a valid path.`
     };
   }
 
@@ -38,7 +38,7 @@ function validateMusicPath(targetPath) {
   } catch (err) {
     return {
       ok: false,
-      error: `Keine Leserechte für den Pfad '${resolved}' (Permission Denied). Bitte überprüfe die Ordner-Berechtigungen.`
+      error: `No read permissions for path '${resolved}' (Permission Denied). Please check folder permissions.`
     };
   }
 
@@ -50,7 +50,7 @@ function validateMusicPath(targetPath) {
   } catch (err) {
     return {
       ok: false,
-      error: `Keine Schreibrechte für den Pfad '${resolved}' (Permission Denied). Der Server konnte in diesem Ordner keine Dateien anlegen.`
+      error: `No write permissions for path '${resolved}' (Permission Denied). The server could not create files in this folder.`
     };
   }
 

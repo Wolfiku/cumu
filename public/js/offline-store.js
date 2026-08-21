@@ -119,8 +119,8 @@ const CumuOfflineStore = (() => {
 
           const songRecord = {
             id: song.id,
-            title: song.title || 'Unbenannter Song',
-            artist: song.artist || 'Unbekannter Künstler',
+            title: song.title || 'Untitled Song',
+            artist: song.artist || 'Unknown Artist',
             album: song.album || '',
             duration: song.duration || 0,
             cover_path: song.cover_path || song.coverPath || null,

@@ -136,11 +136,11 @@ const CumuApi = (() => {
       data = await res.json();
     } catch {
       clearTokens();
-      throw new Error('Server-Fehler beim Aktualisieren der Sitzung');
+      throw new Error('Server error updating session');
     }
     if (!res.ok) {
       clearTokens();
-      throw new Error('Sitzung abgelaufen — bitte erneut anmelden');
+      throw new Error('Session expired — please log in again');
     }
     saveTokens(data);
   }
@@ -196,7 +196,7 @@ const CumuApi = (() => {
       } catch {
         clearTokens();
         window.dispatchEvent(new CustomEvent('cumu:unauthorized'));
-        throw new Error('Sitzung abgelaufen');
+        throw new Error('Session expired');
       }
     }
 

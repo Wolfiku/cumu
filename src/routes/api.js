@@ -5,6 +5,8 @@
 
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const { getDB, getConfig } = require('../db');
@@ -12,6 +14,21 @@ const { requireAuth } = require('../middleware/auth');
 const { fetchPodcastSearchResults } = require('./podcasts');
 
 const router = express.Router();
+
+// ── Genre Central Config ───────────────────────────────────────────────────
+router.get('/genres/config', requireAuth, (req, res) => {
+  try {
+    const genresPath = path.join(__dirname, '../../data/genres.json');
+    if (fs.existsSync(genresPath)) {
+      const data = fs.readFileSync(genresPath, 'utf8');
+      return res.json(JSON.parse(data));
+    }
+    res.json({});
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 // ── Home / Recommendations ─────────────────────────────────────────────────
 router.get('/home', requireAuth, (req, res) => {
@@ -52,7 +69,7 @@ router.get('/genres/stats', requireAuth, (req, res) => {
   const db = getDB();
   const userId = req.user.id;
 
-  const topGenres = db.prepare(`
+  const topGenresRaw = db.prepare(`
     SELECT genre, COUNT(*) as count 
     FROM songs 
     WHERE genre IS NOT NULL AND genre != '' 
@@ -60,6 +77,20 @@ router.get('/genres/stats', requireAuth, (req, res) => {
     ORDER BY count DESC 
     LIMIT 3
   `).all();
+
+  // Enrich each genre with the top artist name
+  const topGenres = topGenresRaw.map(g => {
+    const topArtistRow = db.prepare(`
+      SELECT ar.name, COUNT(*) as cnt
+      FROM songs s
+      LEFT JOIN artists ar ON ar.id = s.artist_id
+      WHERE LOWER(TRIM(s.genre)) = LOWER(?) AND ar.name IS NOT NULL AND ar.name != ''
+      GROUP BY ar.name
+      ORDER BY cnt DESC
+      LIMIT 1
+    `).get(g.genre);
+    return { ...g, topArtist: topArtistRow ? topArtistRow.name : null };
+  });
 
   const mostPlayed = db.prepare(`
     SELECT s.genre, COUNT(*) as count
@@ -74,6 +105,53 @@ router.get('/genres/stats', requireAuth, (req, res) => {
   res.json({ topGenres, mostPlayedGenre: mostPlayed ? mostPlayed.genre : null });
 });
 
+// ── Genre Details ───────────────────────────────────────────────────────────
+router.get('/genres/detail/:genre', requireAuth, (req, res) => {
+  const db = getDB();
+  const rawGenre = req.params.genre;
+  if (!rawGenre) return res.status(400).json({ error: 'Genre is required' });
+
+  const norm = rawGenre.trim();
+  const likeNorm = `%${norm}%`;
+
+  const songs = db.prepare(`
+    SELECT s.*, al.title as album_title, al.cover, ar.name as artist_name
+    FROM songs s
+    LEFT JOIN albums al ON al.id = s.album_id
+    LEFT JOIN artists ar ON ar.id = s.artist_id
+    WHERE LOWER(TRIM(s.genre)) = LOWER(?) OR s.genre LIKE ?
+    ORDER BY s.play_count DESC, s.created_at DESC
+  `).all(norm, likeNorm);
+
+  const topSongs = songs.slice(0, 5);
+
+  const featuredArtists = db.prepare(`
+    SELECT DISTINCT ar.*
+    FROM artists ar
+    JOIN songs s ON s.artist_id = ar.id
+    WHERE LOWER(TRIM(s.genre)) = LOWER(?) OR s.genre LIKE ?
+    ORDER BY ar.name ASC
+  `).all(norm, likeNorm);
+
+  const albums = db.prepare(`
+    SELECT DISTINCT al.*, ar.name as artist_name
+    FROM albums al
+    JOIN songs s ON s.album_id = al.id
+    LEFT JOIN artists ar ON ar.id = al.artist_id
+    WHERE LOWER(TRIM(s.genre)) = LOWER(?) OR s.genre LIKE ?
+    ORDER BY al.title ASC
+  `).all(norm, likeNorm);
+
+  res.json({
+    genre: rawGenre,
+    topSongs,
+    featuredArtists,
+    albums,
+    songs
+  });
+});
+
+
 // ── Search ─────────────────────────────────────────────────────────────────
 router.get('/search', requireAuth, async (req, res) => {
   const { q } = req.query;
@@ -85,7 +163,20 @@ router.get('/search', requireAuth, async (req, res) => {
   const songs     = db.prepare(`SELECT s.*, al.title as album_title, al.cover, ar.name as artist_name FROM songs s LEFT JOIN albums al ON al.id=s.album_id LEFT JOIN artists ar ON ar.id=s.artist_id WHERE s.title LIKE ? OR ar.name LIKE ? OR al.title LIKE ? LIMIT 20`).all(like, like, like);
   const albums    = db.prepare(`SELECT al.*, ar.name as artist_name FROM albums al LEFT JOIN artists ar ON ar.id=al.artist_id WHERE al.title LIKE ? OR ar.name LIKE ? LIMIT 10`).all(like, like);
   const artists   = db.prepare(`SELECT * FROM artists WHERE name LIKE ? LIMIT 10`).all(like);
-  const playlists = db.prepare(`SELECT * FROM playlists WHERE user_id=? AND name LIKE ? LIMIT 10`).all(userId, like);
+  const rawPlaylists = db.prepare(`SELECT * FROM playlists WHERE user_id=? AND name LIKE ? LIMIT 10`).all(userId, like);
+  const playlists = rawPlaylists.map(pl => {
+    const pSongs = db.prepare(`
+      SELECT s.*, al.title as album_title, al.cover, ar.name as artist_name
+      FROM playlist_songs ps
+      JOIN songs s ON s.id=ps.song_id
+      LEFT JOIN albums al ON al.id=s.album_id
+      LEFT JOIN artists ar ON ar.id=s.artist_id
+      WHERE ps.playlist_id=?
+      ORDER BY ps.position ASC
+    `).all(pl.id);
+    const is_generated = (pl.is_generated === 1 || (pl.description && pl.description.includes('[dynamic:'))) ? 1 : 0;
+    return { ...pl, is_generated, songs: pSongs };
+  });
 
   let podcasts = [];
   const userState = db.prepare('SELECT extra_settings FROM user_state WHERE user_id = ?').get(userId);
@@ -202,7 +293,12 @@ router.post('/songs/:id/edit', requireAuth, handleSongUpdate);
 // ── Albums ─────────────────────────────────────────────────────────────────
 router.get('/albums', requireAuth, (req, res) => {
   const db = getDB();
-  const albums = db.prepare(`SELECT al.*, ar.name as artist_name FROM albums al LEFT JOIN artists ar ON ar.id=al.artist_id ORDER BY al.created_at DESC`).all();
+  const albums = db.prepare(`
+    SELECT al.*, ar.name as artist_name, (SELECT COUNT(*) FROM songs s WHERE s.album_id = al.id) as song_count
+    FROM albums al
+    LEFT JOIN artists ar ON ar.id=al.artist_id
+    ORDER BY al.created_at DESC
+  `).all();
   res.json(albums);
 });
 
@@ -212,6 +308,28 @@ router.get('/albums/:id', requireAuth, (req, res) => {
   if (!album) return res.status(404).json({ error: 'Not found' });
   const songs = db.prepare(`SELECT s.*, ar.name as artist_name FROM songs s LEFT JOIN artists ar ON ar.id=s.artist_id WHERE s.album_id=? ORDER BY s.track_number ASC`).all(req.params.id);
   res.json({ ...album, songs });
+});
+
+router.put('/albums/:id', requireAuth, (req, res) => {
+  try {
+    const db = getDB();
+    const { title, artist, year, genre, is_audiobook } = req.body;
+    const album = db.prepare('SELECT * FROM albums WHERE id=?').get(req.params.id);
+    if (!album) return res.status(404).json({ error: 'Album not found' });
+
+    let artistId = album.artist_id;
+    if (artist !== undefined) artistId = artist ? getOrCreateArtist(db, artist) : null;
+    db.prepare('UPDATE albums SET title=COALESCE(?,title), artist_id=?, year=COALESCE(?,year), genre=COALESCE(?,genre) WHERE id=?')
+      .run(title || null, artistId, year || null, genre || null, req.params.id);
+
+    if (is_audiobook != null) {
+      db.prepare('UPDATE songs SET is_audiobook=? WHERE album_id=?').run(is_audiobook ? 1 : 0, req.params.id);
+    }
+    const updated = db.prepare('SELECT al.*, ar.name as artist_name FROM albums al LEFT JOIN artists ar ON ar.id=al.artist_id WHERE al.id=?').get(req.params.id);
+    res.json({ success: true, album: updated });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to save album: ' + err.message });
+  }
 });
 
 // ── Artists ────────────────────────────────────────────────────────────────
@@ -233,29 +351,55 @@ router.get('/artists/:id', requireAuth, (req, res) => {
 // ── Playlists ──────────────────────────────────────────────────────────────
 router.get('/playlists', requireAuth, (req, res) => {
   const db = getDB();
-  const playlists = db.prepare(`SELECT * FROM playlists WHERE user_id=? ORDER BY created_at DESC`).all(req.user.id);
+  const rawPlaylists = db.prepare(`SELECT * FROM playlists WHERE user_id=? ORDER BY created_at DESC`).all(req.user.id);
+  const playlists = rawPlaylists.map(pl => {
+    const is_generated = (pl.is_generated === 1 || (pl.description && pl.description.includes('[dynamic:'))) ? 1 : 0;
+    const songs = db.prepare(`
+      SELECT s.*, al.title as album_title, al.cover, ar.name as artist_name
+      FROM playlist_songs ps
+      JOIN songs s ON s.id=ps.song_id
+      LEFT JOIN albums al ON al.id=s.album_id
+      LEFT JOIN artists ar ON ar.id=s.artist_id
+      WHERE ps.playlist_id=?
+      ORDER BY ps.position ASC
+    `).all(pl.id);
+    return { ...pl, is_generated, songs };
+  });
   res.json(playlists);
 });
 
 router.post('/playlists', requireAuth, (req, res) => {
   const db = getDB();
-  const { name, description } = req.body;
+  const { name, description, is_generated } = req.body;
   if (!name) return res.status(400).json({ error: 'Name required' });
   const id = uuidv4();
-  db.prepare('INSERT INTO playlists (id, name, user_id, description) VALUES (?, ?, ?, ?)').run(id, name, req.user.id, description || '');
-  res.json({ id, name, description });
+  const isGen = (is_generated === 1 || is_generated === true || (description && description.includes('[dynamic:'))) ? 1 : 0;
+  db.prepare('INSERT INTO playlists (id, name, user_id, description, is_generated) VALUES (?, ?, ?, ?, ?)').run(id, name, req.user.id, description || '', isGen);
+  res.json({ id, name, description, is_generated: isGen });
 });
 
 router.get('/playlists/:id', requireAuth, (req, res) => {
   const db = getDB();
-  const playlist = db.prepare(`SELECT * FROM playlists WHERE id=?`).get(req.params.id);
+  const playlist = db.prepare(`
+    SELECT p.*, u.username as owner_username 
+    FROM playlists p 
+    LEFT JOIN users u ON u.id = p.user_id 
+    WHERE p.id=?
+  `).get(req.params.id);
   if (!playlist) return res.status(404).json({ error: 'Not found' });
+  const is_generated = (playlist.is_generated === 1 || (playlist.description && playlist.description.includes('[dynamic:'))) ? 1 : 0;
   const songs = db.prepare(`SELECT s.*, al.title as album_title, al.cover, ar.name as artist_name FROM playlist_songs ps JOIN songs s ON s.id=ps.song_id LEFT JOIN albums al ON al.id=s.album_id LEFT JOIN artists ar ON ar.id=s.artist_id WHERE ps.playlist_id=? ORDER BY ps.position ASC`).all(req.params.id);
-  res.json({ ...playlist, songs });
+  res.json({ ...playlist, is_generated, songs });
 });
 
 router.post('/playlists/:id/songs', requireAuth, (req, res) => {
   const db = getDB();
+  const targetPl = db.prepare('SELECT is_generated, description FROM playlists WHERE id=?').get(req.params.id);
+  if (targetPl && (targetPl.is_generated === 1 || (targetPl.description && targetPl.description.includes('[dynamic:')))) {
+    if (!req.body.isSystemSync) {
+      return res.status(403).json({ error: 'Cumu-erstellte Playlisten können nicht bearbeitet werden' });
+    }
+  }
   const { songId } = req.body;
   const maxPos = db.prepare('SELECT MAX(position) as mp FROM playlist_songs WHERE playlist_id=?').get(req.params.id);
   const pos = (maxPos?.mp || 0) + 1;
@@ -267,8 +411,33 @@ router.post('/playlists/:id/songs', requireAuth, (req, res) => {
   }
 });
 
+router.post('/playlists/:id/sync-songs', requireAuth, (req, res) => {
+  const db = getDB();
+  const targetPl = db.prepare('SELECT is_generated, description FROM playlists WHERE id=?').get(req.params.id);
+  if (targetPl && (targetPl.is_generated === 1 || (targetPl.description && targetPl.description.includes('[dynamic:')))) {
+    if (!req.body.isSystemSync) {
+      return res.status(403).json({ error: 'Cumu-erstellte Playlisten können nicht bearbeitet werden' });
+    }
+  }
+  const { songIds } = req.body;
+  if (!Array.isArray(songIds)) return res.status(400).json({ error: 'songIds must be an array' });
+  db.prepare('DELETE FROM playlist_songs WHERE playlist_id=?').run(req.params.id);
+  const stmt = db.prepare('INSERT OR IGNORE INTO playlist_songs (playlist_id, song_id, position) VALUES (?, ?, ?)');
+  const insertMany = db.transaction((ids) => {
+    ids.forEach((sid, idx) => {
+      stmt.run(req.params.id, sid, idx + 1);
+    });
+  });
+  insertMany(songIds);
+  res.json({ success: true, count: songIds.length });
+});
+
 router.delete('/playlists/:id/songs/:songId', requireAuth, (req, res) => {
   const db = getDB();
+  const targetPl = db.prepare('SELECT is_generated, description FROM playlists WHERE id=?').get(req.params.id);
+  if (targetPl && (targetPl.is_generated === 1 || (targetPl.description && targetPl.description.includes('[dynamic:')))) {
+    return res.status(403).json({ error: 'Cumu-erstellte Playlisten können nicht bearbeitet werden' });
+  }
   db.prepare('DELETE FROM playlist_songs WHERE playlist_id=? AND song_id=?').run(req.params.id, req.params.songId);
   res.json({ success: true });
 });
@@ -286,7 +455,20 @@ router.get('/library', requireAuth, (req, res) => {
   const userId = req.user.id;
   const songs     = db.prepare(`SELECT s.*, al.title as album_title, al.cover, ar.name as artist_name FROM library l JOIN songs s ON s.id=l.song_id LEFT JOIN albums al ON al.id=s.album_id LEFT JOIN artists ar ON ar.id=s.artist_id WHERE l.user_id=? AND l.song_id IS NOT NULL`).all(userId);
   const albums    = db.prepare(`SELECT al.*, ar.name as artist_name FROM library l JOIN albums al ON al.id=l.album_id LEFT JOIN artists ar ON ar.id=al.artist_id WHERE l.user_id=? AND l.album_id IS NOT NULL`).all(userId);
-  const playlists = db.prepare(`SELECT * FROM playlists WHERE user_id=?`).all(userId);
+  const rawPlaylists = db.prepare(`SELECT * FROM playlists WHERE user_id=?`).all(userId);
+  const playlists = rawPlaylists.map(pl => {
+    const is_generated = (pl.is_generated === 1 || (pl.description && pl.description.includes('[dynamic:'))) ? 1 : 0;
+    const plSongs = db.prepare(`
+      SELECT s.*, al.title as album_title, al.cover, ar.name as artist_name
+      FROM playlist_songs ps
+      JOIN songs s ON s.id=ps.song_id
+      LEFT JOIN albums al ON al.id=s.album_id
+      LEFT JOIN artists ar ON ar.id=s.artist_id
+      WHERE ps.playlist_id=?
+      ORDER BY ps.position ASC
+    `).all(pl.id);
+    return { ...pl, is_generated, songs: plSongs };
+  });
   res.json({ songs, albums, playlists });
 });
 
