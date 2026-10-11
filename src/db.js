@@ -241,9 +241,9 @@ function cleanupOrphanedAlbums(db) {
         const activeAlbum = db.prepare(`
           SELECT a.* FROM albums a
           JOIN songs s ON s.album_id = a.id
-          WHERE a.title = ? AND a.id != ?
+          WHERE a.title = ? AND a.artist_id IS ? AND a.id != ?
           LIMIT 1
-        `).get(emptyAlbum.title, emptyAlbum.id);
+        `).get(emptyAlbum.title, emptyAlbum.artist_id, emptyAlbum.id);
 
         if (activeAlbum && !activeAlbum.cover && emptyAlbum.cover) {
           db.prepare('UPDATE albums SET cover = ? WHERE id = ?').run(emptyAlbum.cover, activeAlbum.id);

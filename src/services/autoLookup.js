@@ -29,9 +29,9 @@ function cleanupOrphanedAlbums(db) {
         const activeAlbum = db.prepare(`
           SELECT a.* FROM albums a
           JOIN songs s ON s.album_id = a.id
-          WHERE a.title = ? AND a.id != ?
+          WHERE a.title = ? AND a.artist_id IS ? AND a.id != ?
           LIMIT 1
-        `).get(emptyAlbum.title, emptyAlbum.id);
+        `).get(emptyAlbum.title, emptyAlbum.artist_id, emptyAlbum.id);
 
         if (activeAlbum && !activeAlbum.cover && emptyAlbum.cover) {
           db.prepare('UPDATE albums SET cover = ? WHERE id = ?').run(emptyAlbum.cover, activeAlbum.id);
@@ -48,9 +48,19 @@ function cleanupOrphanedAlbums(db) {
 function getOrCreateAlbum(db, title, artistId, meta = {}, existingAlbumId = null) {
   if (!title) return null;
 
-  // 1. Search for existing album by title and artist_id
+  // 0. Keep the song's current album when the title still matches. Its artist
+  //    may be the album artist (e.g. "Various Artists" on compilations), which
+  //    differs from the track artist the lookup returns.
   let row = null;
-  if (artistId) {
+  if (existingAlbumId) {
+    const current = db.prepare('SELECT * FROM albums WHERE id = ?').get(existingAlbumId);
+    if (current && current.title && current.title.toLowerCase() === String(title).toLowerCase()) {
+      row = current;
+    }
+  }
+
+  // 1. Search for existing album by title and artist_id
+  if (!row && artistId) {
     row = db.prepare('SELECT * FROM albums WHERE title = ? AND artist_id = ?').get(title, artistId);
   }
 
@@ -63,13 +73,10 @@ function getOrCreateAlbum(db, title, artistId, meta = {}, existingAlbumId = null
     }
   }
 
-  // 3. Search by title matching any artist (prevents creating duplicate albums for single tracks)
-  if (!row) {
+  // 3. Without an artist, fall back to any album with this title. Albums of
+  //    other artists are never reused: different artists can share a title.
+  if (!row && !artistId) {
     row = db.prepare('SELECT * FROM albums WHERE title = ?').get(title);
-    if (row && artistId && !row.artist_id) {
-      db.prepare('UPDATE albums SET artist_id = ? WHERE id = ?').run(artistId, row.id);
-      row.artist_id = artistId;
-    }
   }
 
   if (row) {

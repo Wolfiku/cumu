@@ -89,6 +89,7 @@ async function extractMeta(filePath) {
     return {
       title:    c.title || path.basename(filePath, path.extname(filePath)),
       artist:   c.artist || c.albumartist || null,
+      albumArtist: c.albumartist || c.artist || null,
       album:    c.album || null,
       year:     c.year || null,
       genre:    Array.isArray(c.genre) ? c.genre[0] : (c.genre || null),
@@ -98,7 +99,7 @@ async function extractMeta(filePath) {
       picture:  c.picture?.length ? c.picture[0] : null,
     };
   } catch {
-    return { title: path.basename(filePath, path.extname(filePath)), artist: null, album: null, year: null, genre: null, track: null, duration: 0, codec: null, picture: null };
+    return { title: path.basename(filePath, path.extname(filePath)), artist: null, albumArtist: null, album: null, year: null, genre: null, track: null, duration: 0, codec: null, picture: null };
   }
 }
 
@@ -117,9 +118,9 @@ function cleanupOrphanedAlbums(db) {
         const activeAlbum = db.prepare(`
           SELECT a.* FROM albums a
           JOIN songs s ON s.album_id = a.id
-          WHERE a.title = ? AND a.id != ?
+          WHERE a.title = ? AND a.artist_id IS ? AND a.id != ?
           LIMIT 1
-        `).get(emptyAlbum.title, emptyAlbum.id);
+        `).get(emptyAlbum.title, emptyAlbum.artist_id, emptyAlbum.id);
 
         if (activeAlbum && !activeAlbum.cover && emptyAlbum.cover) {
           db.prepare('UPDATE albums SET cover = ? WHERE id = ?').run(emptyAlbum.cover, activeAlbum.id);
@@ -150,13 +151,10 @@ function getOrCreateAlbum(db, title, artistId, meta = {}, existingAlbumId = null
     }
   }
 
-  // 3. Search by title matching any artist (prevents creating duplicate empty albums for same album)
-  if (!row) {
+  // 3. Without an artist, fall back to any album with this title. Albums of
+  //    other artists are never reused: different artists can share a title.
+  if (!row && !artistId) {
     row = db.prepare('SELECT * FROM albums WHERE title = ?').get(title);
-    if (row && artistId && !row.artist_id) {
-      db.prepare('UPDATE albums SET artist_id = ? WHERE id = ?').run(artistId, row.id);
-      row.artist_id = artistId;
-    }
   }
 
   if (row) {
@@ -286,8 +284,9 @@ async function processUpload(req, res) {
 
       meta.genre = genreName; // override meta for getOrCreateAlbum
 
-      const artistId = getOrCreateArtist(db, artistName);
-      const albumId  = getOrCreateAlbum(db, albumTitle, artistId, meta);
+      const artistId      = getOrCreateArtist(db, artistName);
+      const albumArtistId = req.body.artist ? artistId : getOrCreateArtist(db, meta.albumArtist || artistName);
+      const albumId       = getOrCreateAlbum(db, albumTitle, albumArtistId, meta);
 
       let coverFilename = null;
       if (coverFile) {
@@ -390,7 +389,7 @@ async function runLibraryScan() {
       const meta     = await extractMeta(item.fullPath);
       const ext      = path.extname(item.relativePath).toLowerCase();
       const artistId = getOrCreateArtist(db, meta.artist);
-      const albumId  = getOrCreateAlbum(db, meta.album, artistId, meta);
+      const albumId  = getOrCreateAlbum(db, meta.album, getOrCreateArtist(db, meta.albumArtist), meta);
       const fileSize = fs.statSync(item.fullPath).size;
       const songId   = uuidv4();
       insertSong(db, {
@@ -707,7 +706,69 @@ router.delete('/oauth/clients/:id', requireAdmin, (req, res) => {
   res.json({ success: true });
 });
 
+// ── LIBRARY — ONE-TIME REPAIR OF MERGED ALBUMS ───────────────────────────────
+// Older versions reused any album with a matching title, so albums of different
+// artists that share a name ("Greatest Hits") were merged into one. This splits
+// them again, grouped by the album artist tag so compilations stay together.
+
+async function repairMergedAlbums() {
+  const cfg = getConfig();
+  if (cfg.mergedAlbumsRepaired === true || cfg.mergedAlbumsRepaired === 'true') return { split: 0 };
+
+  const db        = getDB();
+  const musicPath = process.env.MUSIC_PATH || cfg.musicPath || path.join(process.cwd(), 'music');
+  const mixed = db.prepare(`
+    SELECT album_id FROM songs
+    WHERE album_id IS NOT NULL
+    GROUP BY album_id
+    HAVING COUNT(DISTINCT COALESCE(artist_id, '')) > 1
+  `).all();
+
+  let split = 0;
+  for (const { album_id } of mixed) {
+    const album = db.prepare('SELECT * FROM albums WHERE id = ?').get(album_id);
+    if (!album) continue;
+    const songs = db.prepare('SELECT id, filename, artist_id FROM songs WHERE album_id = ?').all(album_id);
+
+    // Album artist per song, read from the file tags (track artist as fallback)
+    const groups = new Map();
+    for (const song of songs) {
+      let albumArtistId = song.artist_id;
+      const filePath = path.join(musicPath, song.filename);
+      if (fs.existsSync(filePath)) {
+        const meta = await extractMeta(filePath);
+        if (meta.albumArtist) albumArtistId = getOrCreateArtist(db, meta.albumArtist);
+      }
+      const key = albumArtistId || '';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(song.id);
+    }
+    if (groups.size < 2) continue;
+
+    // The group matching the album's artist keeps the album; others get their own
+    const moveSong = db.prepare('UPDATE songs SET album_id = ? WHERE id = ?');
+    for (const [artistId, songIds] of groups) {
+      if ((artistId || null) === (album.artist_id || null)) continue;
+      let target = db.prepare('SELECT id FROM albums WHERE title = ? AND artist_id IS ? AND id != ?')
+        .get(album.title, artistId || null, album.id);
+      if (!target) {
+        target = { id: uuidv4() };
+        db.prepare('INSERT INTO albums (id, title, artist_id, year, genre, cover, is_audiobook) VALUES (?, ?, ?, ?, ?, ?, ?)')
+          .run(target.id, album.title, artistId || null, album.year, album.genre, album.cover, album.is_audiobook || 0);
+      }
+      for (const songId of songIds) moveSong.run(target.id, songId);
+    }
+    split++;
+  }
+
+  cleanupOrphanedAlbums(db);
+  setConfig('mergedAlbumsRepaired', 'true');
+  if (split > 0) log('info', 'admin', `Split ${split} album(s) that mixed songs of different artists`);
+  return { split };
+}
+
 router.runLibraryScan = runLibraryScan;
+router.repairMergedAlbums = repairMergedAlbums;
 router.handleUpload   = handleUpload;
 router.processUpload   = processUpload;
 

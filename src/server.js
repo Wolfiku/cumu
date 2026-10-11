@@ -137,7 +137,11 @@ function startBackgroundScanner() {
     try { fs.mkdirSync(musicPath, { recursive: true }); } catch {}
   }
   
-  adminRoutes.runLibraryScan().then(res => {
+  adminRoutes.repairMergedAlbums().then(res => {
+    if (res.split > 0) console.log(`[cumu] Repaired ${res.split} merged album(s).`);
+  }).catch(err => {
+    console.error('[cumu] Album repair error:', err.message);
+  }).then(() => adminRoutes.runLibraryScan()).then(res => {
     if (res.added > 0) {
       console.log(`[cumu] Startup scan complete: ${res.added} new track(s) indexed.`);
     }
