@@ -192,6 +192,10 @@ function initDB() {
   if (!songCols.includes('mime_type'))      db.exec("ALTER TABLE songs ADD COLUMN mime_type TEXT");
   if (!songCols.includes('cover'))          db.exec("ALTER TABLE songs ADD COLUMN cover TEXT");
   if (!songCols.includes('is_user_edited')) db.exec("ALTER TABLE songs ADD COLUMN is_user_edited INTEGER DEFAULT 0");
+  // 'pending' = found by a library scan, metadata lookup still outstanding.
+  // Set to 'matched' / 'unmatched' / 'skipped' / 'error' once the lookup ran.
+  // NULL for songs that never went through a scan (uploads, older versions).
+  if (!songCols.includes('lookup_status'))  db.exec("ALTER TABLE songs ADD COLUMN lookup_status TEXT");
 
   const playlistCols = db.prepare('PRAGMA table_info(playlists)').all().map(c => c.name);
   if (!playlistCols.includes('is_generated')) db.exec("ALTER TABLE playlists ADD COLUMN is_generated INTEGER DEFAULT 0");

@@ -88,6 +88,18 @@ async function refineGenericGenre(meta, song, cfg) {
 }
 
 /**
+ * A text search can't tell which release of a song the file comes from, so
+ * album, year and track number from MusicBrainz only fill in missing values
+ * and never replace what the file's tags say.
+ */
+function keepTaggedRelease(meta, song) {
+  if (song.album_title) meta.album = null;
+  if (song.year) meta.year = null;
+  if (song.track_number) meta.track_number = null;
+  return meta;
+}
+
+/**
  * Executes lookup logic for a specific song ID.
  */
 async function processSongLookup(songId) {
@@ -104,10 +116,10 @@ async function processSongLookup(songId) {
   if (!song) return { ok: false, error: 'Song not found' };
 
   // 1. Initial MusicBrainz Lookup
-  let mbResult = await searchMusicBrainz(song.title, song.artist_name || '', song.album_title || '');
+  let mbResult = await searchMusicBrainz(song.title, song.artist_name || '', song.album_title || '', song.duration || 0);
 
   if (mbResult) {
-    mbResult = await refineGenericGenre(mbResult, song, cfg);
+    mbResult = await refineGenericGenre(keepTaggedRelease(mbResult, song), song, cfg);
     applyMetadataToSong(songId, mbResult, 'MusicBrainz');
     return { ok: true, source: 'MusicBrainz', metadata: mbResult };
   }
@@ -134,11 +146,12 @@ async function processSongLookup(songId) {
     let mbResult2 = await searchMusicBrainz(
       aiResult.title || song.title,
       aiResult.artist || song.artist_name || '',
-      aiResult.album || song.album_title || ''
+      aiResult.album || song.album_title || '',
+      song.duration || 0
     );
 
     if (mbResult2) {
-      mbResult2 = await refineGenericGenre(mbResult2, song, cfg);
+      mbResult2 = await refineGenericGenre(keepTaggedRelease(mbResult2, song), song, cfg);
       applyMetadataToSong(songId, mbResult2, 'MusicBrainz (via Mistral AI)');
       return { ok: true, source: 'MusicBrainz (AI-assisted)', metadata: mbResult2 };
     }

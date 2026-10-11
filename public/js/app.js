@@ -387,12 +387,11 @@ function showToast(msg) {
       showLogin();
     }
 
-    setupGlobalDragAndDrop();
-
     if (loader) loader.style.display = 'none';
   }
 
   function showLogin() {
+    CumuScan.stop();
     if (loginModal) loginModal.classList.remove('hidden');
     hideNpBar();
   }
@@ -430,6 +429,7 @@ function showToast(msg) {
 
     CumuApi.connectWs();
     CumuApi.onWsMessage(handleWsMessage);
+    CumuScan.start(currentUser);
 
     await syncRestore();
     await loadPlaylists();
@@ -473,6 +473,7 @@ function showToast(msg) {
 
   window.doLogout = async function () {
     await CumuApi.logout();
+    CumuScan.stop();
     currentUser = null;
     stopAudio();
     showLogin();
@@ -4642,154 +4643,6 @@ function showToast(msg) {
     if (!pl) return;
     pl = await syncDynamicPlaylist(pl);
     if (pl.songs?.length) playQueue(pl.songs, 0);
-  }
-
-  // ── Global Drag & Drop Handler ─────────────────────────────────────────────
-
-  const AUDIO_EXTS_SET = new Set(['.mp3', '.m4a', '.aac', '.alac', '.flac', '.ogg', '.wav', '.opus']);
-
-  function isAudioFile(filename) {
-    if (!filename) return false;
-    const idx = filename.lastIndexOf('.');
-    if (idx === -1) return false;
-    const ext = filename.substring(idx).toLowerCase();
-    return AUDIO_EXTS_SET.has(ext);
-  }
-
-  async function getFilesFromEntry(entry) {
-    let files = [];
-    if (entry.isFile) {
-      return new Promise((resolve) => {
-        entry.file((file) => {
-          if (isAudioFile(file.name)) resolve([file]);
-          else resolve([]);
-        }, () => resolve([]));
-      });
-    } else if (entry.isDirectory) {
-      const dirReader = entry.createReader();
-      const entries = await new Promise((resolve) => {
-        dirReader.readEntries((results) => resolve(results || []), () => resolve([]));
-      });
-      for (const childEntry of entries) {
-        const childFiles = await getFilesFromEntry(childEntry);
-        files = files.concat(childFiles);
-      }
-    }
-    return files;
-  }
-
-  async function collectFilesFromDrop(dataTransfer) {
-    let files = [];
-    if (dataTransfer.items && dataTransfer.items.length) {
-      for (let i = 0; i < dataTransfer.items.length; i++) {
-        const item = dataTransfer.items[i];
-        if (item.webkitGetAsEntry) {
-          const entry = item.webkitGetAsEntry();
-          if (entry) {
-            const subFiles = await getFilesFromEntry(entry);
-            files = files.concat(subFiles);
-            continue;
-          }
-        }
-        if (item.kind === 'file') {
-          const file = item.getAsFile();
-          if (file && isAudioFile(file.name)) files.push(file);
-        }
-      }
-    } else if (dataTransfer.files && dataTransfer.files.length) {
-      for (let i = 0; i < dataTransfer.files.length; i++) {
-        const file = dataTransfer.files[i];
-        if (isAudioFile(file.name)) files.push(file);
-      }
-    }
-    return files;
-  }
-
-  function setupGlobalDragAndDrop() {
-    const overlay = document.getElementById('dragDropOverlay');
-    const toast = document.getElementById('uploadToast');
-    const toastTitle = document.getElementById('uploadToastTitle');
-    const toastStatus = document.getElementById('uploadToastStatus');
-    const toastSpinner = document.getElementById('uploadToastSpinner');
-
-    let dragCounter = 0;
-
-    window.addEventListener('dragenter', (e) => {
-      e.preventDefault();
-      dragCounter++;
-      if (overlay) overlay.classList.remove('hidden');
-    });
-
-    window.addEventListener('dragover', (e) => {
-      e.preventDefault();
-    });
-
-    window.addEventListener('dragleave', (e) => {
-      e.preventDefault();
-      dragCounter--;
-      if (dragCounter <= 0) {
-        dragCounter = 0;
-        if (overlay) overlay.classList.add('hidden');
-      }
-    });
-
-    window.addEventListener('drop', async (e) => {
-      e.preventDefault();
-      dragCounter = 0;
-      if (overlay) overlay.classList.add('hidden');
-
-      const files = await collectFilesFromDrop(e.dataTransfer);
-      if (!files.length) {
-        showToast('Keine unterstützten Audiodateien in den abgelegten Dateien gefunden.');
-        return;
-      }
-
-      if (toast) {
-        toast.classList.remove('hidden');
-        toastTitle.textContent = `Upload läuft (${files.length} Datei(en))...`;
-        toastStatus.textContent = 'Extrahiere Metadata & importiere...';
-        if (toastSpinner) toastSpinner.classList.add('animate-spin');
-      }
-
-      const batchSize = 100;
-      let totalUploaded = 0;
-      let totalSkipped = 0;
-      let failed = 0;
-
-      for (let i = 0; i < files.length; i += batchSize) {
-        const chunk = files.slice(i, i + batchSize);
-        const formData = new FormData();
-        chunk.forEach(f => formData.append('files', f));
-
-        try {
-          const res = await CumuApi.postForm('/api/upload', formData);
-          if (res.success) {
-            totalUploaded += res.uploaded ?? chunk.length;
-            totalSkipped += res.skipped || 0;
-          } else {
-            failed += chunk.length;
-          }
-        } catch (err) {
-          failed += chunk.length;
-        }
-      }
-
-      if (toast) {
-        toastTitle.textContent = (totalUploaded > 0 || totalSkipped > 0) ? '✅ Import abgeschlossen' : '❌ Import fehlgeschlagen';
-        toastStatus.textContent = `${totalUploaded} Song(s) zur Mediathek hinzugefügt.`
-          + (totalSkipped ? ` ${totalSkipped} waren schon vorhanden.` : '');
-        if (toastSpinner) toastSpinner.classList.remove('animate-spin');
-        setTimeout(() => toast.classList.add('hidden'), 5000);
-      }
-
-      showToast(totalSkipped
-        ? `✅ ${totalUploaded} Song(s) importiert, ${totalSkipped} schon vorhanden`
-        : `✅ ${totalUploaded} Song(s) erfolgreich importiert!`);
-
-      if (currentPage === 'library' || currentPage === 'discover' || currentPage === 'songs') {
-        navigate(currentPage, window._lastNavParams);
-      }
-    });
   }
 
   window.CumuApp = {
