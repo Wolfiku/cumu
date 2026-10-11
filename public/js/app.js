@@ -289,9 +289,11 @@ function showToast(msg) {
       return;
     }
     if (npBar && currentSong) npBar.style.display = 'flex';
+    if (currentSong) document.body.classList.add('np-active');
   }
   function hideNpBar() {
     if (npBar) npBar.style.display = 'none';
+    document.body.classList.remove('np-active');
   }
 
   // ── Web Audio API Engine Initialization ─────────────────────────────────────
@@ -599,6 +601,7 @@ function showToast(msg) {
     else if (page === 'settings')   renderSettings();
 
     window.scrollTo(0, 0);
+    if (main) main.scrollTop = 0;
   };
 
   // ── Advanced Audio Engine (Crossfade & Gapless) ─────────────────────────────
@@ -904,6 +907,9 @@ function showToast(msg) {
       }
       if (fullCur)  fullCur.textContent = formatTime(cur);
       if (fullDur)  fullDur.textContent = formatTime(dur);
+
+      const miniProgress = document.getElementById('miniNpProgress');
+      if (miniProgress) miniProgress.style.width = `${pct}%`;
 
       const podSeek = document.getElementById('podcastSeek');
       const podCur  = document.getElementById('podcastCurrentTime');
@@ -1339,6 +1345,7 @@ function showToast(msg) {
       renderNowPlaying();
     }
     updateQueueUI();
+    document.dispatchEvent(new CustomEvent('cumu:player', { detail: { song: currentSong, isPlaying, isFavorite: favorites.has(currentSong.id) } }));
   }
 
   // ── Dynamic Play Queue Functions ───────────────────────────────────────────
@@ -1617,16 +1624,8 @@ function showToast(msg) {
           e.preventDefault();
           item.style.borderTop = '';
           const dropIdx = parseInt(item.dataset.index, 10);
-          if (draggedIdx === null || draggedIdx === dropIdx || draggedIdx === queueIndex || dropIdx === queueIndex) return;
-
-          const [moved] = queue.splice(draggedIdx, 1);
-          queue.splice(dropIdx, 0, moved);
-
-          if (queueIndex === draggedIdx) queueIndex = dropIdx;
-          else if (draggedIdx < queueIndex && dropIdx >= queueIndex) queueIndex--;
-          else if (draggedIdx > queueIndex && dropIdx <= queueIndex) queueIndex++;
-
-          updateQueueUI();
+          if (draggedIdx === null) return;
+          moveQueueItem(draggedIdx, dropIdx);
         });
       });
     }
@@ -1635,6 +1634,19 @@ function showToast(msg) {
       const active = containerEl.querySelector('.queue-drag-item.active');
       if (active) active.scrollIntoView({ block: 'center', behavior: 'smooth' });
     });
+  }
+
+  function moveQueueItem(fromIdx, toIdx) {
+    if (fromIdx === toIdx || fromIdx === queueIndex || toIdx === queueIndex) return;
+    if (fromIdx < 0 || toIdx < 0 || fromIdx >= queue.length || toIdx >= queue.length) return;
+
+    const [moved] = queue.splice(fromIdx, 1);
+    queue.splice(toIdx, 0, moved);
+
+    if (fromIdx < queueIndex && toIdx >= queueIndex) queueIndex--;
+    else if (fromIdx > queueIndex && toIdx <= queueIndex) queueIndex++;
+
+    updateQueueUI();
   }
 
   function showQueuePanel(forceOpen = false) {
@@ -2212,7 +2224,7 @@ function showToast(msg) {
         <div class="grid grid-cols-1 md:grid-cols-12 gap-gutter">
           <!-- Playlists Section (8 cols) -->
           <section class="md:col-span-8 bg-surface-bright border border-border-subtle rounded-xl p-lg flex flex-col h-full">
-            <div class="flex justify-between items-center mb-md border-b border-border-subtle pb-sm">
+            <div class="flex flex-wrap justify-between items-center gap-sm mb-md border-b border-border-subtle pb-sm">
               <h2 class="text-title-md font-title-md text-text-high-contrast font-bold">Playlists</h2>
               <div class="flex items-center gap-md">
                 <button class="text-label-caps font-label-caps text-primary hover:underline font-bold uppercase text-xs" onclick="CumuApp.createPlaylist()">+ New Playlist</button>
@@ -2669,12 +2681,21 @@ function showToast(msg) {
       return;
     }
     const songs = [];
+    let favoritesChanged = false;
     for (const id of favArray) {
       try {
         const s = await CumuApi.get(`/api/songs/${id}`);
-        if (s && s.id) songs.push(s);
+        if (!s || !s.id) continue;
+        // Duplicates merged on the server answer with the id of the kept song
+        if (s.id !== id) {
+          favorites.delete(id);
+          favorites.add(s.id);
+          favoritesChanged = true;
+        }
+        if (!songs.some(x => x.id === s.id)) songs.push(s);
       } catch (_) {}
     }
+    if (favoritesChanged) localStorage.setItem('cumu_favorites', JSON.stringify(Array.from(favorites)));
     main.innerHTML = `
       <div class="p-md md:p-margin-desktop max-w-[1280px] mx-auto w-full">
         <div class="flex items-center justify-between mb-lg">
@@ -4137,7 +4158,7 @@ function showToast(msg) {
         <div class="flex flex-col items-center w-full max-w-3xl mx-auto py-md px-md relative">
           <!-- Top Navigation Bar & Options Button -->
           <div class="flex items-center justify-between w-full mb-lg">
-            <button class="w-10 h-10 rounded-full bg-surface-container-low text-text-high-contrast flex items-center justify-center hover:scale-105 active:scale-95 transition-transform" onclick="navigate('discover')" title="Zurück">
+            <button class="w-10 h-10 rounded-full bg-surface-container-low text-text-high-contrast flex items-center justify-center hover:scale-105 active:scale-95 transition-transform" onclick="window.cumuGoBack ? cumuGoBack() : navigate('discover')" title="Zurück">
               <span class="material-symbols-outlined">arrow_back</span>
             </button>
             <div class="text-label-caps font-label-caps tracking-widest uppercase text-text-muted flex items-center gap-xs">
@@ -4257,6 +4278,16 @@ function showToast(msg) {
     ctxMenu.style.zIndex = '99999';
     ctxMenu.style.display = 'block';
     ctxMenu.classList.remove('hidden');
+
+    // Phones: render the menu as a bottom sheet instead of a dropdown
+    if (window.matchMedia('(max-width: 767px)').matches) {
+      ctxMenu.classList.add('ctx-sheet');
+      ctxMenu.style.top = '';
+      ctxMenu.style.left = '';
+      document.body.classList.add('ctx-sheet-open');
+      return;
+    }
+    ctxMenu.classList.remove('ctx-sheet');
 
     const menuWidth = Math.max(ctxMenu.offsetWidth || 0, 220);
     const menuHeight = Math.max(ctxMenu.offsetHeight || 0, 220);
@@ -4419,7 +4450,9 @@ function showToast(msg) {
     if (ctxMenu) {
       ctxMenu.style.display = 'none';
       ctxMenu.classList.add('hidden');
+      ctxMenu.classList.remove('ctx-sheet');
     }
+    document.body.classList.remove('ctx-sheet-open');
   }
 
   document.addEventListener('click', (e) => {
@@ -4720,6 +4753,7 @@ function showToast(msg) {
 
       const batchSize = 100;
       let totalUploaded = 0;
+      let totalSkipped = 0;
       let failed = 0;
 
       for (let i = 0; i < files.length; i += batchSize) {
@@ -4730,7 +4764,8 @@ function showToast(msg) {
         try {
           const res = await CumuApi.postForm('/api/upload', formData);
           if (res.success) {
-            totalUploaded += res.uploaded || chunk.length;
+            totalUploaded += res.uploaded ?? chunk.length;
+            totalSkipped += res.skipped || 0;
           } else {
             failed += chunk.length;
           }
@@ -4740,13 +4775,16 @@ function showToast(msg) {
       }
 
       if (toast) {
-        toastTitle.textContent = totalUploaded > 0 ? '✅ Import abgeschlossen' : '❌ Import fehlgeschlagen';
-        toastStatus.textContent = `${totalUploaded} Song(s) zur Mediathek hinzugefügt.`;
+        toastTitle.textContent = (totalUploaded > 0 || totalSkipped > 0) ? '✅ Import abgeschlossen' : '❌ Import fehlgeschlagen';
+        toastStatus.textContent = `${totalUploaded} Song(s) zur Mediathek hinzugefügt.`
+          + (totalSkipped ? ` ${totalSkipped} waren schon vorhanden.` : '');
         if (toastSpinner) toastSpinner.classList.remove('animate-spin');
         setTimeout(() => toast.classList.add('hidden'), 5000);
       }
 
-      showToast(`✅ ${totalUploaded} Song(s) erfolgreich importiert!`);
+      showToast(totalSkipped
+        ? `✅ ${totalUploaded} Song(s) importiert, ${totalSkipped} schon vorhanden`
+        : `✅ ${totalUploaded} Song(s) erfolgreich importiert!`);
 
       if (currentPage === 'library' || currentPage === 'discover' || currentPage === 'songs') {
         navigate(currentPage, window._lastNavParams);
@@ -4814,6 +4852,8 @@ function showToast(msg) {
     toggleSaveGenrePlaylist,
     renderGenrePlaylist,
     renderPlaylistCoverCollage,
+    moveQueueItem,
+    getState: () => ({ currentSong, isPlaying, currentPage, user: currentUser, queueLength: queue.length }),
   };
 
   window.playQueue = playQueue;

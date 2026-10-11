@@ -9,7 +9,7 @@ const helmet   = require('helmet');
 const morgan   = require('morgan');
 const cors     = require('cors');
 
-const { initDB, getDB, getConfig, setConfig } = require('./db');
+const { initDB, getDB, getConfig, setConfig, backupDatabase } = require('./db');
 const { createWsServer }    = require('./websocket');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
@@ -137,17 +137,59 @@ function startBackgroundScanner() {
     try { fs.mkdirSync(musicPath, { recursive: true }); } catch {}
   }
   
-  adminRoutes.runLibraryScan().then(res => {
-    if (res.added > 0) {
-      console.log(`[cumu] Startup scan complete: ${res.added} new track(s) indexed.`);
-    }
-  }).catch(err => {
-    console.error('[cumu] Initial library scan error:', err.message);
-  });
+  prepareLibrary()
+    .then(() => adminRoutes.runLibraryScan())
+    .then(res => {
+      if (res.added > 0) {
+        console.log(`[cumu] Startup scan complete: ${res.added} new track(s) indexed.`);
+      }
+    })
+    .catch(err => {
+      console.error('[cumu] Initial library scan error:', err.message);
+    })
+    .finally(() => {
+      // Periodic scans start only after the startup work is done
+      setInterval(() => {
+        adminRoutes.runLibraryScan().catch(() => {});
+      }, 30000);
+    });
+}
 
-  setInterval(() => {
-    adminRoutes.runLibraryScan().catch(() => {});
-  }, 30000);
+// Automatic library cleanup on startup (merged album repair + duplicate merge).
+// The database is backed up once before the first cleanup; if that backup
+// fails, the cleanup is skipped and retried on the next start.
+async function prepareLibrary() {
+  if (!getConfig().libraryCleanupBackup) {
+    const hasSongs = getDB().prepare('SELECT 1 FROM songs LIMIT 1').get();
+    if (hasSongs) {
+      try {
+        const backupPath = await backupDatabase('before-library-cleanup');
+        setConfig('libraryCleanupBackup', backupPath);
+        console.log(`[cumu] Database backed up to ${backupPath}`);
+      } catch (err) {
+        console.error('[cumu] Database backup failed, skipping library cleanup:', err.message);
+        return;
+      }
+    } else {
+      setConfig('libraryCleanupBackup', 'not needed (empty library)');
+    }
+  }
+
+  try {
+    const res = await adminRoutes.repairMergedAlbums();
+    if (res.split > 0) console.log(`[cumu] Repaired ${res.split} merged album(s).`);
+  } catch (err) {
+    console.error('[cumu] Album repair error:', err.message);
+  }
+
+  try {
+    const res = adminRoutes.dedupeLibrary();
+    if (res.albums || res.songs) {
+      console.log(`[cumu] Merged ${res.albums} duplicate album(s) and ${res.songs} duplicate song(s).`);
+    }
+  } catch (err) {
+    console.error('[cumu] Duplicate cleanup error:', err.message);
+  }
 }
 
 // ── HTTP + WebSocket Server ───────────────────────────────────────────────────

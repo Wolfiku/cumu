@@ -2,6 +2,7 @@ const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
 const bcrypt = require('bcryptjs');
+const { cleanupOrphanedAlbums } = require('./services/albums');
 
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, '../data/cumu.db');
 
@@ -228,33 +229,6 @@ function initDB() {
   return db;
 }
 
-function cleanupOrphanedAlbums(db) {
-  try {
-    const orphaned = db.prepare(`
-      SELECT a.* FROM albums a
-      LEFT JOIN songs s ON s.album_id = a.id
-      WHERE s.id IS NULL
-    `).all();
-
-    for (const emptyAlbum of orphaned) {
-      if (emptyAlbum.title) {
-        const activeAlbum = db.prepare(`
-          SELECT a.* FROM albums a
-          JOIN songs s ON s.album_id = a.id
-          WHERE a.title = ? AND a.id != ?
-          LIMIT 1
-        `).get(emptyAlbum.title, emptyAlbum.id);
-
-        if (activeAlbum && !activeAlbum.cover && emptyAlbum.cover) {
-          db.prepare('UPDATE albums SET cover = ? WHERE id = ?').run(emptyAlbum.cover, activeAlbum.id);
-        }
-      }
-      db.prepare('DELETE FROM albums WHERE id = ?').run(emptyAlbum.id);
-    }
-  } catch (err) {
-    console.error('[cumu] cleanupOrphanedAlbums error:', err.message);
-  }
-}
 
 function mergeDuplicateArtists(db) {
   try {
@@ -306,6 +280,16 @@ function getOrCreateArtist(db, name) {
 }
 
 
+/**
+ * Writes a full copy of the database next to it (e.g. cumu.db.backup-<label>-<date>)
+ * and returns the backup path. Used before automatic library migrations.
+ */
+async function backupDatabase(label) {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const target = `${DB_PATH}.backup-${label}-${stamp}`;
+  await getDB().backup(target);
+  return target;
+}
 
 function getConfig() {
   const db = getDB();
@@ -332,5 +316,5 @@ function log(level, category, message) {
   }
 }
 
-module.exports = { getDB, initDB, getConfig, setConfig, log, getOrCreateArtist, mergeDuplicateArtists };
+module.exports = { getDB, initDB, getConfig, setConfig, log, getOrCreateArtist, mergeDuplicateArtists, backupDatabase };
 
