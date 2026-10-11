@@ -280,6 +280,17 @@ function getOrCreateArtist(db, name) {
 }
 
 
+/**
+ * Writes a full copy of the database next to it (e.g. cumu.db.backup-<label>-<date>)
+ * and returns the backup path. Used before automatic library migrations.
+ */
+async function backupDatabase(label) {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const target = `${DB_PATH}.backup-${label}-${stamp}`;
+  await getDB().backup(target);
+  return target;
+}
+
 function getConfig() {
   const db = getDB();
   const rows = db.prepare('SELECT key, value FROM config').all();
@@ -305,5 +316,5 @@ function log(level, category, message) {
   }
 }
 
-module.exports = { getDB, initDB, getConfig, setConfig, log, getOrCreateArtist, mergeDuplicateArtists };
+module.exports = { getDB, initDB, getConfig, setConfig, log, getOrCreateArtist, mergeDuplicateArtists, backupDatabase };
 

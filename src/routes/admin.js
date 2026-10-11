@@ -21,7 +21,7 @@ const mm      = require('music-metadata');
 const { getDB, getConfig, setConfig, log, getOrCreateArtist } = require('../db');
 const { requireAdmin } = require('../middleware/auth');
 const { getOrCreateAlbum, cleanupOrphanedAlbums, resolveEditedSongAlbum } = require('../services/albums');
-const { dedupeLibrary, findDuplicateSong, getIgnoredFiles, ignoreFile } = require('../services/dedupe');
+const { dedupeLibrary, findDuplicateSong, getIgnoredFiles, ignoreFile, releaseIgnoredFiles } = require('../services/dedupe');
 const { testMistralKey } = require('../services/mistral');
 const { processSongLookup, triggerLibraryAutoLookup, queueSongForLookup } = require('../services/autoLookup');
 
@@ -33,8 +33,23 @@ const router = express.Router();
 const AUDIO_EXTS = ['.mp3', '.m4a', '.aac', '.alac', '.mp4', '.flac', '.ogg', '.wav', '.opus'];
 const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp'];
 
-function getMusicPath() {
+// Two music paths exist for historical reasons and must not be unified here:
+// the scanner reads MUSIC_PATH first, while uploads, deletes and streaming
+// (routes/stream.js) use the configured path. Changing either would move files
+// away from where existing installations expect them.
+function getScanPath() {
   return process.env.MUSIC_PATH || getConfig().musicPath || path.join(process.cwd(), 'music');
+}
+function getStoragePath() {
+  return getConfig().musicPath || path.join(process.cwd(), 'music');
+}
+// A song file may live under either path
+function findSongFile(filename) {
+  for (const base of new Set([getStoragePath(), getScanPath()])) {
+    const filePath = path.join(base, filename);
+    if (fs.existsSync(filePath)) return filePath;
+  }
+  return null;
 }
 
 // Uploaded files land in the music folder before their songs are inserted.
@@ -43,7 +58,7 @@ const pendingUploads = new Set();
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const musicPath = getMusicPath();
+    const musicPath = getStoragePath();
     try {
       if (!fs.existsSync(musicPath)) fs.mkdirSync(musicPath, { recursive: true });
       cb(null, musicPath);
@@ -103,6 +118,7 @@ async function extractMeta(filePath) {
       title:    c.title || path.basename(filePath, path.extname(filePath)),
       artist:   c.artist || c.albumartist || null,
       albumArtist: c.albumartist || c.artist || null,
+      albumArtistTag: c.albumartist || null,
       album:    c.album || null,
       year:     c.year || null,
       genre:    Array.isArray(c.genre) ? c.genre[0] : (c.genre || null),
@@ -112,7 +128,7 @@ async function extractMeta(filePath) {
       picture:  c.picture?.length ? c.picture[0] : null,
     };
   } catch {
-    return { title: path.basename(filePath, path.extname(filePath)), artist: null, albumArtist: null, album: null, year: null, genre: null, track: null, duration: 0, codec: null, picture: null };
+    return { unreadable: true, title: path.basename(filePath, path.extname(filePath)), artist: null, albumArtist: null, albumArtistTag: null, album: null, year: null, genre: null, track: null, duration: 0, codec: null, picture: null };
   }
 }
 
@@ -195,7 +211,7 @@ async function processUpload(req, res) {
   try {
     const db        = getDB();
     const cfg       = getConfig();
-    const musicPath = getMusicPath();
+    const musicPath = process.env.MUSIC_PATH || cfg.musicPath || path.join(process.cwd(), 'music');
     const coverFile = req.files?.cover?.[0];
     const songFiles = (req.files?.files || []).filter(f => AUDIO_EXTS.includes(path.extname(f.originalname).toLowerCase()));
 
@@ -203,6 +219,9 @@ async function processUpload(req, res) {
 
     const results = [];
     let skipped = 0;
+    // Files of one upload with the same album title and no album artist tag
+    // form one album (e.g. a compilation dropped in as a folder)
+    const batchAlbums = new Map();
     for (const file of songFiles) {
       const ext      = path.extname(file.originalname).toLowerCase();
       const filePath = file.path;
@@ -219,11 +238,13 @@ async function processUpload(req, res) {
 
       const artistId      = getOrCreateArtist(db, artistName);
       const albumArtistId = req.body.artist ? artistId : getOrCreateArtist(db, meta.albumArtist || artistName);
-      const albumId       = getOrCreateAlbum(db, albumTitle, albumArtistId, meta);
+      const batchKey      = (!req.body.artist && !meta.albumArtistTag && albumTitle) ? String(albumTitle).trim().toLowerCase() : null;
+      const albumId       = (batchKey && batchAlbums.get(batchKey)) || getOrCreateAlbum(db, albumTitle, albumArtistId, meta);
+      if (batchKey && albumId && !batchAlbums.has(batchKey)) batchAlbums.set(batchKey, albumId);
       const fileSize      = fs.statSync(filePath).size;
 
       // Same song already in the library: drop the uploaded copy
-      const existing = findDuplicateSong(db, { title: songTitle, artist_id: artistId, album_id: albumId, duration: meta.duration, file_size: fileSize });
+      const existing = findDuplicateSong(db, { title: songTitle, artist_id: artistId, album_id: albumId, duration: meta.duration, file_size: fileSize, track_number: meta.track });
       if (existing) {
         try { fs.unlinkSync(filePath); } catch {}
         pendingUploads.delete(file.filename);
@@ -297,6 +318,23 @@ router.post('/upload', requireAdmin, handleUpload, processUpload);
 
 // ── LIBRARY — SCAN ────────────────────────────────────────────────────────────
 
+// Album of an already indexed song with this album title in the same folder.
+// Lets compilations without album artist tag stay one album even though their
+// tracks have different artists. The music root is excluded: it holds uploads
+// of unrelated albums side by side.
+function findAlbumInFolder(db, relativePath, albumTitle) {
+  const dir = path.posix.dirname(relativePath);
+  if (!albumTitle || dir === '.') return null;
+  const likeDir = dir.replace(/[\\%_]/g, ch => '\\' + ch);
+  const rows = db.prepare(`
+    SELECT s.filename, s.album_id FROM songs s
+    JOIN albums a ON a.id = s.album_id
+    WHERE s.filename LIKE ? ESCAPE '\\' AND LOWER(TRIM(a.title)) = LOWER(TRIM(?))
+  `).all(`${likeDir}/%`, albumTitle);
+  const hit = rows.find(row => path.posix.dirname(row.filename) === dir);
+  return hit ? hit.album_id : null;
+}
+
 function scanDirectoryRecursive(dirPath, baseDir = dirPath) {
   let results = [];
   if (!fs.existsSync(dirPath)) return results;
@@ -325,7 +363,7 @@ function runLibraryScan() {
 }
 
 async function scanLibrary() {
-  const musicPath = getMusicPath();
+  const musicPath = getScanPath();
 
   if (!fs.existsSync(musicPath)) {
     try { fs.mkdirSync(musicPath, { recursive: true }); } catch {}
@@ -348,11 +386,12 @@ async function scanLibrary() {
 
       const ext      = path.extname(item.relativePath).toLowerCase();
       const artistId = getOrCreateArtist(db, meta.artist);
-      const albumId  = getOrCreateAlbum(db, meta.album, getOrCreateArtist(db, meta.albumArtist), meta);
+      const albumId  = (!meta.albumArtistTag && findAlbumInFolder(db, item.relativePath, meta.album))
+        || getOrCreateAlbum(db, meta.album, getOrCreateArtist(db, meta.albumArtist), meta);
       const fileSize = fs.statSync(item.fullPath).size;
 
       // Another file with the same song is already indexed: don't add it twice
-      const existing = findDuplicateSong(db, { title: meta.title, artist_id: artistId, album_id: albumId, duration: meta.duration, file_size: fileSize });
+      const existing = findDuplicateSong(db, { title: meta.title, artist_id: artistId, album_id: albumId, duration: meta.duration, file_size: fileSize, track_number: meta.track });
       if (existing) {
         ignoreFile(db, item.relativePath, existing.id);
         cleanupOrphanedAlbums(db);
@@ -437,7 +476,7 @@ router.put('/albums/:id', requireAdmin, (req, res) => {
 
 router.delete('/songs/:id', requireAdmin, (req, res) => {
   const db = getDB();
-  const musicPath = getMusicPath();
+  const musicPath = getStoragePath();
   const song = db.prepare('SELECT * FROM songs WHERE id=?').get(req.params.id);
   if (!song) return res.status(404).json({ error: 'Not found' });
   try { fs.unlinkSync(path.join(musicPath, song.filename)); } catch {}
@@ -445,13 +484,14 @@ router.delete('/songs/:id', requireAdmin, (req, res) => {
   db.prepare('DELETE FROM playlist_songs WHERE song_id=?').run(req.params.id);
   db.prepare('DELETE FROM library WHERE song_id=?').run(req.params.id);
   db.prepare('DELETE FROM songs WHERE id=?').run(req.params.id);
+  releaseIgnoredFiles(db, req.params.id);
   log('info', 'admin', `Song deleted: ${req.params.id}`);
   res.json({ success: true });
 });
 
 router.delete('/albums/:id', requireAdmin, (req, res) => {
   const db = getDB();
-  const musicPath = getMusicPath();
+  const musicPath = getStoragePath();
   const songs = db.prepare('SELECT * FROM songs WHERE album_id=?').all(req.params.id);
   for (const s of songs) {
     try { fs.unlinkSync(path.join(musicPath, s.filename)); } catch {}
@@ -459,6 +499,7 @@ router.delete('/albums/:id', requireAdmin, (req, res) => {
     db.prepare('DELETE FROM playlist_songs WHERE song_id=?').run(s.id);
     db.prepare('DELETE FROM library WHERE song_id=?').run(s.id);
     db.prepare('DELETE FROM songs WHERE id=?').run(s.id);
+    releaseIgnoredFiles(db, s.id);
   }
   db.prepare('DELETE FROM albums WHERE id=?').run(req.params.id);
   log('info', 'admin', `Album deleted: ${req.params.id}`);
@@ -675,15 +716,19 @@ router.delete('/oauth/clients/:id', requireAdmin, (req, res) => {
 
 // ── LIBRARY — ONE-TIME REPAIR OF MERGED ALBUMS ───────────────────────────────
 // Older versions reused any album with a matching title, so albums of different
-// artists that share a name ("Greatest Hits") were merged into one. This splits
-// them again, grouped by the album artist tag so compilations stay together.
+// artists that share a name ("Greatest Hits") could be merged into one. This
+// splits them again, but only where the files prove they belong apart:
+//   - songs carry different album artist tags, or
+//   - songs without an album artist tag sit in different folders.
+// Songs in one folder without album artist tag stay together, and a folder with
+// several artists marks the whole album as a compilation that is not touched.
+// Albums with unreadable files or manually edited songs are left untouched.
 
 async function repairMergedAlbums() {
   const cfg = getConfig();
   if (cfg.mergedAlbumsRepaired === true || cfg.mergedAlbumsRepaired === 'true') return { split: 0 };
 
-  const db        = getDB();
-  const musicPath = getMusicPath();
+  const db = getDB();
   const mixed = db.prepare(`
     SELECT album_id FROM songs
     WHERE album_id IS NOT NULL
@@ -693,39 +738,54 @@ async function repairMergedAlbums() {
 
   let split = 0;
   for (const { album_id } of mixed) {
-    const album = db.prepare('SELECT * FROM albums WHERE id = ?').get(album_id);
-    if (!album) continue;
-    const songs = db.prepare('SELECT id, filename, artist_id FROM songs WHERE album_id = ?').all(album_id);
+    try {
+      const album = db.prepare('SELECT * FROM albums WHERE id = ?').get(album_id);
+      if (!album) continue;
+      const songs = db.prepare('SELECT id, filename, artist_id, is_user_edited FROM songs WHERE album_id = ?').all(album_id);
+      if (songs.some(song => song.is_user_edited)) continue;
 
-    // Album artist per song, read from the file tags (track artist as fallback)
-    const groups = new Map();
-    for (const song of songs) {
-      let albumArtistId = song.artist_id;
-      const filePath = path.join(musicPath, song.filename);
-      if (fs.existsSync(filePath)) {
-        const meta = await extractMeta(filePath);
-        if (meta.albumArtist) albumArtistId = getOrCreateArtist(db, meta.albumArtist);
+      const groups = new Map();
+      let unreadable = false;
+      for (const song of songs) {
+        const filePath = findSongFile(song.filename);
+        const meta = filePath ? await extractMeta(filePath) : null;
+        if (!meta || meta.unreadable) { unreadable = true; break; }
+        const key = meta.albumArtistTag
+          ? `tag:${meta.albumArtistTag.trim().toLowerCase()}`
+          : `dir:${path.posix.dirname(song.filename)}`;
+        if (!groups.has(key)) groups.set(key, { tag: meta.albumArtistTag, songs: [] });
+        groups.get(key).songs.push(song);
       }
-      const key = albumArtistId || '';
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(song.id);
-    }
-    if (groups.size < 2) continue;
+      if (unreadable || groups.size < 2) continue;
+      // A folder holding several artists without album artist tag is a
+      // compilation (possibly split into CD1/CD2 folders): leave the album alone
+      const isCompilationFolder = (group) => !group.tag && new Set(group.songs.map(song => song.artist_id || null)).size > 1;
+      if ([...groups.values()].some(isCompilationFolder)) continue;
 
-    // The group matching the album's artist keeps the album; others get their own
-    const moveSong = db.prepare('UPDATE songs SET album_id = ? WHERE id = ?');
-    for (const [artistId, songIds] of groups) {
-      if ((artistId || null) === (album.artist_id || null)) continue;
-      let target = db.prepare('SELECT id FROM albums WHERE title = ? AND artist_id IS ? AND id != ?')
-        .get(album.title, artistId || null, album.id);
-      if (!target) {
-        target = { id: uuidv4() };
-        db.prepare('INSERT INTO albums (id, title, artist_id, year, genre, cover, is_audiobook) VALUES (?, ?, ?, ?, ?, ?, ?)')
-          .run(target.id, album.title, artistId || null, album.year, album.genre, album.cover, album.is_audiobook || 0);
-      }
-      for (const songId of songIds) moveSong.run(target.id, songId);
+      db.transaction(() => {
+        let albumKept = false;
+        for (const group of groups.values()) {
+          const artistId = group.tag ? getOrCreateArtist(db, group.tag) : (group.songs[0].artist_id || null);
+
+          if (!albumKept && (artistId || null) === (album.artist_id || null)) {
+            albumKept = true;
+            continue;
+          }
+          let target = db.prepare('SELECT id FROM albums WHERE LOWER(TRIM(title)) = LOWER(TRIM(?)) AND artist_id IS ? AND id != ?')
+            .get(album.title, artistId || null, album.id);
+          if (!target) {
+            target = { id: uuidv4() };
+            db.prepare('INSERT INTO albums (id, title, artist_id, year, genre, cover, is_audiobook) VALUES (?, ?, ?, ?, ?, ?, ?)')
+              .run(target.id, album.title, artistId || null, album.year, album.genre, album.cover, album.is_audiobook || 0);
+          }
+          const moveSong = db.prepare('UPDATE songs SET album_id = ? WHERE id = ?');
+          for (const song of group.songs) moveSong.run(target.id, song.id);
+        }
+      })();
+      split++;
+    } catch (err) {
+      console.error(`[cumu] Album repair skipped album ${album_id}:`, err.message);
     }
-    split++;
   }
 
   cleanupOrphanedAlbums(db);
@@ -737,7 +797,7 @@ async function repairMergedAlbums() {
 router.runLibraryScan = runLibraryScan;
 router.repairMergedAlbums = repairMergedAlbums;
 router.dedupeLibrary = () => {
-  const result = dedupeLibrary(getDB(), getMusicPath());
+  const result = dedupeLibrary(getDB(), findSongFile);
   if (result.albums || result.songs) {
     log('info', 'admin', `Merged ${result.albums} duplicate album(s) and ${result.songs} duplicate song(s)`);
   }

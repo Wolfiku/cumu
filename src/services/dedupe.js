@@ -3,22 +3,21 @@
  * Finds and merges duplicate albums and songs, and lets imports check for an
  * existing copy of a song before adding it again.
  *
- * Albums are duplicates when they share artist and title (ignoring case and
- * surrounding spaces). Songs are duplicates when they share artist, album and
- * title and their durations differ by at most a second; songs without an artist
- * must also have the same file size.
+ * This runs automatically on every start, so it only merges what is certainly
+ * the same thing and never deletes files:
+ *   - Albums: same artist and same title (ignoring case and surrounding spaces).
+ *   - Songs:  the same file indexed twice, or a copy with identical file size,
+ *             duration (±1s), title, artist and album whose track numbers
+ *             don't contradict each other.
+ * Merged songs leave an alias so old ids (playlists in clients, favorites)
+ * keep working. Duplicate files stay on disk and are just not indexed again.
  */
 
 'use strict';
 
-const fs   = require('fs');
-const path = require('path');
 const { cleanupOrphanedAlbums } = require('./albums');
 
 const norm = (s) => (s || '').trim().toLowerCase();
-
-// Files the app stored for uploads are named <uuid>.<ext> in the music root.
-const UPLOAD_NAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]+$/;
 
 function ensureTables(db) {
   db.exec(`
@@ -44,6 +43,7 @@ function mergeDuplicateAlbums(db) {
 
   const groups = new Map();
   for (const album of albums) {
+    if (!norm(album.title)) continue;
     const key = `${album.artist_id || ''}\u0000${norm(album.title)}`;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(album);
@@ -74,14 +74,19 @@ function mergeDuplicateAlbums(db) {
 // ── Songs ────────────────────────────────────────────────────────────────────
 
 function isSameRecording(a, b) {
+  if (a.filename && a.filename === b.filename) return true;
+  if (norm(a.title) !== norm(b.title)) return false;
+  if ((a.artist_id || null) !== (b.artist_id || null)) return false;
+  if ((a.album_id || null) !== (b.album_id || null)) return false;
+  if (!a.file_size || a.file_size !== b.file_size) return false;
   if (Math.abs((a.duration || 0) - (b.duration || 0)) > 1) return false;
-  if (!a.artist_id && (a.file_size || 0) !== (b.file_size || 0)) return false;
+  if (a.track_number && b.track_number && a.track_number !== b.track_number) return false;
   return true;
 }
 
 /**
  * Returns an already indexed copy of the song described by `candidate`
- * ({ title, artist_id, album_id, duration, file_size }), or null.
+ * ({ title, artist_id, album_id, duration, file_size, track_number }), or null.
  */
 function findDuplicateSong(db, candidate) {
   if (!candidate.title) return null;
@@ -89,7 +94,7 @@ function findDuplicateSong(db, candidate) {
     SELECT * FROM songs
     WHERE LOWER(TRIM(title)) = ? AND artist_id IS ? AND album_id IS ?
   `).all(norm(candidate.title), candidate.artist_id || null, candidate.album_id || null);
-  return rows.find(row => isSameRecording(row, candidate)) || null;
+  return rows.find(row => isSameRecording(row, { ...candidate, filename: null })) || null;
 }
 
 function mergeSongInto(db, keep, dupe) {
@@ -99,30 +104,40 @@ function mergeSongInto(db, keep, dupe) {
   db.prepare('UPDATE library SET song_id = ? WHERE song_id = ?').run(keep.id, dupe.id);
   db.prepare('UPDATE user_state SET last_song_id = ? WHERE last_song_id = ?').run(keep.id, dupe.id);
   db.prepare('UPDATE songs SET play_count = play_count + ?, cover = COALESCE(cover, ?) WHERE id = ?').run(dupe.play_count || 0, dupe.cover || null, keep.id);
-  // Old ids (e.g. in favorites stored by clients) keep resolving to the kept song
   db.prepare('UPDATE song_aliases SET new_id = ? WHERE new_id = ?').run(keep.id, dupe.id);
   db.prepare('INSERT OR REPLACE INTO song_aliases (old_id, new_id) VALUES (?, ?)').run(dupe.id, keep.id);
   db.prepare('DELETE FROM songs WHERE id = ?').run(dupe.id);
 }
 
-function mergeDuplicateSongs(db, musicPath) {
+function mergeDuplicateSongs(db, findSongFile) {
   const songs = db.prepare('SELECT * FROM songs ORDER BY created_at ASC').all();
+
+  // Candidates: same file, or same title + artist + album
+  const parent = new Map(songs.map(s => [s.id, s.id]));
+  const find = (id) => { while (parent.get(id) !== id) id = parent.get(id); return id; };
+  const union = (a, b) => parent.set(find(b), find(a));
+  const byFile = new Map();
+  const byMeta = new Map();
+  for (const song of songs) {
+    if (byFile.has(song.filename)) union(byFile.get(song.filename), song.id);
+    else byFile.set(song.filename, song.id);
+    const key = `${song.artist_id || ''}\u0000${song.album_id || ''}\u0000${norm(song.title)}`;
+    if (byMeta.has(key)) union(byMeta.get(key), song.id);
+    else byMeta.set(key, song.id);
+  }
   const groups = new Map();
   for (const song of songs) {
-    const key = `${song.artist_id || ''}\u0000${song.album_id || ''}\u0000${norm(song.title)}`;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(song);
+    const root = find(song.id);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(song);
   }
 
-  const exists = (song) => fs.existsSync(path.join(musicPath, song.filename));
   let merged = 0;
-  let filesRemoved = 0;
-
   for (const group of groups.values()) {
     if (group.length < 2) continue;
     // Prefer songs whose file exists, then user-edited, then most played, then oldest
     const ranked = group
-      .map(song => ({ song, onDisk: exists(song) }))
+      .map(song => ({ song, onDisk: findSongFile(song.filename) ? 1 : 0 }))
       .sort((a, b) => (b.onDisk - a.onDisk)
         || ((b.song.is_user_edited || 0) - (a.song.is_user_edited || 0))
         || ((b.song.play_count || 0) - (a.song.play_count || 0)))
@@ -135,38 +150,34 @@ function mergeDuplicateSongs(db, musicPath) {
 
       mergeSongInto(db, keep, song);
       merged++;
-
-      // The removed song's file, unless the kept song uses the very same file
-      if (song.filename === keep.filename) continue;
-      const stillUsed = db.prepare('SELECT 1 FROM songs WHERE filename = ?').get(song.filename);
-      if (stillUsed) continue;
-
-      const filePath = path.join(musicPath, song.filename);
-      if (UPLOAD_NAME.test(song.filename) && fs.existsSync(filePath)) {
-        // Extra copy created by a repeated upload: safe to delete
-        try { fs.unlinkSync(filePath); filesRemoved++; continue; } catch (_) {}
+      // A second file with the same song stays on disk but is not indexed again
+      if (song.filename !== keep.filename) {
+        db.prepare('INSERT OR REPLACE INTO ignored_files (filename, duplicate_of) VALUES (?, ?)').run(song.filename, keep.id);
       }
-      // A file the user put in the music folder: leave it, but don't index it again
-      db.prepare('INSERT OR REPLACE INTO ignored_files (filename, duplicate_of) VALUES (?, ?)').run(song.filename, keep.id);
     }
   }
-  return { merged, filesRemoved };
+  return merged;
 }
 
 /**
- * Merges all duplicate albums and songs. Safe to run on every start.
+ * Merges all duplicate albums and songs in one transaction. Idempotent.
+ * `findSongFile(filename)` returns the file's path if it exists on disk.
  */
-function dedupeLibrary(db, musicPath) {
+function dedupeLibrary(db, findSongFile) {
   ensureTables(db);
   const result = db.transaction(() => {
     const albums = mergeDuplicateAlbums(db);
-    const songs = mergeDuplicateSongs(db, musicPath);
-    // Songs may have been the last ones of an album
+    const songs = mergeDuplicateSongs(db, findSongFile);
     cleanupOrphanedAlbums(db);
-    return { albums, songs: songs.merged, filesRemoved: songs.filesRemoved };
+    return { albums, songs };
   })();
+
   // Each file may be indexed only once from now on
-  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_songs_filename ON songs(filename)');
+  try {
+    db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_songs_filename ON songs(filename)');
+  } catch (err) {
+    console.error('[cumu] Could not create unique filename index:', err.message);
+  }
   return result;
 }
 
@@ -186,4 +197,12 @@ function ignoreFile(db, filename, duplicateOf) {
   db.prepare('INSERT OR REPLACE INTO ignored_files (filename, duplicate_of) VALUES (?, ?)').run(filename, duplicateOf);
 }
 
-module.exports = { dedupeLibrary, findDuplicateSong, resolveSongAlias, getIgnoredFiles, ignoreFile };
+// When a song is deleted, files that were skipped as its duplicates may be
+// indexed again by the next scan.
+function releaseIgnoredFiles(db, songId) {
+  ensureTables(db);
+  db.prepare('DELETE FROM ignored_files WHERE duplicate_of = ?').run(songId);
+  db.prepare('DELETE FROM song_aliases WHERE new_id = ?').run(songId);
+}
+
+module.exports = { dedupeLibrary, findDuplicateSong, resolveSongAlias, getIgnoredFiles, ignoreFile, releaseIgnoredFiles };
