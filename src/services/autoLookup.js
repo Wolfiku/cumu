@@ -11,103 +11,11 @@ const { getDB, getConfig, log, getOrCreateArtist } = require('../db');
 const { searchMusicBrainz } = require('./musicbrainz');
 const { correctTrackInfo, fetchSpecificGenre } = require('./mistral');
 const { isGenreValid, normalizeGenre } = require('../utils/genresList');
-const { v4: uuidv4 } = require('uuid');
+const { getOrCreateAlbum, cleanupOrphanedAlbums } = require('./albums');
 
 let isLookupRunning = false;
 let lookupQueue = [];
 
-function cleanupOrphanedAlbums(db) {
-  try {
-    const orphaned = db.prepare(`
-      SELECT a.* FROM albums a
-      LEFT JOIN songs s ON s.album_id = a.id
-      WHERE s.id IS NULL
-    `).all();
-
-    for (const emptyAlbum of orphaned) {
-      if (emptyAlbum.title) {
-        const activeAlbum = db.prepare(`
-          SELECT a.* FROM albums a
-          JOIN songs s ON s.album_id = a.id
-          WHERE a.title = ? AND a.artist_id IS ? AND a.id != ?
-          LIMIT 1
-        `).get(emptyAlbum.title, emptyAlbum.artist_id, emptyAlbum.id);
-
-        if (activeAlbum && !activeAlbum.cover && emptyAlbum.cover) {
-          db.prepare('UPDATE albums SET cover = ? WHERE id = ?').run(emptyAlbum.cover, activeAlbum.id);
-        }
-      }
-      db.prepare('DELETE FROM albums WHERE id = ?').run(emptyAlbum.id);
-    }
-  } catch (err) {
-    console.error('[cumu] cleanupOrphanedAlbums error:', err.message);
-  }
-}
-
-
-function getOrCreateAlbum(db, title, artistId, meta = {}, existingAlbumId = null) {
-  if (!title) return null;
-
-  // 0. Keep the song's current album when the title still matches. Its artist
-  //    may be the album artist (e.g. "Various Artists" on compilations), which
-  //    differs from the track artist the lookup returns.
-  let row = null;
-  if (existingAlbumId) {
-    const current = db.prepare('SELECT * FROM albums WHERE id = ?').get(existingAlbumId);
-    if (current && current.title && current.title.toLowerCase() === String(title).toLowerCase()) {
-      row = current;
-    }
-  }
-
-  // 1. Search for existing album by title and artist_id
-  if (!row && artistId) {
-    row = db.prepare('SELECT * FROM albums WHERE title = ? AND artist_id = ?').get(title, artistId);
-  }
-
-  // 2. Search by title where artist_id is NULL
-  if (!row) {
-    row = db.prepare('SELECT * FROM albums WHERE title = ? AND artist_id IS NULL').get(title);
-    if (row && artistId) {
-      db.prepare('UPDATE albums SET artist_id = ? WHERE id = ?').run(artistId, row.id);
-      row.artist_id = artistId;
-    }
-  }
-
-  // 3. Without an artist, fall back to any album with this title. Albums of
-  //    other artists are never reused: different artists can share a title.
-  if (!row && !artistId) {
-    row = db.prepare('SELECT * FROM albums WHERE title = ?').get(title);
-  }
-
-  if (row) {
-    if (meta.year && !row.year) db.prepare('UPDATE albums SET year = ? WHERE id = ?').run(meta.year, row.id);
-    if (meta.genre && (!row.genre || !isGenreValid(row.genre))) {
-      db.prepare('UPDATE albums SET genre = ? WHERE id = ?').run(meta.genre, row.id);
-    }
-    if (meta.cover && !row.cover) db.prepare('UPDATE albums SET cover = ? WHERE id = ?').run(meta.cover, row.id);
-    return row.id;
-  }
-
-  // 4. Update existingAlbumId in place if it has 1 or 0 songs
-  if (existingAlbumId) {
-    const existingAlbum = db.prepare('SELECT * FROM albums WHERE id = ?').get(existingAlbumId);
-    if (existingAlbum) {
-      const countRow = db.prepare('SELECT COUNT(*) as c FROM songs WHERE album_id = ?').get(existingAlbumId);
-      if (countRow.c <= 1) {
-        db.prepare('UPDATE albums SET title = ?, artist_id = COALESCE(?, artist_id), year = COALESCE(?, year), genre = COALESCE(?, genre), cover = COALESCE(?, cover) WHERE id = ?')
-          .run(title, artistId, meta.year || null, meta.genre || null, meta.cover || null, existingAlbumId);
-        return existingAlbumId;
-      }
-    }
-  }
-
-  // 5. Create new album
-  const id = uuidv4();
-  db.prepare('INSERT INTO albums (id, title, artist_id, year, genre, cover) VALUES (?, ?, ?, ?, ?, ?)').run(
-    id, title, artistId, meta.year || null, meta.genre || null, meta.cover || null
-  );
-  return id;
-}
 
 /**
  * Updates a single song's metadata when a lookup is successful.

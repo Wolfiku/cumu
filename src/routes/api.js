@@ -9,7 +9,8 @@ const fs = require('fs');
 const path = require('path');
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
-const { getDB, getConfig } = require('../db');
+const { getDB, getConfig, getOrCreateArtist } = require('../db');
+const { cleanupOrphanedAlbums, resolveEditedSongAlbum } = require('../services/albums');
 const { requireAuth } = require('../middleware/auth');
 const { fetchPodcastSearchResults } = require('./podcasts');
 
@@ -218,27 +219,6 @@ router.post('/songs/:id/play', requireAuth, (req, res) => {
   res.json({ success: true });
 });
 
-function getOrCreateArtist(db, name) {
-  if (!name) return null;
-  let row = db.prepare('SELECT id FROM artists WHERE name = ?').get(name);
-  if (!row) {
-    const id = uuidv4();
-    db.prepare('INSERT INTO artists (id, name) VALUES (?, ?)').run(id, name);
-    row = { id };
-  }
-  return row.id;
-}
-
-function getOrCreateAlbum(db, title, artistId, meta) {
-  if (!title) return null;
-  let row = db.prepare('SELECT id FROM albums WHERE title = ? AND artist_id = ?').get(title, artistId);
-  if (!row) {
-    const id = uuidv4();
-    db.prepare('INSERT INTO albums (id, title, artist_id, year, genre) VALUES (?, ?, ?, ?, ?)').run(id, title, artistId, meta?.year || null, meta?.genre || null);
-    row = { id };
-  }
-  return row.id;
-}
 
 const handleSongUpdate = (req, res) => {
   try {
@@ -250,7 +230,7 @@ const handleSongUpdate = (req, res) => {
     let artistId = song.artist_id;
     if (artist !== undefined) artistId = artist ? getOrCreateArtist(db, artist) : null;
     let albumId = song.album_id;
-    if (album !== undefined) albumId = album ? getOrCreateAlbum(db, album, artistId, { year, genre }) : null;
+    if (album !== undefined) albumId = album ? resolveEditedSongAlbum(db, song, album, artistId, { year, genre }) : null;
 
     db.prepare(`
       UPDATE songs 
@@ -272,6 +252,7 @@ const handleSongUpdate = (req, res) => {
       is_audiobook != null ? (is_audiobook ? 1 : 0) : null, 
       req.params.id
     );
+    cleanupOrphanedAlbums(db);
 
     const updated = db.prepare(`
       SELECT s.*, al.title as album_title, al.cover, ar.name as artist_name 
