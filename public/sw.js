@@ -3,12 +3,13 @@
  * Service Worker for Cumu Web - App Shell & Offline Caching
  */
 
-const CACHE_NAME = 'cumu-app-shell-v1';
+const CACHE_NAME = 'cumu-app-shell-v2';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
   '/css/style.css',
   '/css/style.additions.css',
+  '/css/mobile.css',
   '/js/api-client.js',
   '/js/offline-store.js',
   '/js/app.js',
@@ -16,6 +17,7 @@ const ASSETS_TO_CACHE = [
   '/js/settings.js',
   '/js/icons.js',
   '/js/admin.js',
+  '/js/mobile.js',
 ];
 
 self.addEventListener('install', (event) => {

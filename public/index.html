@@ -2,7 +2,12 @@
 <html lang="en" class="h-full" data-theme="standard">
 <head>
   <meta charset="utf-8">
-  <meta content="width=device-width, initial-scale=1.0" name="viewport">
+  <meta content="width=device-width, initial-scale=1.0, viewport-fit=cover" name="viewport">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="cumu">
   <title>cumu - Studio Environment</title>
   <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -117,6 +122,7 @@
   <link rel="stylesheet" href="/css/settings.css">
   <link rel="stylesheet" href="/css/theme-standard.css">
   <link rel="stylesheet" href="/css/theme-standard.additions.css">
+  <link rel="stylesheet" href="/css/mobile.css">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>&#127925;</text></svg>">
 </head>
 <body class="bg-background text-on-surface h-screen flex overflow-hidden">
@@ -126,12 +132,16 @@
     loading cumu…
   </div>
 
-  <!-- ── TopNavBar (Mobile Only - Settings Page Design) ───────────────────── -->
-  <nav class="md:hidden flex justify-between items-center w-full px-gutter h-16 bg-background fixed top-0 z-50">
+  <!-- ── TopNavBar (Mobile Only) ────────────────────────────────────────────── -->
+  <nav id="mobileTopNav" class="md:hidden flex justify-between items-center w-full px-gutter bg-background/90 backdrop-blur-xl fixed top-0 z-50">
+    <button id="mobileBackBtn" class="mobile-icon-btn -ml-sm" onclick="cumuGoBack()" aria-label="Back">
+      <span class="material-symbols-outlined">arrow_back</span>
+    </button>
     <span class="font-headline-lg-mobile text-headline-lg-mobile text-on-surface lowercase font-bold cursor-pointer" onclick="navigate('discover')">cumu</span>
-    <div class="flex gap-md">
-      <span class="material-symbols-outlined hover:scale-105 transition-transform duration-200 active:scale-95 text-text-muted cursor-pointer" data-icon="search" onclick="navigate('discover')">search</span>
-      <span class="material-symbols-outlined hover:scale-105 transition-transform duration-200 active:scale-95 text-text-muted cursor-pointer" data-icon="settings" onclick="navigate('settings')">settings</span>
+    <div class="flex gap-xs -mr-sm">
+      <button class="mobile-icon-btn" onclick="CumuMobile.openSearch()" aria-label="Search">
+        <span class="material-symbols-outlined">search</span>
+      </button>
     </div>
   </nav>
 
@@ -205,6 +215,43 @@
     </div>
   </nav>
 
+  <!-- ── Mobile Mini Player (Mobile Only) ───────────────────────────────────── -->
+  <div id="mobileMiniPlayer" class="md:hidden" role="region" aria-label="Now playing">
+    <div class="mini-np-progress"><div id="miniNpProgress"></div></div>
+    <div class="mini-np-body" onclick="navigate('nowplaying')">
+      <div class="mini-np-cover" id="miniNpCover"><span class="material-symbols-outlined">music_note</span></div>
+      <div class="mini-np-text">
+        <span class="mini-np-title" id="miniNpTitle">Now Playing</span>
+        <span class="mini-np-artist" id="miniNpArtist"></span>
+      </div>
+      <button class="mobile-icon-btn" id="miniNpFavBtn" onclick="event.stopPropagation(); CumuMobile.toggleFavorite()" aria-label="Favorite">
+        <span class="material-symbols-outlined" id="miniNpFavIcon">favorite</span>
+      </button>
+      <button class="mobile-icon-btn mini-np-play" onclick="event.stopPropagation(); CumuApp.togglePlay()" aria-label="Play/Pause">
+        <span class="material-symbols-outlined" id="miniNpPlayIcon" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
+      </button>
+      <button class="mobile-icon-btn" onclick="event.stopPropagation(); CumuApp.nextTrack()" aria-label="Next track">
+        <span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">skip_next</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ── Mobile Bottom Tab Bar (Mobile Only, exactly 3 tabs) ───────────────── -->
+  <nav id="mobileTabBar" class="md:hidden" aria-label="Main">
+    <button class="mobile-tab" data-tab="home" onclick="CumuMobile.openTab('home')">
+      <span class="material-symbols-outlined">home</span>
+      <span class="mobile-tab-label">home</span>
+    </button>
+    <button class="mobile-tab" data-tab="library" onclick="CumuMobile.openTab('library')">
+      <span class="material-symbols-outlined">library_music</span>
+      <span class="mobile-tab-label">library</span>
+    </button>
+    <button class="mobile-tab" data-tab="profile" onclick="CumuMobile.openTab('profile')">
+      <span class="material-symbols-outlined">account_circle</span>
+      <span class="mobile-tab-label">profile</span>
+    </button>
+  </nav>
+
   <!-- ── Login Modal ───────────────────────────────────────────────────────── -->
   <div id="loginModal" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[9999]" role="dialog" aria-modal="true">
     <div class="bg-background border border-border-subtle rounded-xl p-xl max-w-md w-full mx-md shadow-2xl">
@@ -260,6 +307,7 @@
   <script src="/js/settings.js"></script>
   <script src="/js/admin.js"></script>
   <script src="/js/app.js"></script>
+  <script src="/js/mobile.js"></script>
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
