@@ -281,30 +281,13 @@
   <!-- ── Context Menu ──────────────────────────────────────────────────────── -->
   <div id="contextMenu" class="hidden fixed bg-background border border-border-subtle rounded-lg shadow-xl py-xs z-[9999] min-w-[180px]"></div>
 
-  <!-- ── Drag & Drop Overlay ────────────────────────────────────────────────── -->
-  <div id="dragDropOverlay" class="hidden fixed inset-0 bg-black/80 backdrop-blur-md z-[99999] flex flex-col items-center justify-center p-xl text-center pointer-events-none transition-all duration-300">
-    <div class="p-2xl border-2 border-dashed border-text-muted rounded-2xl bg-surface-bright/80 flex flex-col items-center gap-md max-w-lg shadow-2xl">
-      <span class="material-symbols-outlined text-6xl text-on-surface" style="font-variation-settings: 'FILL' 1;">cloud_upload</span>
-      <h2 class="font-headline-md text-headline-md text-on-surface font-bold">Drop music here</h2>
-      <p class="font-body-md text-body-md text-text-muted">Drag audio files (MP3, FLAC, M4A, WAV, etc.) or entire folders here for instant import.</p>
-    </div>
-  </div>
-
-  <!-- ── Upload Status Toast ────────────────────────────────────────────────── -->
-  <div id="uploadToast" class="hidden fixed bottom-24 right-6 bg-surface-bright border border-border-subtle p-md rounded-xl shadow-2xl z-[9999] flex items-center gap-md max-w-md">
-    <span class="material-symbols-outlined text-on-surface text-2xl animate-spin" id="uploadToastSpinner">sync</span>
-    <div class="flex flex-col gap-xs flex-1">
-      <span class="font-label-caps text-label-caps text-on-surface font-bold" id="uploadToastTitle">Upload in progress...</span>
-      <span class="font-body-sm text-body-sm text-text-muted" id="uploadToastStatus">Processing files...</span>
-    </div>
-  </div>
-
   <!-- ── Scripts ───────────────────────────────────────────────────────────── -->
   <script src="/js/icons.js"></script>
   <script src="/js/genres.js"></script>
   <script src="/js/api-client.js"></script>
   <script src="/js/offline-store.js"></script>
   <script src="/js/settings.js"></script>
+  <script src="/js/scan-status.js"></script>
   <script src="/js/admin.js"></script>
   <script src="/js/app.js"></script>
   <script src="/js/mobile.js"></script>

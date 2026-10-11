@@ -137,21 +137,26 @@ function startBackgroundScanner() {
     try { fs.mkdirSync(musicPath, { recursive: true }); } catch {}
   }
   
+  // The startup check also resumes a scan that was interrupted by a restart.
+  // Periodic checks start only after the startup work is done.
   prepareLibrary()
-    .then(() => adminRoutes.runLibraryScan())
+    .then(() => {
+      setInterval(() => {
+        try {
+          adminRoutes.checkLibrary().catch(err => console.error('[cumu] Library scan error:', err.message));
+        } catch (err) {
+          console.error('[cumu] Library check error:', err.message);
+        }
+      }, 30000);
+      return adminRoutes.checkLibrary();
+    })
     .then(res => {
-      if (res.added > 0) {
+      if (res && res.added > 0) {
         console.log(`[cumu] Startup scan complete: ${res.added} new track(s) indexed.`);
       }
     })
     .catch(err => {
       console.error('[cumu] Initial library scan error:', err.message);
-    })
-    .finally(() => {
-      // Periodic scans start only after the startup work is done
-      setInterval(() => {
-        adminRoutes.runLibraryScan().catch(() => {});
-      }, 30000);
     });
 }
 

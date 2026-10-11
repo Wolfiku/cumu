@@ -180,29 +180,49 @@ const CumuAdmin = (function() {
       <section class="flex flex-col gap-md">
         <h2 class="font-title-md text-title-md text-on-surface border-b border-border-subtle pb-sm">Scan Library</h2>
         <div class="flex flex-col gap-sm p-md rounded-lg bg-surface-container-low">
-          <p class="font-body-sm text-body-sm text-text-muted">Scans the server's music folder for manually copied audio files.</p>
+          <p class="font-body-sm text-body-sm text-text-muted">Scans the server's music folder for manually copied audio files and looks up the metadata of every new song. New files are also picked up automatically every 30 seconds. The scan runs on the server and keeps going when this window is closed.</p>
+          <div id="scanLiveStatus" class="flex flex-col gap-xs mt-sm font-body-sm text-body-sm text-text-muted"></div>
           <div class="flex items-center gap-md mt-sm">
-            <button id="btnScanLibrary" class="px-md py-sm bg-text-muted text-on-primary font-body-sm text-body-sm rounded hover:scale-105 active:scale-95 transition-all duration-200">Start Scan</button>
+            <button id="btnScanLibrary" class="px-md py-sm bg-text-muted text-on-primary font-body-sm text-body-sm rounded hover:scale-105 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:hover:scale-100">Start Scan</button>
             <span id="scanResult" class="font-body-sm text-body-sm"></span>
           </div>
         </div>
       </section>`;
 
-    document.getElementById('btnScanLibrary').addEventListener('click', async () => {
+    const btn = document.getElementById('btnScanLibrary');
+
+    function renderStatus(s) {
+      const el = document.getElementById('scanLiveStatus');
+      if (!el) { unsubscribe(); return; }
+      btn.disabled = s.running;
+      btn.textContent = s.running ? 'Scan running…' : 'Start Scan';
+      if (s.running) {
+        const pct = CumuScan.percent(s);
+        el.innerHTML = `
+          <div class="flex justify-between"><span class="text-on-surface font-semibold">${esc(CumuScan.phaseText(s))}</span><span class="tabular-nums">${pct} %</span></div>
+          <div class="h-1.5 w-full rounded-full bg-surface-container-high overflow-hidden"><div class="h-full bg-text-high-contrast rounded-full transition-all duration-500" style="width:${pct}%"></div></div>
+          <div class="flex justify-between gap-md"><span class="truncate">${esc(s.current || '')}</span><span class="whitespace-nowrap">noch ${esc(CumuScan.formatEta(s.etaSeconds))}</span></div>`;
+      } else if (s.lastResult) {
+        const r = s.lastResult;
+        el.innerHTML = `Last scan: ${r.added} new song(s) added, ${r.matched} recognized, ${r.unmatched} without match${r.error ? `, ${r.error} failed` : ''}.`;
+      } else {
+        el.innerHTML = s.newFiles || s.pending
+          ? `${s.newFiles + s.pending} song(s) waiting to be scanned.`
+          : 'No scan has run since the server started.';
+      }
+    }
+
+    const unsubscribe = CumuScan.onChange(renderStatus);
+    if (CumuScan.status) renderStatus(CumuScan.status);
+    CumuScan.poll();
+
+    btn.addEventListener('click', async () => {
       const resEl = document.getElementById('scanResult');
-      resEl.textContent = 'Scan running on server…';
-      resEl.className = 'font-body-sm text-body-sm text-text-muted';
+      resEl.textContent = '';
       try {
-        const res = await CumuApi.post('/admin/scan', {});
-        if (res.success) {
-          resEl.innerHTML = `Scan complete! ${res.scanned} files scanned, ${res.added} new songs added.`;
-          resEl.className = 'font-body-sm text-body-sm text-on-surface';
-        } else {
-          resEl.innerHTML = `${res.error || 'Scan failed'}`;
-          resEl.className = 'font-body-sm text-body-sm text-danger';
-        }
+        await CumuScan.startScan();
       } catch (err) {
-        resEl.innerHTML = `${err.message || 'Error during scan'}`;
+        resEl.textContent = err.message || 'Error during scan';
         resEl.className = 'font-body-sm text-body-sm text-danger';
       }
     });

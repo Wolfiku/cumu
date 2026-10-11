@@ -19,7 +19,7 @@ const { v4: uuidv4 } = require('uuid');
 const bcrypt  = require('bcryptjs');
 const mm      = require('music-metadata');
 const { getDB, getConfig, setConfig, log, getOrCreateArtist } = require('../db');
-const { requireAdmin } = require('../middleware/auth');
+const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { getOrCreateAlbum, cleanupOrphanedAlbums, resolveEditedSongAlbum } = require('../services/albums');
 const { dedupeLibrary, findDuplicateSong, getIgnoredFiles, ignoreFile, releaseIgnoredFiles } = require('../services/dedupe');
 const { testMistralKey } = require('../services/mistral');
@@ -147,6 +147,7 @@ function insertSong(db, fields) {
     filename: fields.filename, duration: fields.duration, track_number: fields.track_number,
     genre: fields.genre, year: fields.year, is_audiobook: fields.is_audiobook,
     file_size: fields.file_size, cover: fields.cover, mime_type: fields.mime_type,
+    is_user_edited: fields.is_user_edited, lookup_status: fields.lookup_status,
   };
   const usable = Object.keys(candidate).filter(k => cols.has(k));
   db.prepare(`INSERT INTO songs (${usable.join(', ')}) VALUES (${usable.map(() => '?').join(', ')})`).run(...usable.map(k => candidate[k]));
@@ -354,6 +355,127 @@ function scanDirectoryRecursive(dirPath, baseDir = dirPath) {
   return results;
 }
 
+// ── Scan job ──────────────────────────────────────────────────────────────────
+// A scan runs entirely on the server, so closing the browser does not stop it:
+//   1. new files in the music folder are indexed (tags read, song inserted),
+//   2. every indexed song goes through the metadata lookup (MusicBrainz ->
+//      Mistral). Songs waiting for it carry lookup_status = 'pending', so an
+//      interrupted scan continues after a restart.
+// The first scan of a fresh installation is started by an admin and blocks the
+// web client until it is done. Later scans start on their own in the background.
+
+const INITIAL_SCAN_THRESHOLD = 20;
+// Used for time estimates until the running scan has measured its own speed
+const DEFAULT_INDEX_MS  = 150;
+const DEFAULT_LOOKUP_MS = 2500;
+const TIMING_WINDOW     = 25;
+
+const scan = {
+  running: false,
+  initial: false,
+  phase: 'idle',        // 'indexing' | 'lookup' | 'idle'
+  indexTotal: 0, indexDone: 0,
+  lookupTotal: 0, lookupDone: 0,
+  current: null,
+  startedAt: null,
+  newFiles: 0,          // unindexed files found by the last check
+  indexTimes: [],
+  lookupTimes: [],
+  lastResult: null,
+};
+
+function average(times, fallback) {
+  return times.length ? times.reduce((a, b) => a + b, 0) / times.length : fallback;
+}
+function recordTime(times, ms) {
+  times.push(ms);
+  if (times.length > TIMING_WINDOW) times.shift();
+}
+
+function isLookupEnabled() {
+  return getConfig().autoLookupEnabled !== false;
+}
+
+function countPendingLookups(db) {
+  return db.prepare("SELECT COUNT(*) AS c FROM songs WHERE lookup_status = 'pending'").get().c;
+}
+
+// A fresh installation stays in initial mode until its first scan finished.
+// A library that already holds enough processed songs never enters it.
+function isInitialMode(db) {
+  const cfg = getConfig();
+  if (cfg.initialScanDone === true) return false;
+  if (cfg.initialScanStarted === true) return true;
+  const processed = db.prepare("SELECT COUNT(*) AS c FROM songs WHERE lookup_status IS NOT 'pending'").get().c;
+  if (processed >= INITIAL_SCAN_THRESHOLD) {
+    setConfig('initialScanDone', true);
+    return false;
+  }
+  return true;
+}
+
+function getExistingScanPath() {
+  const musicPath = getScanPath();
+  if (!fs.existsSync(musicPath)) {
+    try { fs.mkdirSync(musicPath, { recursive: true }); } catch {}
+  }
+  return fs.existsSync(musicPath) ? musicPath : null;
+}
+
+function findNewFiles(db, musicPath) {
+  const allAudioFiles = scanDirectoryRecursive(musicPath, musicPath);
+  const known = new Set([...db.prepare('SELECT filename FROM songs').all().map(r => r.filename), ...getIgnoredFiles(db)]);
+  return allAudioFiles.filter(item => !known.has(item.relativePath) && !pendingUploads.has(item.relativePath));
+}
+
+// Returns true when the file was added as a new song
+async function indexFile(db, item) {
+  const meta = await extractMeta(item.fullPath);
+  // Indexed by an upload while the tags were being read
+  if (pendingUploads.has(item.relativePath) || db.prepare('SELECT 1 FROM songs WHERE filename = ?').get(item.relativePath)) return false;
+
+  const ext      = path.extname(item.relativePath).toLowerCase();
+  const artistId = getOrCreateArtist(db, meta.artist);
+  const albumId  = (!meta.albumArtistTag && findAlbumInFolder(db, item.relativePath, meta.album))
+    || getOrCreateAlbum(db, meta.album, getOrCreateArtist(db, meta.albumArtist), meta);
+  const fileSize = fs.statSync(item.fullPath).size;
+
+  // Another file with the same song is already indexed: don't add it twice
+  const existing = findDuplicateSong(db, { title: meta.title, artist_id: artistId, album_id: albumId, duration: meta.duration, file_size: fileSize, track_number: meta.track });
+  if (existing) {
+    ignoreFile(db, item.relativePath, existing.id);
+    cleanupOrphanedAlbums(db);
+    return false;
+  }
+
+  insertSong(db, {
+    id: uuidv4(), title: meta.title, artist_id: artistId, album_id: albumId,
+    filename: item.relativePath, duration: meta.duration, track_number: meta.track,
+    genre: meta.genre, year: meta.year, is_audiobook: 0,
+    file_size: fileSize, cover: null, mime_type: mimeForExt(ext),
+    is_user_edited: 0, lookup_status: 'pending',
+  });
+  return true;
+}
+
+async function lookupScannedSong(db, song) {
+  let status = 'error';
+  try {
+    if (song.is_user_edited) {
+      status = 'skipped';
+    } else {
+      const result = await processSongLookup(song.id);
+      status = result.ok ? 'matched' : 'unmatched';
+    }
+  } catch (err) {
+    console.error(`[cumu] Scan lookup error for ${song.id}:`, err.message);
+  } finally {
+    // Always leave 'pending', or the lookup loop would pick the song again
+    db.prepare('UPDATE songs SET lookup_status = ? WHERE id = ?').run(status, song.id);
+  }
+  return status;
+}
+
 // Only one scan runs at a time; overlapping calls share the running scan.
 // (Two scans in parallel would both see the same new files and add them twice.)
 let runningScan = null;
@@ -363,69 +485,133 @@ function runLibraryScan() {
 }
 
 async function scanLibrary() {
-  const musicPath = getScanPath();
+  const db = getDB();
+  const musicPath = getExistingScanPath();
 
-  if (!fs.existsSync(musicPath)) {
-    try { fs.mkdirSync(musicPath, { recursive: true }); } catch {}
-  }
-  if (!fs.existsSync(musicPath)) {
-    return { scanned: 0, added: 0, musicPath };
-  }
+  Object.assign(scan, {
+    running: true, initial: isInitialMode(db), phase: 'indexing',
+    indexTotal: 0, indexDone: 0, lookupTotal: 0, lookupDone: 0,
+    current: null, startedAt: Date.now(),
+  });
 
-  const db           = getDB();
-  const allAudioFiles = scanDirectoryRecursive(musicPath, musicPath);
-  const known        = new Set([...db.prepare('SELECT filename FROM songs').all().map(r => r.filename), ...getIgnoredFiles(db)]);
-  const newFiles     = allAudioFiles.filter(item => !known.has(item.relativePath) && !pendingUploads.has(item.relativePath));
+  try {
+    // Lookups that failed last time (e.g. MusicBrainz was down) are retried
+    db.prepare("UPDATE songs SET lookup_status = 'pending' WHERE lookup_status = 'error'").run();
 
-  let added = 0;
-  for (const item of newFiles) {
-    try {
-      const meta     = await extractMeta(item.fullPath);
-      // Indexed by an upload while the tags were being read
-      if (pendingUploads.has(item.relativePath) || db.prepare('SELECT 1 FROM songs WHERE filename = ?').get(item.relativePath)) continue;
+    // 1. Index new files
+    const newFiles = musicPath ? findNewFiles(db, musicPath) : [];
+    scan.indexTotal  = newFiles.length;
+    scan.lookupTotal = isLookupEnabled() ? countPendingLookups(db) + newFiles.length : 0;
+    // A scan without anything to do does not count as the first scan
+    scan.initial = scan.initial && (scan.indexTotal > 0 || scan.lookupTotal > 0);
+    if (scan.initial) setConfig('initialScanStarted', true);
 
-      const ext      = path.extname(item.relativePath).toLowerCase();
-      const artistId = getOrCreateArtist(db, meta.artist);
-      const albumId  = (!meta.albumArtistTag && findAlbumInFolder(db, item.relativePath, meta.album))
-        || getOrCreateAlbum(db, meta.album, getOrCreateArtist(db, meta.albumArtist), meta);
-      const fileSize = fs.statSync(item.fullPath).size;
-
-      // Another file with the same song is already indexed: don't add it twice
-      const existing = findDuplicateSong(db, { title: meta.title, artist_id: artistId, album_id: albumId, duration: meta.duration, file_size: fileSize, track_number: meta.track });
-      if (existing) {
-        ignoreFile(db, item.relativePath, existing.id);
-        cleanupOrphanedAlbums(db);
-        continue;
+    let added = 0;
+    for (const item of newFiles) {
+      scan.current = item.relativePath;
+      const started = Date.now();
+      try {
+        if (await indexFile(db, item)) added++;
+      } catch (e) {
+        console.error(`[cumu] Scan error for ${item.relativePath}:`, e.message);
       }
-
-      const songId   = uuidv4();
-      insertSong(db, {
-        id: songId, title: meta.title, artist_id: artistId, album_id: albumId,
-        filename: item.relativePath, duration: meta.duration, track_number: meta.track,
-        genre: meta.genre, year: meta.year, is_audiobook: 0,
-        file_size: fileSize, cover: null, mime_type: mimeForExt(ext),
-        is_user_edited: 0
-      });
-      queueSongForLookup(songId);
-      added++;
-    } catch (e) {
-      console.error(`[cumu] Scan error for ${item.relativePath}:`, e.message);
+      recordTime(scan.indexTimes, Date.now() - started);
+      scan.indexDone++;
     }
-  }
+    scan.newFiles = 0;
+    if (added > 0) log('info', 'admin', `Library scan: ${added} new songs added`);
 
-  if (added > 0) {
-    log('info', 'admin', `Library scan: ${added} new songs added`);
+    // 2. Look up every song the scan indexed (including leftovers of an
+    //    interrupted scan). Stops early if the lookup is switched off meanwhile.
+    const counts = { matched: 0, unmatched: 0, skipped: 0, error: 0 };
+    scan.phase = 'lookup';
+    const nextPending = db.prepare(`
+      SELECT s.id, s.title, s.is_user_edited, ar.name AS artist_name
+      FROM songs s LEFT JOIN artists ar ON ar.id = s.artist_id
+      WHERE s.lookup_status = 'pending' ORDER BY s.created_at LIMIT 1
+    `);
+    while (isLookupEnabled()) {
+      const song = nextPending.get();
+      if (!song) break;
+      scan.lookupTotal = scan.lookupDone + countPendingLookups(db);
+      scan.current = song.artist_name ? `${song.artist_name} – ${song.title}` : song.title;
+      const started = Date.now();
+      counts[await lookupScannedSong(db, song)]++;
+      if (!song.is_user_edited) recordTime(scan.lookupTimes, Date.now() - started);
+      scan.lookupDone++;
+    }
+    if (scan.lookupDone > 0) {
+      log('info', 'metadata', `Library scan lookup: ${counts.matched} matched, ${counts.unmatched} without match, ${counts.error} failed`);
+    }
+
+    if (scan.initial) setConfig('initialScanDone', true);
+    scan.lastResult = { finishedAt: Date.now(), added, ...counts };
+    return { scanned: newFiles.length, added, musicPath, ...counts };
+  } finally {
+    Object.assign(scan, { running: false, phase: 'idle', current: null });
   }
-  return { scanned: allAudioFiles.length, added, musicPath };
 }
 
-router.post('/scan', requireAdmin, async (req, res) => {
-  try {
-    const result = await runLibraryScan();
-    res.json({ success: true, ...result });
-  } catch (err) {
-    res.status(500).json({ error: 'Scan failed: ' + err.message });
+// Periodic check: finds new files and starts a background scan when there is
+// work. The first scan of a fresh installation waits until an admin starts it.
+function checkLibrary() {
+  if (runningScan) return runningScan;
+  const db = getDB();
+  const musicPath = getExistingScanPath();
+  scan.newFiles = musicPath ? findNewFiles(db, musicPath).length : 0;
+  const pending = isLookupEnabled() ? countPendingLookups(db) : 0;
+  if (!scan.newFiles && !pending) return Promise.resolve(null);
+  if (isInitialMode(db) && getConfig().initialScanStarted !== true) return Promise.resolve(null);
+  return runLibraryScan();
+}
+
+function getScanStatus() {
+  const db = getDB();
+  const lookupOn  = isLookupEnabled();
+  const pending   = lookupOn ? countPendingLookups(db) : 0;
+  const initial   = isInitialMode(db);
+  const avgIndex  = average(scan.indexTimes, DEFAULT_INDEX_MS);
+  const avgLookup = average(scan.lookupTimes, DEFAULT_LOOKUP_MS);
+
+  let doneMs = 0, remainingMs;
+  if (scan.running) {
+    doneMs = scan.indexDone * avgIndex + scan.lookupDone * avgLookup;
+    remainingMs = (scan.indexTotal - scan.indexDone) * avgIndex
+      + Math.max(0, scan.lookupTotal - scan.lookupDone) * avgLookup;
+  } else {
+    remainingMs = scan.newFiles * avgIndex + (lookupOn ? (scan.newFiles + pending) * avgLookup : 0);
   }
+  const workWaiting = scan.newFiles > 0 || pending > 0;
+
+  return {
+    running:    scan.running,
+    phase:      scan.phase,
+    // The client is locked while the first scan of a fresh installation is
+    // waiting to be started or running
+    blocking:   scan.running ? scan.initial : (initial && workWaiting),
+    needsStart: !scan.running && initial && workWaiting,
+    newFiles:   scan.newFiles,
+    pending,
+    lookupEnabled: lookupOn,
+    index:      { done: scan.indexDone, total: scan.indexTotal },
+    lookup:     { done: scan.lookupDone, total: scan.lookupTotal },
+    current:    scan.current,
+    progress:   scan.running && doneMs + remainingMs > 0 ? doneMs / (doneMs + remainingMs) : 0,
+    etaSeconds: Math.round(remainingMs / 1000),
+    startedAt:  scan.startedAt,
+    lastResult: scan.lastResult,
+  };
+}
+
+router.get('/scan/status', requireAuth, (req, res) => {
+  res.json(getScanStatus());
+});
+
+// Starts a scan in the background and returns right away; progress is read
+// from GET /admin/scan/status
+router.post('/scan', requireAdmin, (req, res) => {
+  runLibraryScan().catch(err => console.error('[cumu] Library scan error:', err.message));
+  res.json({ success: true, ...getScanStatus() });
 });
 
 // ── LIBRARY — EDIT ────────────────────────────────────────────────────────────
@@ -521,7 +707,7 @@ router.get('/config', requireAdmin, (req, res) => {
     podcastIndexKey:        cfg.podcastIndexKey || '',
     podcastIndexSecret:     cfg.podcastIndexSecret || '',
     customPodcastFeeds:     cfg.customPodcastFeeds || [],
-    autoLookupEnabled:      cfg.autoLookupEnabled === true,
+    autoLookupEnabled:      cfg.autoLookupEnabled !== false,
     mistralApiKey:          cfg.mistralApiKey || '',
     enableAiCorrection:     cfg.enableAiCorrection === true,
     aiModel:                cfg.aiModel || 'mistral-small-latest'
@@ -582,8 +768,11 @@ router.post('/lookup/trigger', requireAdmin, async (req, res) => {
 });
 
 router.post('/songs/:id/lookup', requireAdmin, async (req, res) => {
-  const result = await processSongLookup(req.params.id);
-  res.json(result);
+  try {
+    res.json(await processSongLookup(req.params.id));
+  } catch (err) {
+    res.status(502).json({ ok: false, error: err.message });
+  }
 });
 
 
@@ -795,6 +984,7 @@ async function repairMergedAlbums() {
 }
 
 router.runLibraryScan = runLibraryScan;
+router.checkLibrary  = checkLibrary;
 router.repairMergedAlbums = repairMergedAlbums;
 router.dedupeLibrary = () => {
   const result = dedupeLibrary(getDB(), findSongFile);

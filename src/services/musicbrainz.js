@@ -12,15 +12,20 @@ const USER_AGENT = 'cumu/0.2.0 ( https://github.com/Wolfiku/cumu )';
 let lastRequestTime = 0;
 
 /**
- * Ensures at least 1000ms between calls to respect MusicBrainz rate limit.
+ * MusicBrainz allows about one request per second. Requests are queued so that
+ * concurrent lookups (scan, uploads, manual lookups) keep the spacing too.
  */
-async function enforceRateLimit() {
-  const now = Date.now();
-  const diff = now - lastRequestTime;
-  if (diff < 1000) {
-    await new Promise(res => setTimeout(res, 1000 - diff));
-  }
-  lastRequestTime = Date.now();
+const MIN_REQUEST_GAP_MS = 1100;
+let requestQueue = Promise.resolve();
+
+function enforceRateLimit() {
+  const turn = requestQueue.then(async () => {
+    const wait = lastRequestTime + MIN_REQUEST_GAP_MS - Date.now();
+    if (wait > 0) await new Promise(res => setTimeout(res, wait));
+    lastRequestTime = Date.now();
+  });
+  requestQueue = turn.catch(() => {});
+  return turn;
 }
 
 /**
@@ -33,8 +38,9 @@ function cleanQueryTerm(term) {
 
 /**
  * Performs HTTPS GET request to MusicBrainz API.
+ * Resolves with { status, body }; rejects on network errors.
  */
-function fetchJson(urlStr) {
+function requestJson(urlStr) {
   return new Promise((resolve, reject) => {
     const url = new URL(urlStr);
     const options = {
@@ -43,33 +49,47 @@ function fetchJson(urlStr) {
       headers: {
         'User-Agent': USER_AGENT,
         'Accept': 'application/json'
-      }
+      },
+      timeout: 15000
     };
-    https.get(options, (res) => {
+    const req = https.get(options, (res) => {
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
-        if (res.statusCode >= 200 && res.statusCode < 300) {
-          try {
-            resolve(JSON.parse(data));
-          } catch (e) {
-            resolve(null);
-          }
-        } else {
-          resolve(null);
-        }
+        let body = null;
+        try { body = JSON.parse(data); } catch {}
+        resolve({ status: res.statusCode, body });
       });
-    }).on('error', () => resolve(null));
+    });
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    req.on('error', reject);
   });
 }
 
+const RETRY_DELAYS_MS = [2000, 5000, 10000];
+
 /**
- * Extracts 4-digit year from date string (e.g. "1997-03-24" -> 1997).
+ * Rate-limited GET with retries. Returns the parsed body, or null when
+ * MusicBrainz answers with a client error. Throws when MusicBrainz stays
+ * unreachable or overloaded, so callers can tell "not found" from "failed".
  */
-function parseYear(dateStr) {
-  if (!dateStr) return null;
-  const match = String(dateStr).match(/\b(19\d\d|20\d\d)\b/);
-  return match ? parseInt(match[1], 10) : null;
+async function fetchJson(urlStr) {
+  for (let attempt = 0; ; attempt++) {
+    await enforceRateLimit();
+    let failure;
+    try {
+      const { status, body } = await requestJson(urlStr);
+      if (status >= 200 && status < 300) return body;
+      if (status !== 429 && status < 500) return null;
+      failure = `HTTP ${status}`;
+    } catch (err) {
+      failure = err.message;
+    }
+    if (attempt >= RETRY_DELAYS_MS.length) {
+      throw new Error(`MusicBrainz not reachable (${failure})`);
+    }
+    await new Promise(res => setTimeout(res, RETRY_DELAYS_MS[attempt]));
+  }
 }
 
 /**
@@ -83,53 +103,161 @@ function formatGenre(genreStr) {
     .join(' ');
 }
 
+// ── Match verification ───────────────────────────────────────────────────────
+// The search returns covers, remixes and parodies next to the original, often
+// with a high score. A result is only used when title and artist agree with the
+// song (and its length, when both are known). Anything less certain counts as
+// "no match": wrong metadata would overwrite correct tags.
+
+const MAX_DURATION_DIFF_S = 7;
+
+// Lowercase, without accents, bracketed suffixes ("(Remastered)", "[Live]"),
+// featured artists and punctuation
+function normalizeName(str) {
+  return String(str || '')
+    .normalize('NFKD').replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .replace(/\s*[\(\[][^\)\]]*[\)\]]/g, ' ')
+    .replace(/\s+(feat\.?|ft\.?|featuring)\s.*$/, ' ')
+    .replace(/&/g, ' and ')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .replace(/^the\s+/, '')
+    .trim();
+}
+
+function levenshtein(a, b) {
+  const row = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = row[0];
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const tmp = row[j];
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = tmp;
+    }
+  }
+  return row[b.length];
+}
+
+// Equal after normalizing, allowing a typo or two in longer names
+function sameName(a, b) {
+  const na = normalizeName(a);
+  const nb = normalizeName(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  return levenshtein(na, nb) / Math.max(na.length, nb.length) <= 0.1;
+}
+
+function artistMatches(rec, artist) {
+  const credits = rec['artist-credit'] || [];
+  const full = credits.map(c => (c.name || c.artist?.name || '') + (c.joinphrase || '')).join('');
+  return sameName(full, artist) || credits.some(c => sameName(c.name || c.artist?.name, artist));
+}
+
+// When the song's length is known, the recording must have a matching one
+function durationMatches(rec, durationSeconds) {
+  if (!durationSeconds) return true;
+  return !!rec.length && Math.abs(rec.length / 1000 - durationSeconds) <= MAX_DURATION_DIFF_S;
+}
+
+// Words that mark a different version of a song. The recording (title and
+// disambiguation, e.g. "live, 1986-07-12: Wembley") and the song's own title
+// must carry the same ones: no remix for the original, no studio take for a
+// live file.
+const VERSION_MARKERS = ['live', 'remix', 'mix', 'karaoke', 'instrumental', 'acoustic', 'demo', 'cover',
+  'bootleg', 'dub', 'rework', 'excerpt', 'teaser', 'sped up', 'slowed', 'tribute', 'medley', 'reprise',
+  'a cappella', 'unplugged', 'orchestral', 'broadcast', 'session', 'rehearsal', 'edit'];
+
+function versionMarkers(str) {
+  const text = ` ${String(str || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ')} `;
+  return VERSION_MARKERS.filter(m => text.includes(` ${m} `));
+}
+
+function isSameVersion(rec, title) {
+  const own = new Set(versionMarkers(title));
+  const theirs = new Set(versionMarkers(`${rec.title} ${rec.disambiguation || ''}`));
+  // Recordings released only live or as bootleg are live performances
+  const releases = rec.releases || [];
+  if (releases.length && releases.every(rel =>
+    (rel['release-group']?.['secondary-types'] || []).includes('Live') || rel.status === 'Bootleg')) theirs.add('live');
+  return own.size === theirs.size && [...own].every(m => theirs.has(m));
+}
+
+// Among the accepted recordings: the exact title first (so "Du hast" beats
+// "Du hast (English version)"), then one on a studio album, then the oldest
+function plainTitle(str) {
+  return String(str || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+}
+function recordingRank(rec, title) {
+  return [
+    plainTitle(rec.title) === plainTitle(title) ? 0 : 1,
+    (rec.releases || []).some(isStudioAlbum) ? 0 : 1,
+    rec['first-release-date'] || '9999',
+  ];
+}
+function compareRank(a, b, title) {
+  const ra = recordingRank(a, title), rb = recordingRank(b, title);
+  return ra[0] - rb[0] || ra[1] - rb[1] || ra[2].localeCompare(rb[2]);
+}
+
+function isStudioAlbum(rel) {
+  const group = rel['release-group'] || {};
+  return rel.status === 'Official' && group['primary-type'] === 'Album' && !(group['secondary-types'] || []).length;
+}
+
+// The album a song belongs to: the earliest official studio album. Search
+// results often list only compilations or singles for a recording; those are
+// not used, the album then stays as it is.
+function pickRelease(releases) {
+  return (releases || []).filter(isStudioAlbum)
+    .sort((a, b) => String(a.date || '9999').localeCompare(String(b.date || '9999')))[0] || null;
+}
+
 /**
  * Searches MusicBrainz for recording metadata.
+ * Without an artist, "Artist - Title" in the title (typical for untagged files
+ * named after the song) is split up; without any artist no match is returned,
+ * since it could not be verified.
  * @param {string} title
  * @param {string} artist
  * @param {string} album
+ * @param {number} duration  song length in seconds (0 = unknown)
  * @returns {Promise<Object|null>}
  */
-async function searchMusicBrainz(title, artist = '', album = '') {
-  await enforceRateLimit();
+async function searchMusicBrainz(title, artist = '', album = '', duration = 0) {
+  if (!artist && title) {
+    const parts = String(title).split(/\s+[-–—]\s+/);
+    if (parts.length === 2 && parts[0].trim() && parts[1].trim()) {
+      artist = parts[0].trim();
+      title = parts[1].trim();
+    }
+  }
 
   const cleanTitle = cleanQueryTerm(title);
   const cleanArtist = cleanQueryTerm(artist);
-  const cleanAlbum = cleanQueryTerm(album);
 
-  if (!cleanTitle && !cleanArtist) return null;
+  if (!cleanTitle || !cleanArtist) return null;
 
-  let queryParts = [];
-  if (cleanTitle) queryParts.push(`recording:"${cleanTitle}"`);
-  if (cleanArtist) queryParts.push(`artist:"${cleanArtist}"`);
-  if (cleanAlbum) queryParts.push(`release:"${cleanAlbum}"`);
+  const findMatch = (data) => (data?.recordings || [])
+    .filter(rec => sameName(rec.title, title) && artistMatches(rec, artist)
+      && durationMatches(rec, duration) && isSameVersion(rec, title))
+    .sort((a, b) => compareRank(a, b, title))[0];
 
-  let query = queryParts.join(' AND ');
-  let url = `https://musicbrainz.org/ws/2/recording?query=${encodeURIComponent(query)}&fmt=json&limit=5`;
+  let query = `recording:"${cleanTitle}" AND artist:"${cleanArtist}"`;
+  let rec = findMatch(await fetchJson(`https://musicbrainz.org/ws/2/recording?query=${encodeURIComponent(query)}&fmt=json&limit=50`));
 
-  let data = await fetchJson(url);
-
-  // If strict query produced no results, try broader recording search
-  if ((!data || !data.recordings || data.recordings.length === 0) && cleanTitle) {
-    await enforceRateLimit();
-    url = `https://musicbrainz.org/ws/2/recording?query=${encodeURIComponent(cleanTitle)}&fmt=json&limit=5`;
-    data = await fetchJson(url);
+  // Tags often differ slightly from MusicBrainz spelling: retry without quotes
+  if (!rec) {
+    query = `recording:(${cleanTitle}) AND artist:(${cleanArtist})`;
+    rec = findMatch(await fetchJson(`https://musicbrainz.org/ws/2/recording?query=${encodeURIComponent(query)}&fmt=json&limit=50`));
   }
 
-  if (!data || !data.recordings || data.recordings.length === 0) {
-    return null;
-  }
+  if (!rec) return null;
 
-  const rec = data.recordings[0];
-  const score = rec.score || 0;
-
-  if (score < 50) return null;
-
-  const artistCredit = rec['artist-credit']?.[0]?.name || rec['artist-credit']?.[0]?.artist?.name || artist || null;
-  const release = rec.releases?.[0];
+  const credits = rec['artist-credit'] || [];
+  const artistCredit = credits.map(c => (c.name || c.artist?.name || '') + (c.joinphrase || '')).join('') || artist || null;
+  const release = pickRelease(rec.releases);
   const albumTitle = release?.title || album || null;
-  const releaseDate = release?.date || rec['first-release-date'] || null;
-  const year = parseYear(releaseDate);
 
   let rawGenre = null;
   if (rec.genres && rec.genres.length > 0) {
@@ -144,13 +272,17 @@ async function searchMusicBrainz(title, artist = '', album = '') {
   const trackNumber = release?.media?.[0]?.track?.[0]?.number ? parseInt(release.media[0].track[0].number, 10) : null;
 
   return {
-    title: rec.title || title,
+    // MusicBrainz names live takes etc. in the disambiguation, not the title:
+    // keep "(Live)" and the like from the song's own title then
+    title: versionMarkers(title).some(m => !versionMarkers(rec.title).includes(m)) ? title : (rec.title || title),
     artist: artistCredit,
     album: albumTitle,
-    year: year,
+    // No year: remasters are separate recordings with their own (later) date,
+    // so a text search can't tell the original year. The song keeps its own.
+    year: null,
     genre: genre,
     track_number: isNaN(trackNumber) ? null : trackNumber,
-    score: score,
+    score: rec.score || 0,
     mbid: rec.id
   };
 }

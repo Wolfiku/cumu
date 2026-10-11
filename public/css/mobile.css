@@ -375,11 +375,6 @@
   body.np-active #cumuToast {
     bottom: calc(var(--m-tabbar-h) + var(--m-mini-h) + var(--m-safe-bottom) + 28px) !important;
   }
-  #uploadToast {
-    left: 12px;
-    right: 12px;
-    bottom: calc(var(--m-tabbar-h) + var(--m-safe-bottom) + 12px) !important;
-  }
 
   /* ── Touch targets ───────────────────────────────────────────────────── */
   .song-menu-btn {
