@@ -9,6 +9,11 @@
 const { v4: uuidv4 } = require('uuid');
 const { isGenreValid } = require('../utils/genresList');
 
+// Album titles match regardless of case and surrounding spaces
+function sameTitle(a, b) {
+  return String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+}
+
 /**
  * Deletes albums without songs. If another album of the same artist with the
  * same title is still in use, it inherits the deleted album's cover.
@@ -26,7 +31,7 @@ function cleanupOrphanedAlbums(db) {
         const activeAlbum = db.prepare(`
           SELECT a.* FROM albums a
           JOIN songs s ON s.album_id = a.id
-          WHERE a.title = ? AND a.artist_id IS ? AND a.id != ?
+          WHERE LOWER(TRIM(a.title)) = LOWER(TRIM(?)) AND a.artist_id IS ? AND a.id != ?
           LIMIT 1
         `).get(emptyAlbum.title, emptyAlbum.artist_id, emptyAlbum.id);
 
@@ -48,6 +53,7 @@ function cleanupOrphanedAlbums(db) {
  * `existingAlbumId` is the song's current album when re-tagging an existing song.
  */
 function getOrCreateAlbum(db, title, artistId, meta = {}, existingAlbumId = null) {
+  title = String(title || '').trim();
   if (!title) return null;
 
   // 0. Keep the song's current album when the title still matches. Its artist
@@ -56,19 +62,19 @@ function getOrCreateAlbum(db, title, artistId, meta = {}, existingAlbumId = null
   let row = null;
   if (existingAlbumId) {
     const current = db.prepare('SELECT * FROM albums WHERE id = ?').get(existingAlbumId);
-    if (current && current.title && current.title.toLowerCase() === String(title).toLowerCase()) {
+    if (current && sameTitle(current.title, title)) {
       row = current;
     }
   }
 
   // 1. Search for existing album by title and artist_id
   if (!row && artistId) {
-    row = db.prepare('SELECT * FROM albums WHERE title = ? AND artist_id = ?').get(title, artistId);
+    row = db.prepare('SELECT * FROM albums WHERE LOWER(TRIM(title)) = LOWER(?) AND artist_id = ?').get(title, artistId);
   }
 
   // 2. Search by title where artist_id is NULL
   if (!row) {
-    row = db.prepare('SELECT * FROM albums WHERE title = ? AND artist_id IS NULL').get(title);
+    row = db.prepare('SELECT * FROM albums WHERE LOWER(TRIM(title)) = LOWER(?) AND artist_id IS NULL').get(title);
     if (row && artistId) {
       db.prepare('UPDATE albums SET artist_id = ? WHERE id = ?').run(artistId, row.id);
       row.artist_id = artistId;
@@ -78,7 +84,7 @@ function getOrCreateAlbum(db, title, artistId, meta = {}, existingAlbumId = null
   // 3. Without an artist, fall back to any album with this title. Albums of
   //    other artists are never reused: different artists can share a title.
   if (!row && !artistId) {
-    row = db.prepare('SELECT * FROM albums WHERE title = ?').get(title);
+    row = db.prepare('SELECT * FROM albums WHERE LOWER(TRIM(title)) = LOWER(?)').get(title);
   }
 
   if (row) {
@@ -121,7 +127,7 @@ function getOrCreateAlbum(db, title, artistId, meta = {}, existingAlbumId = null
 function resolveEditedSongAlbum(db, song, title, artistId, meta = {}) {
   if (!title) return null;
   const current = song.album_id ? db.prepare('SELECT * FROM albums WHERE id = ?').get(song.album_id) : null;
-  if (current && current.title && current.title.toLowerCase() === String(title).toLowerCase()) {
+  if (current && sameTitle(current.title, title)) {
     const ownedByNewArtist = (current.artist_id || null) === (artistId || null);
     const ownedByAlbumArtist = (current.artist_id || null) !== (song.artist_id || null);
     if (ownedByNewArtist || ownedByAlbumArtist) return current.id;

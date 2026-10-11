@@ -2681,12 +2681,21 @@ function showToast(msg) {
       return;
     }
     const songs = [];
+    let favoritesChanged = false;
     for (const id of favArray) {
       try {
         const s = await CumuApi.get(`/api/songs/${id}`);
-        if (s && s.id) songs.push(s);
+        if (!s || !s.id) continue;
+        // Duplicates merged on the server answer with the id of the kept song
+        if (s.id !== id) {
+          favorites.delete(id);
+          favorites.add(s.id);
+          favoritesChanged = true;
+        }
+        if (!songs.some(x => x.id === s.id)) songs.push(s);
       } catch (_) {}
     }
+    if (favoritesChanged) localStorage.setItem('cumu_favorites', JSON.stringify(Array.from(favorites)));
     main.innerHTML = `
       <div class="p-md md:p-margin-desktop max-w-[1280px] mx-auto w-full">
         <div class="flex items-center justify-between mb-lg">
@@ -4744,6 +4753,7 @@ function showToast(msg) {
 
       const batchSize = 100;
       let totalUploaded = 0;
+      let totalSkipped = 0;
       let failed = 0;
 
       for (let i = 0; i < files.length; i += batchSize) {
@@ -4754,7 +4764,8 @@ function showToast(msg) {
         try {
           const res = await CumuApi.postForm('/api/upload', formData);
           if (res.success) {
-            totalUploaded += res.uploaded || chunk.length;
+            totalUploaded += res.uploaded ?? chunk.length;
+            totalSkipped += res.skipped || 0;
           } else {
             failed += chunk.length;
           }
@@ -4764,13 +4775,16 @@ function showToast(msg) {
       }
 
       if (toast) {
-        toastTitle.textContent = totalUploaded > 0 ? '✅ Import abgeschlossen' : '❌ Import fehlgeschlagen';
-        toastStatus.textContent = `${totalUploaded} Song(s) zur Mediathek hinzugefügt.`;
+        toastTitle.textContent = (totalUploaded > 0 || totalSkipped > 0) ? '✅ Import abgeschlossen' : '❌ Import fehlgeschlagen';
+        toastStatus.textContent = `${totalUploaded} Song(s) zur Mediathek hinzugefügt.`
+          + (totalSkipped ? ` ${totalSkipped} waren schon vorhanden.` : '');
         if (toastSpinner) toastSpinner.classList.remove('animate-spin');
         setTimeout(() => toast.classList.add('hidden'), 5000);
       }
 
-      showToast(`✅ ${totalUploaded} Song(s) erfolgreich importiert!`);
+      showToast(totalSkipped
+        ? `✅ ${totalUploaded} Song(s) importiert, ${totalSkipped} schon vorhanden`
+        : `✅ ${totalUploaded} Song(s) erfolgreich importiert!`);
 
       if (currentPage === 'library' || currentPage === 'discover' || currentPage === 'songs') {
         navigate(currentPage, window._lastNavParams);

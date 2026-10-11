@@ -21,6 +21,7 @@ const mm      = require('music-metadata');
 const { getDB, getConfig, setConfig, log, getOrCreateArtist } = require('../db');
 const { requireAdmin } = require('../middleware/auth');
 const { getOrCreateAlbum, cleanupOrphanedAlbums, resolveEditedSongAlbum } = require('../services/albums');
+const { dedupeLibrary, findDuplicateSong, getIgnoredFiles, ignoreFile } = require('../services/dedupe');
 const { testMistralKey } = require('../services/mistral');
 const { processSongLookup, triggerLibraryAutoLookup, queueSongForLookup } = require('../services/autoLookup');
 
@@ -32,16 +33,27 @@ const router = express.Router();
 const AUDIO_EXTS = ['.mp3', '.m4a', '.aac', '.alac', '.mp4', '.flac', '.ogg', '.wav', '.opus'];
 const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp'];
 
+function getMusicPath() {
+  return process.env.MUSIC_PATH || getConfig().musicPath || path.join(process.cwd(), 'music');
+}
+
+// Uploaded files land in the music folder before their songs are inserted.
+// The background scan must not index them in the meantime.
+const pendingUploads = new Set();
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const cfg = getConfig();
-    const musicPath = cfg.musicPath || path.join(process.cwd(), 'music');
+    const musicPath = getMusicPath();
     try {
       if (!fs.existsSync(musicPath)) fs.mkdirSync(musicPath, { recursive: true });
       cb(null, musicPath);
     } catch (err) { cb(err); }
   },
-  filename: (req, file, cb) => cb(null, `${uuidv4()}${path.extname(file.originalname).toLowerCase()}`),
+  filename: (req, file, cb) => {
+    const name = `${uuidv4()}${path.extname(file.originalname).toLowerCase()}`;
+    pendingUploads.add(name);
+    cb(null, name);
+  },
 });
 
 const upload = multer({
@@ -179,16 +191,18 @@ router.delete('/users/:id', requireAdmin, (req, res) => {
 // ── LIBRARY — UPLOAD ──────────────────────────────────────────────────────────
 
 async function processUpload(req, res) {
+  const uploadedNames = Object.values(req.files || {}).flat().map(f => f.filename);
   try {
     const db        = getDB();
     const cfg       = getConfig();
-    const musicPath = process.env.MUSIC_PATH || cfg.musicPath || path.join(process.cwd(), 'music');
+    const musicPath = getMusicPath();
     const coverFile = req.files?.cover?.[0];
     const songFiles = (req.files?.files || []).filter(f => AUDIO_EXTS.includes(path.extname(f.originalname).toLowerCase()));
 
     if (!songFiles.length) return res.status(400).json({ error: 'No audio files uploaded' });
 
     const results = [];
+    let skipped = 0;
     for (const file of songFiles) {
       const ext      = path.extname(file.originalname).toLowerCase();
       const filePath = file.path;
@@ -206,6 +220,18 @@ async function processUpload(req, res) {
       const artistId      = getOrCreateArtist(db, artistName);
       const albumArtistId = req.body.artist ? artistId : getOrCreateArtist(db, meta.albumArtist || artistName);
       const albumId       = getOrCreateAlbum(db, albumTitle, albumArtistId, meta);
+      const fileSize      = fs.statSync(filePath).size;
+
+      // Same song already in the library: drop the uploaded copy
+      const existing = findDuplicateSong(db, { title: songTitle, artist_id: artistId, album_id: albumId, duration: meta.duration, file_size: fileSize });
+      if (existing) {
+        try { fs.unlinkSync(filePath); } catch {}
+        pendingUploads.delete(file.filename);
+        cleanupOrphanedAlbums(db);
+        skipped++;
+        results.push({ id: existing.id, title: existing.title, artist: artistName, album: albumTitle, skipped: true });
+        continue;
+      }
 
       let coverFilename = null;
       if (coverFile) {
@@ -220,7 +246,6 @@ async function processUpload(req, res) {
 
       const userProvided = !!(req.body.artist || req.body.album || req.body.title || req.body.genre);
       const songId   = uuidv4();
-      const fileSize = fs.statSync(filePath).size;
 
       insertSong(db, {
         id: songId, title: songTitle, artist_id: artistId, album_id: albumId,
@@ -229,6 +254,7 @@ async function processUpload(req, res) {
         file_size: fileSize, cover: coverFilename, mime_type: mime,
         is_user_edited: userProvided ? 1 : 0
       });
+      pendingUploads.delete(file.filename);
 
       // Perform lookup immediately upon uploading
       if (cfg.autoLookupEnabled !== false) {
@@ -254,12 +280,16 @@ async function processUpload(req, res) {
       });
     }
 
-    log('info', 'admin', `Uploaded ${results.length} songs`);
-    res.json({ success: true, uploaded: results.length, songs: results });
+    const uploaded = results.length - skipped;
+    log('info', 'admin', `Uploaded ${uploaded} songs${skipped ? `, skipped ${skipped} already in the library` : ''}`);
+    res.json({ success: true, uploaded, skipped, songs: results });
 
   } catch (err) {
     console.error('[cumu] upload error:', err);
     res.status(500).json({ error: 'Upload processing failed: ' + (err.message || 'unknown error') });
+  } finally {
+    // Anything not inserted is left to the regular scan
+    for (const name of uploadedNames) pendingUploads.delete(name);
   }
 }
 
@@ -286,9 +316,16 @@ function scanDirectoryRecursive(dirPath, baseDir = dirPath) {
   return results;
 }
 
-async function runLibraryScan() {
-  const cfg       = getConfig();
-  const musicPath = process.env.MUSIC_PATH || cfg.musicPath || path.join(process.cwd(), 'music');
+// Only one scan runs at a time; overlapping calls share the running scan.
+// (Two scans in parallel would both see the same new files and add them twice.)
+let runningScan = null;
+function runLibraryScan() {
+  if (!runningScan) runningScan = scanLibrary().finally(() => { runningScan = null; });
+  return runningScan;
+}
+
+async function scanLibrary() {
+  const musicPath = getMusicPath();
 
   if (!fs.existsSync(musicPath)) {
     try { fs.mkdirSync(musicPath, { recursive: true }); } catch {}
@@ -299,17 +336,29 @@ async function runLibraryScan() {
 
   const db           = getDB();
   const allAudioFiles = scanDirectoryRecursive(musicPath, musicPath);
-  const known        = new Set(db.prepare('SELECT filename FROM songs').all().map(r => r.filename));
-  const newFiles     = allAudioFiles.filter(item => !known.has(item.relativePath));
+  const known        = new Set([...db.prepare('SELECT filename FROM songs').all().map(r => r.filename), ...getIgnoredFiles(db)]);
+  const newFiles     = allAudioFiles.filter(item => !known.has(item.relativePath) && !pendingUploads.has(item.relativePath));
 
   let added = 0;
   for (const item of newFiles) {
     try {
       const meta     = await extractMeta(item.fullPath);
+      // Indexed by an upload while the tags were being read
+      if (pendingUploads.has(item.relativePath) || db.prepare('SELECT 1 FROM songs WHERE filename = ?').get(item.relativePath)) continue;
+
       const ext      = path.extname(item.relativePath).toLowerCase();
       const artistId = getOrCreateArtist(db, meta.artist);
       const albumId  = getOrCreateAlbum(db, meta.album, getOrCreateArtist(db, meta.albumArtist), meta);
       const fileSize = fs.statSync(item.fullPath).size;
+
+      // Another file with the same song is already indexed: don't add it twice
+      const existing = findDuplicateSong(db, { title: meta.title, artist_id: artistId, album_id: albumId, duration: meta.duration, file_size: fileSize });
+      if (existing) {
+        ignoreFile(db, item.relativePath, existing.id);
+        cleanupOrphanedAlbums(db);
+        continue;
+      }
+
       const songId   = uuidv4();
       insertSong(db, {
         id: songId, title: meta.title, artist_id: artistId, album_id: albumId,
@@ -388,8 +437,7 @@ router.put('/albums/:id', requireAdmin, (req, res) => {
 
 router.delete('/songs/:id', requireAdmin, (req, res) => {
   const db = getDB();
-  const cfg = getConfig();
-  const musicPath = cfg.musicPath || path.join(process.cwd(), 'music');
+  const musicPath = getMusicPath();
   const song = db.prepare('SELECT * FROM songs WHERE id=?').get(req.params.id);
   if (!song) return res.status(404).json({ error: 'Not found' });
   try { fs.unlinkSync(path.join(musicPath, song.filename)); } catch {}
@@ -403,8 +451,7 @@ router.delete('/songs/:id', requireAdmin, (req, res) => {
 
 router.delete('/albums/:id', requireAdmin, (req, res) => {
   const db = getDB();
-  const cfg = getConfig();
-  const musicPath = cfg.musicPath || path.join(process.cwd(), 'music');
+  const musicPath = getMusicPath();
   const songs = db.prepare('SELECT * FROM songs WHERE album_id=?').all(req.params.id);
   for (const s of songs) {
     try { fs.unlinkSync(path.join(musicPath, s.filename)); } catch {}
@@ -636,7 +683,7 @@ async function repairMergedAlbums() {
   if (cfg.mergedAlbumsRepaired === true || cfg.mergedAlbumsRepaired === 'true') return { split: 0 };
 
   const db        = getDB();
-  const musicPath = process.env.MUSIC_PATH || cfg.musicPath || path.join(process.cwd(), 'music');
+  const musicPath = getMusicPath();
   const mixed = db.prepare(`
     SELECT album_id FROM songs
     WHERE album_id IS NOT NULL
@@ -689,6 +736,13 @@ async function repairMergedAlbums() {
 
 router.runLibraryScan = runLibraryScan;
 router.repairMergedAlbums = repairMergedAlbums;
+router.dedupeLibrary = () => {
+  const result = dedupeLibrary(getDB(), getMusicPath());
+  if (result.albums || result.songs) {
+    log('info', 'admin', `Merged ${result.albums} duplicate album(s) and ${result.songs} duplicate song(s)`);
+  }
+  return result;
+};
 router.handleUpload   = handleUpload;
 router.processUpload   = processUpload;
 

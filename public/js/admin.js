@@ -160,7 +160,8 @@ const CumuAdmin = (function() {
       try {
         const res = await CumuApi.postForm('/admin/upload', formData);
         if (res.success) {
-          statusEl.textContent = `Successfully uploaded: ${res.uploaded} song(s)!`;
+          statusEl.textContent = `Successfully uploaded: ${res.uploaded} song(s)!`
+            + (res.skipped ? ` ${res.skipped} already in the library.` : '');
           e.target.reset();
         } else {
           statusEl.textContent = `${res.error || 'Upload failed'}`;

@@ -141,6 +141,13 @@ function startBackgroundScanner() {
     if (res.split > 0) console.log(`[cumu] Repaired ${res.split} merged album(s).`);
   }).catch(err => {
     console.error('[cumu] Album repair error:', err.message);
+  }).then(() => {
+    const res = adminRoutes.dedupeLibrary();
+    if (res.albums || res.songs) {
+      console.log(`[cumu] Merged ${res.albums} duplicate album(s) and ${res.songs} duplicate song(s).`);
+    }
+  }).catch(err => {
+    console.error('[cumu] Duplicate cleanup error:', err.message);
   }).then(() => adminRoutes.runLibraryScan()).then(res => {
     if (res.added > 0) {
       console.log(`[cumu] Startup scan complete: ${res.added} new track(s) indexed.`);
