@@ -16,6 +16,7 @@ const bcrypt  = require('bcryptjs');
 const crypto  = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 const { getDB, log } = require('../db');
+const { adminCodeError, adminCodeFingerprint, adminCodeValid, isAdminRole } = require('../adminCode');
 
 const router = express.Router();
 
@@ -71,9 +72,9 @@ router.post('/token', (req, res) => {
     const n = now();
 
     db.prepare(`
-      INSERT INTO oauth_tokens (access_token, refresh_token, client_id, user_id, scope, access_expires_at, refresh_expires_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(accessToken, refreshToken, client_id, row.user_id, row.scope, n + ACCESS_TOKEN_TTL, n + REFRESH_TOKEN_TTL);
+      INSERT INTO oauth_tokens (access_token, refresh_token, client_id, user_id, scope, access_expires_at, refresh_expires_at, admin_code_fp)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(accessToken, refreshToken, client_id, row.user_id, row.scope, n + ACCESS_TOKEN_TTL, n + REFRESH_TOKEN_TTL, row.admin_code_fp);
 
     log('info', 'oauth', `Token issued for user ${row.user_id} via auth code`);
 
@@ -97,6 +98,13 @@ router.post('/token', (req, res) => {
       return res.status(400).json({ error: 'invalid_grant', error_description: 'Refresh token expired' });
     }
 
+    // Admin tokens issued without the current admin login code cannot be refreshed
+    const owner = db.prepare('SELECT role FROM users WHERE id = ?').get(row.user_id);
+    if (!owner || !adminCodeValid(owner.role, row.admin_code_fp)) {
+      db.prepare('UPDATE oauth_tokens SET revoked = 1 WHERE refresh_token = ?').run(refresh_token);
+      return res.status(400).json({ error: 'invalid_grant', error_description: 'Admin login code required — please log in again' });
+    }
+
     // Rotate: revoke old, issue new pair
     db.prepare('UPDATE oauth_tokens SET revoked = 1 WHERE refresh_token = ?').run(refresh_token);
 
@@ -105,9 +113,9 @@ router.post('/token', (req, res) => {
     const n = now();
 
     db.prepare(`
-      INSERT INTO oauth_tokens (access_token, refresh_token, client_id, user_id, scope, access_expires_at, refresh_expires_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(newAccess, newRefresh, client_id, row.user_id, row.scope, n + ACCESS_TOKEN_TTL, n + REFRESH_TOKEN_TTL);
+      INSERT INTO oauth_tokens (access_token, refresh_token, client_id, user_id, scope, access_expires_at, refresh_expires_at, admin_code_fp)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(newAccess, newRefresh, client_id, row.user_id, row.scope, n + ACCESS_TOKEN_TTL, n + REFRESH_TOKEN_TTL, row.admin_code_fp);
 
     log('info', 'oauth', `Token refreshed for user ${row.user_id}`);
 
@@ -127,7 +135,7 @@ router.post('/token', (req, res) => {
 // For the web client, the SPA performs a headless authorization using session credentials.
 router.post('/authorize', (req, res) => {
   const db = getDB();
-  const { client_id, redirect_uri, scope = 'read write', response_type, username, password } = req.body;
+  const { client_id, redirect_uri, scope = 'read write', response_type, username, password, admin_code } = req.body;
 
   if (response_type !== 'code') {
     return res.status(400).json({ error: 'unsupported_response_type' });
@@ -157,6 +165,9 @@ router.post('/authorize', (req, res) => {
   }
   if (user.is_blocked) return res.status(403).json({ error: 'access_denied', error_description: 'User is blocked' });
 
+  const codeErr = adminCodeError(user, admin_code);
+  if (codeErr) return res.status(401).json({ error: codeErr.code, error_description: codeErr.message });
+
   // Limit scope to what client is allowed
   const clientScopes = client.scopes.split(' ');
   const requestedScopes = scope.split(' ').filter(s => clientScopes.includes(s));
@@ -166,9 +177,9 @@ router.post('/authorize', (req, res) => {
   const finalRedirectUri = redirect_uri || (allowedUris[0] || '');
 
   db.prepare(`
-    INSERT INTO oauth_codes (code, client_id, user_id, redirect_uri, scope, expires_at)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(code, client_id, user.id, finalRedirectUri, grantedScope, now() + CODE_TTL);
+    INSERT INTO oauth_codes (code, client_id, user_id, redirect_uri, scope, expires_at, admin_code_fp)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(code, client_id, user.id, finalRedirectUri, grantedScope, now() + CODE_TTL, isAdminRole(user.role) ? adminCodeFingerprint() : null);
 
   log('info', 'oauth', `Auth code issued for user ${user.id}`);
 

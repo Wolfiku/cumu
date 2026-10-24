@@ -10,12 +10,13 @@ const express = require('express');
 const bcrypt  = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const { getDB, getConfig, setConfig } = require('../db');
+const { adminCodeError, verifyAdminCode, adminCodeFingerprint, adminCodeValid, isAdminRole } = require('../adminCode');
 
 const router = express.Router();
 
 // POST /auth/login — session login (web client convenience)
 router.post('/login', async (req, res) => {
-  const { username, password } = req.body;
+  const { username, password, admin_code } = req.body;
   if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
 
   const db   = getDB();
@@ -27,9 +28,13 @@ router.post('/login', async (req, res) => {
 
   if (user.is_blocked) return res.status(403).json({ error: 'Account is blocked' });
 
-  req.session.userId   = user.id;
-  req.session.username = user.username;
-  req.session.role     = user.role;
+  const codeErr = adminCodeError(user, admin_code);
+  if (codeErr) return res.status(401).json({ error: codeErr.message, code: codeErr.code });
+
+  req.session.userId        = user.id;
+  req.session.username      = user.username;
+  req.session.role          = user.role;
+  req.session.adminCodeFp   = isAdminRole(user.role) ? adminCodeFingerprint() : null;
 
   req.session.save(err => {
     if (err) return res.status(500).json({ error: 'Session error' });
@@ -41,20 +46,13 @@ router.post('/login', async (req, res) => {
 // GET /auth/me
 router.get('/me', (req, res) => {
   const db = getDB();
-  if (!req.session?.userId) {
-    if (process.env.AUTO_LOGIN === 'true') {
-      const firstAdmin = db.prepare("SELECT id, username, role, theme FROM users WHERE role IN ('admin', 'creator') LIMIT 1").get();
-      if (firstAdmin) {
-        req.session.userId   = firstAdmin.id;
-        req.session.username = firstAdmin.username;
-        req.session.role     = firstAdmin.role;
-        return res.json({ userId: firstAdmin.id, username: firstAdmin.username, role: firstAdmin.role, theme: firstAdmin.theme || 'standard' });
-      }
-    }
-    return res.status(401).json({ error: 'Not logged in' });
-  }
+  // AUTO_LOGIN is no longer supported: it logged in an admin without the admin login code.
+  if (!req.session?.userId) return res.status(401).json({ error: 'Not logged in' });
   const user = db.prepare('SELECT id, username, role, theme FROM users WHERE id = ?').get(req.session.userId);
   if (!user) return res.status(401).json({ error: 'User not found' });
+  if (!adminCodeValid(user.role, req.session.adminCodeFp)) {
+    return req.session.destroy(() => res.status(401).json({ error: 'Admin login code required', code: 'admin_code_required' }));
+  }
   res.json({ userId: user.id, username: user.username, role: user.role, theme: user.theme || 'standard' });
 });
 
@@ -68,8 +66,10 @@ const { validateMusicPath } = require('../utils/pathValidator');
 // POST /auth/setup — initial server setup (creates admin user)
 router.post('/setup', async (req, res) => {
   if (getConfig().setupDone) return res.status(400).json({ error: 'Setup already done' });
-  const { username, password, musicDir, musicPath, port } = req.body;
+  const { username, password, musicDir, musicPath, port, admin_code } = req.body;
   if (!username || !password) return res.status(400).json({ error: 'Username and password are required' });
+  if (!admin_code) return res.status(401).json({ error: 'Admin login code required', code: 'admin_code_required' });
+  if (!verifyAdminCode(admin_code)) return res.status(401).json({ error: 'Invalid admin login code', code: 'admin_code_invalid' });
 
   const targetMusic = musicPath || musicDir || '/music';
   const pathCheck = validateMusicPath(targetMusic);
@@ -89,6 +89,7 @@ router.post('/setup', async (req, res) => {
   req.session.userId   = user.id;
   req.session.username = username;
   req.session.role     = 'admin';
+  req.session.adminCodeFp = adminCodeFingerprint();
   req.session.save(() => res.json({ ok: true, success: true }));
 });
 

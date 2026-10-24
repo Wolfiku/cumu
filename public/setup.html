@@ -141,6 +141,13 @@
       </div>
 
       <div class="flex flex-col gap-xs">
+        <label for="setupAdminCode" class="font-label-caps text-label-caps text-text-muted lowercase">admin code</label>
+        <input type="password" id="setupAdminCode" name="admin_code" required placeholder="ADMIN_LOGIN_CODE from .env" autocomplete="off"
+               class="w-full px-md py-sm bg-background border border-border-subtle rounded-lg font-body-sm text-body-sm text-on-surface focus:outline-none focus:border-text-muted transition-colors">
+        <p class="font-body-sm text-body-sm text-text-muted">Required for every admin login. Find it as <code>ADMIN_LOGIN_CODE</code> in the server's <code>.env</code> — if it was missing, the server generated it on start and logged where it was saved.</p>
+      </div>
+
+      <div class="flex flex-col gap-xs">
         <label for="setupPort" class="font-label-caps text-label-caps text-text-muted lowercase">server port</label>
         <input type="number" id="setupPort" name="port" value="3000" required placeholder="3000" min="1" max="65535"
                class="w-full px-md py-sm bg-background border border-border-subtle rounded-lg font-body-sm text-body-sm text-on-surface focus:outline-none focus:border-text-muted transition-colors">

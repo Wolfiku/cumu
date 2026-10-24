@@ -166,6 +166,16 @@ ENVEOF
   log "Created .env at ${ENV_FILE}"
 fi
 
+# Admin login code — required for every admin login
+if ! grep -qE '^\s*ADMIN_LOGIN_CODE=.+' "$ENV_FILE"; then
+  ADMIN_LOGIN_CODE=$(node -e "const a='ABCDEFGHJKMNPQRSTUVWXYZ23456789';const b=require('crypto').randomBytes(16);let c='';for(let i=0;i<16;i++){if(i&&i%4===0)c+='-';c+=a[b[i]%a.length]}console.log(c)")
+  sed -i '/^\s*ADMIN_LOGIN_CODE\s*=/d' "$ENV_FILE"
+  echo "ADMIN_LOGIN_CODE=${ADMIN_LOGIN_CODE}" >> "$ENV_FILE"
+  log "Generated ADMIN_LOGIN_CODE in ${ENV_FILE}"
+fi
+chmod 600 "$ENV_FILE"
+ADMIN_LOGIN_CODE=$(grep -E '^\s*ADMIN_LOGIN_CODE=' "$ENV_FILE" | tail -n1 | cut -d= -f2-)
+
 # ── Fix permissions ───────────────────────────────────────────────────────────
 chown -R "${SERVICE_USER}:${SERVICE_USER}" "$INSTALL_DIR" "$DATA_DIR" "$MUSIC_DIR"
 
@@ -231,6 +241,10 @@ echo -e "      ${BOLD}${GREEN}http://localhost:${PORT}${NC}"
 echo ""
 echo -e "  [+] ${BOLD}Ersteinrichtung:${NC}"
 echo -e "      Öffne eine der obigen URLs im Browser, um den First-Time Setup Wizard zu starten."
+echo ""
+echo -e "  [+] ${BOLD}Admin-Code (bei jedem Admin-Login erforderlich):${NC}"
+echo -e "      ${BOLD}${GREEN}${ADMIN_LOGIN_CODE}${NC}"
+echo -e "      Gespeichert als ADMIN_LOGIN_CODE in ${ENV_FILE}"
 echo ""
 echo -e "  [+] ${BOLD}Befehle zur Verwaltung:${NC}"
 echo -e "      Status prüfen:  ${BOLD}systemctl status cumu${NC}"

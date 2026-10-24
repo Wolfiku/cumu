@@ -8,6 +8,7 @@
 'use strict';
 
 const { getDB } = require('../db');
+const { adminCodeValid } = require('../adminCode');
 
 /**
  * Resolve a Bearer token from the request.
@@ -36,6 +37,11 @@ function requireAuth(req, res, next) {
       req.session.destroy(() => {});
       return res.status(401).json({ error: 'User blocked or not found' });
     }
+    // Admin sessions are only valid if the current admin login code was entered
+    if (!adminCodeValid(user.role, req.session.adminCodeFp)) {
+      req.session.destroy(() => {});
+      return res.status(401).json({ error: 'Admin login code required', code: 'admin_code_required' });
+    }
     req.user = user;
     req.oauthScope = 'read write admin'; // session = full access
     return next();
@@ -48,7 +54,7 @@ function requireAuth(req, res, next) {
   const now = Math.floor(Date.now() / 1000);
 
   const row = db.prepare(`
-    SELECT t.user_id, t.scope, t.access_expires_at, t.revoked,
+    SELECT t.user_id, t.scope, t.access_expires_at, t.revoked, t.admin_code_fp,
            u.id, u.username, u.role, u.is_blocked, u.theme
     FROM oauth_tokens t
     JOIN users u ON u.id = t.user_id
@@ -59,6 +65,11 @@ function requireAuth(req, res, next) {
   if (row.revoked)        return res.status(401).json({ error: 'Token has been revoked' });
   if (row.access_expires_at < now) return res.status(401).json({ error: 'Access token expired' });
   if (row.is_blocked)     return res.status(403).json({ error: 'User account is blocked' });
+  // Tokens issued without the current admin login code (older tokens, the
+  // code was changed, or the user was promoted to admin later) are not valid for admins.
+  if (!adminCodeValid(row.role, row.admin_code_fp)) {
+    return res.status(401).json({ error: 'Admin login code required', code: 'admin_code_required' });
+  }
 
   req.user = {
     id: row.user_id,

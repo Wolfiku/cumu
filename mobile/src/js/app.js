@@ -33,6 +33,8 @@ const sMain  = $('screen-main');
 const inpUrl   = $('inp-url');
 const inpUser  = $('inp-user');
 const inpPass  = $('inp-pass');
+const inpCode  = $('inp-admin-code');
+const rowCode  = $('row-admin-code');
 const btnConn  = $('btn-connect');
 const setupErr = $('setup-error');
 const navTabs  = document.querySelectorAll('.nav-tab');
@@ -91,16 +93,19 @@ function coverUrl(song) {
 }
 
 // ══ Core login function (used by button AND auto-relogin) ═════════════════════
-async function doLogin(url, username, password) {
+// Admin accounts must also send the admin login code (ADMIN_LOGIN_CODE in the server .env).
+async function doLogin(url, username, password, adminCode) {
   const r = await fetch(`${url}/auth/login`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ username, password, admin_code: adminCode || undefined }),
   });
   if (!r.ok) {
     const e = await r.json().catch(() => ({}));
-    throw new Error(e.error || 'Login failed.');
+    const err = new Error(e.error || 'Login failed.');
+    err.code = e.code;
+    throw err;
   }
   return r.json();
 }
@@ -109,17 +114,18 @@ async function doLogin(url, username, password) {
 async function init() {
   await loadOfflineMeta();
 
-  const [savedUrl, savedUser, savedPass] = await Promise.all([
+  const [savedUrl, savedUser, savedPass, savedCode] = await Promise.all([
     Preferences.get({ key: 'cumu_server' }),
     Preferences.get({ key: 'cumu_user'   }),
     Preferences.get({ key: 'cumu_pass'   }),
+    Preferences.get({ key: 'cumu_admin_code' }),
   ]);
 
   if (savedUrl.value && savedUser.value && savedPass.value) {
     serverUrl = savedUrl.value;
     try {
       // Re-login silently — creates a fresh valid session every cold start
-      await doLogin(savedUrl.value, savedUser.value, savedPass.value);
+      await doLogin(savedUrl.value, savedUser.value, savedPass.value, savedCode.value);
       loggedIn = true;
       showMain();
       loadHome();
@@ -139,6 +145,7 @@ async function clearCreds() {
     Preferences.remove({ key: 'cumu_server' }),
     Preferences.remove({ key: 'cumu_user'   }),
     Preferences.remove({ key: 'cumu_pass'   }),
+    Preferences.remove({ key: 'cumu_admin_code' }),
   ]);
 }
 
@@ -156,6 +163,7 @@ btnConn.addEventListener('click', async () => {
   const url  = inpUrl.value.trim().replace(/\/$/, '');
   const user = inpUser.value.trim();
   const pass = inpPass.value;
+  const code = rowCode.style.display === 'none' ? '' : inpCode.value.trim();
 
   if (!url || !user || !pass) { showErr('Please fill in all fields.'); return; }
 
@@ -165,20 +173,33 @@ btnConn.addEventListener('click', async () => {
 
   try {
     serverUrl = url;
-    await doLogin(url, user, pass);
+    await doLogin(url, user, pass, code);
 
     // Persist credentials for auto-relogin
     await Promise.all([
       Preferences.set({ key: 'cumu_server', value: url  }),
       Preferences.set({ key: 'cumu_user',   value: user }),
       Preferences.set({ key: 'cumu_pass',   value: pass }),
+      code ? Preferences.set({ key: 'cumu_admin_code', value: code })
+           : Preferences.remove({ key: 'cumu_admin_code' }),
     ]);
+    inpCode.value = '';
+    rowCode.style.display = 'none';
 
     loggedIn = true;
     showMain();
     loadHome();
   } catch (e) {
     serverUrl = '';
+    if (e.code === 'admin_code_required' || e.code === 'admin_code_invalid') {
+      rowCode.style.display = '';
+      inpCode.value = '';
+      inpCode.focus();
+      showErr(e.code === 'admin_code_invalid'
+        ? 'Invalid admin code.'
+        : 'Admin account: please enter the admin code (ADMIN_LOGIN_CODE in the server .env).');
+      return;
+    }
     showErr(e.message || 'Connection error.');
   } finally {
     btnConn.disabled    = false;
