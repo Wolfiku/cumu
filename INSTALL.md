@@ -60,6 +60,8 @@ services:
       - NODE_ENV=production
       - SESSION_SECRET=${SESSION_SECRET:-cumu-default-production-secret-change-me}
       - MUSIC_PATH=/music
+      - WATCHTOWER_URL=http://watchtower:8080
+      - WATCHTOWER_HTTP_API_TOKEN=${WATCHTOWER_HTTP_API_TOKEN:-cumu-watchtower-internal}
     volumes:
       - cumu_data:/app/data
       - ${MUSIC_PATH:-./music}:/music
@@ -74,6 +76,9 @@ services:
       - WATCHTOWER_CLEANUP=true
       - WATCHTOWER_POLL_INTERVAL=300
       - WATCHTOWER_LABEL_ENABLE=true
+      - WATCHTOWER_HTTP_API_UPDATE=true
+      - WATCHTOWER_HTTP_API_PERIODIC_POLLS=true
+      - WATCHTOWER_HTTP_API_TOKEN=${WATCHTOWER_HTTP_API_TOKEN:-cumu-watchtower-internal}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
 
@@ -81,6 +86,8 @@ volumes:
   cumu_data:
     driver: local
 ```
+
+The `WATCHTOWER_HTTP_*` lines let admins trigger an immediate update from cumu ("Update installieren" in the admin panel, or bottom right on desktop while a library scan runs) instead of waiting for the next 5-minute poll. Existing installations need these lines added once to their `docker-compose.yml`, then `docker compose up -d`.
 
 ---
 

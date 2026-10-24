@@ -18,6 +18,9 @@ services:
       - PORT=3000
       - SESSION_SECRET=${SESSION_SECRET:-cumu-default-production-secret-change-me}
       - MUSIC_PATH=/music
+      # Lets admins trigger an immediate update via Watchtower (admin panel / scan screen)
+      - WATCHTOWER_URL=http://watchtower:8080
+      - WATCHTOWER_HTTP_API_TOKEN=${WATCHTOWER_HTTP_API_TOKEN:-cumu-watchtower-internal}
     volumes:
       - cumu_data:/app/data           # SQLite DB + Sessions
       - ${MUSIC_PATH:-./music}:/music # Musikordner
@@ -38,6 +41,11 @@ services:
       - WATCHTOWER_CLEANUP=true
       - WATCHTOWER_POLL_INTERVAL=300
       - WATCHTOWER_LABEL_ENABLE=true
+      # HTTP API for on-demand updates from cumu; only reachable inside this
+      # compose network (port 8080 is not published). Periodic polls stay on.
+      - WATCHTOWER_HTTP_API_UPDATE=true
+      - WATCHTOWER_HTTP_API_PERIODIC_POLLS=true
+      - WATCHTOWER_HTTP_API_TOKEN=${WATCHTOWER_HTTP_API_TOKEN:-cumu-watchtower-internal}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
 

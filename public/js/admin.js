@@ -740,7 +740,12 @@ const CumuAdmin = (function() {
       try {
         const res = await CumuApi.post('/admin/update', {});
         statusText.textContent = res.message || 'Executing update...';
-        btn.textContent = 'Update Started';
+        if (res.started) {
+          btn.textContent = 'Update Started';
+        } else {
+          btn.disabled = false;
+          btn.textContent = 'Check for updates & update now';
+        }
       } catch (err) {
         statusText.textContent = err.message || 'Update check failed.';
         btn.disabled = false;
