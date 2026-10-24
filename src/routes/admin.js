@@ -921,6 +921,7 @@ router.get('/stats', requireAdmin, (req, res) => {
     songs: songs.c, albums: albums.c, artists: artists.c, users: users.c,
     storageUsedBytes: totalSize.s || 0,
     maxStorageGb: cfg.maxStorageGb || 50,
+    version: require('../../package.json').version,
   });
 });
 
