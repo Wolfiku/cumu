@@ -188,6 +188,12 @@ function initDB() {
   if (!userCols.includes('is_blocked')) db.exec("ALTER TABLE users ADD COLUMN is_blocked INTEGER NOT NULL DEFAULT 0");
   if (!userCols.includes('updated_at')) db.exec("ALTER TABLE users ADD COLUMN updated_at INTEGER DEFAULT (unixepoch())");
 
+  // admin_code_fp = fingerprint of the admin login code entered at login (see src/adminCode.js)
+  const codeCols = db.prepare('PRAGMA table_info(oauth_codes)').all().map(c => c.name);
+  if (!codeCols.includes('admin_code_fp'))  db.exec("ALTER TABLE oauth_codes ADD COLUMN admin_code_fp TEXT");
+  const tokenCols = db.prepare('PRAGMA table_info(oauth_tokens)').all().map(c => c.name);
+  if (!tokenCols.includes('admin_code_fp')) db.exec("ALTER TABLE oauth_tokens ADD COLUMN admin_code_fp TEXT");
+
   const songCols = db.prepare('PRAGMA table_info(songs)').all().map(c => c.name);
   if (!songCols.includes('mime_type'))      db.exec("ALTER TABLE songs ADD COLUMN mime_type TEXT");
   if (!songCols.includes('cover'))          db.exec("ALTER TABLE songs ADD COLUMN cover TEXT");

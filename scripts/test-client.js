@@ -11,6 +11,7 @@
  *   - Server must be running
  *   - Admin credentials must be set in TEST_USER / TEST_PASS env vars
  *     or passed via the first argument
+ *   - The admin login code must be set in ADMIN_LOGIN_CODE
  *
  * What it tests:
  *   1. Setup (creates admin user if needed)
@@ -33,6 +34,7 @@ const https  = require('https');
 const BASE    = process.argv[2] || process.env.CUMU_URL || 'http://localhost:3000';
 const USER    = process.env.TEST_USER || 'testadmin';
 const PASS    = process.env.TEST_PASS || 'testpassword1';
+const ADMIN_CODE = process.env.ADMIN_LOGIN_CODE || '';
 const CLIENT  = 'cumu-web';
 const SECRET  = 'cumu-web-secret-internal';
 
@@ -80,14 +82,14 @@ async function run() {
 
   // ── 1. Setup admin user ────────────────────────────────────────────────────
   console.log('── 1. Setup / first-run ──');
-  const setup = await req('POST', '/auth/setup', { username: USER, password: PASS });
+  const setup = await req('POST', '/auth/setup', { username: USER, password: PASS, admin_code: ADMIN_CODE });
   ok('Setup responded (200 or 400 "already done")', setup.status === 200 || (setup.status === 400 && setup.json.error?.includes('already')));
 
   // ── 2. OAuth2 Authorization Code Flow ─────────────────────────────────────
   console.log('\n── 2. OAuth2 Authorization Code Flow ──');
 
   // Register the web client if it doesn't exist yet — using session login
-  const loginRes = await req('POST', '/auth/login', { username: USER, password: PASS });
+  const loginRes = await req('POST', '/auth/login', { username: USER, password: PASS, admin_code: ADMIN_CODE });
   ok('Session login succeeds', loginRes.status === 200 && loginRes.json.ok);
 
   // Authorize
@@ -98,6 +100,7 @@ async function run() {
     response_type: 'code',
     username: USER,
     password: PASS,
+    admin_code: ADMIN_CODE,
   });
   ok('Authorize returns code', authRes.status === 200 && typeof authRes.json.code === 'string');
 

@@ -13,6 +13,7 @@
 const { WebSocketServer, WebSocket } = require('ws');
 const { getDB } = require('./db');
 const { extractToken } = require('./middleware/auth');
+const { adminCodeValid } = require('./adminCode');
 
 /** Map<userId, Set<WebSocket>> */
 const rooms = new Map();
@@ -22,11 +23,12 @@ function getUserIdFromToken(token) {
   const db = getDB();
   const now = Math.floor(Date.now() / 1000);
   const row = db.prepare(`
-    SELECT t.user_id FROM oauth_tokens t
+    SELECT t.user_id, t.admin_code_fp, u.role FROM oauth_tokens t
     JOIN users u ON u.id = t.user_id
     WHERE t.access_token = ? AND t.revoked = 0 AND t.access_expires_at > ? AND u.is_blocked = 0
   `).get(token, now);
-  return row ? row.user_id : null;
+  if (!row || !adminCodeValid(row.role, row.admin_code_fp)) return null;
+  return row.user_id;
 }
 
 function broadcast(userId, payload, excludeSocket) {

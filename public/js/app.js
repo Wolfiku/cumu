@@ -446,6 +446,9 @@ function showToast(msg) {
 
     const username = document.getElementById('loginUsername').value;
     const password = document.getElementById('loginPassword').value;
+    const adminCodeRow = document.getElementById('loginAdminCodeRow');
+    const adminCodeInput = document.getElementById('loginAdminCode');
+    const adminCode = adminCodeRow.classList.contains('hidden') ? '' : adminCodeInput.value.trim();
 
     const originalBtnContent = submitBtn ? submitBtn.innerHTML : 'Login &rarr;';
     if (submitBtn) {
@@ -454,10 +457,22 @@ function showToast(msg) {
     }
 
     try {
-      const res = await CumuApi.login(username, password);
+      const res = await CumuApi.login(username, password, adminCode);
       currentUser = { username: res.username, role: res.role, theme: res.theme, enablePodcasts: res.enablePodcasts };
+      adminCodeInput.value = '';
+      adminCodeRow.classList.add('hidden');
       onLoginSuccess();
     } catch (err) {
+      if (err.code === 'admin_code_required' || err.code === 'admin_code_invalid') {
+        adminCodeRow.classList.remove('hidden');
+        adminCodeInput.value = '';
+        adminCodeInput.focus();
+        errEl.textContent = err.code === 'admin_code_invalid'
+          ? 'Invalid admin code.'
+          : 'Admin account: please enter the admin code (ADMIN_LOGIN_CODE in the server .env).';
+        errEl.classList.remove('hidden');
+        return;
+      }
       const msg = err.message || 'Login fehlgeschlagen';
       errEl.textContent = msg.includes('fetch') || msg.includes('NetworkError')
         ? 'Server unreachable. Please make sure the backend server is running.'

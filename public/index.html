@@ -270,6 +270,11 @@
           <input type="password" id="loginPassword" name="password" required placeholder="password"
                  class="w-full px-md py-sm bg-background border border-border-subtle rounded-lg font-body-sm text-body-sm text-on-surface focus:outline-none focus:border-text-muted transition-colors">
         </div>
+        <div id="loginAdminCodeRow" class="hidden flex flex-col gap-xs">
+          <label for="loginAdminCode" class="font-label-caps text-label-caps text-text-muted lowercase">Admin code</label>
+          <input type="password" id="loginAdminCode" name="admin_code" placeholder="ADMIN_LOGIN_CODE from .env" autocomplete="off"
+                 class="w-full px-md py-sm bg-background border border-border-subtle rounded-lg font-body-sm text-body-sm text-on-surface focus:outline-none focus:border-text-muted transition-colors">
+        </div>
         <div id="loginError" class="hidden font-body-sm text-body-sm text-error bg-error-container/30 border border-error/20 rounded-lg p-sm text-center" role="alert"></div>
         <button type="submit" id="loginSubmitBtn" class="mt-sm w-full py-md px-lg bg-text-muted text-on-primary rounded-lg font-label-caps text-label-caps font-bold hover:scale-105 active:scale-95 transition-all">
           Login &rarr;

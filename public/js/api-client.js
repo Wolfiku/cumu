@@ -63,9 +63,11 @@ const CumuApi = (() => {
 
   /**
    * Login: authorize (get code) + exchange for token.
-   * Returns { ok: true, username, role, theme } or throws.
+   * Admins must also pass the admin login code from the server's .env.
+   * Returns { ok: true, username, role, theme } or throws (err.code is set to
+   * 'admin_code_required' / 'admin_code_invalid' when the admin code is missing or wrong).
    */
-  async function login(username, password) {
+  async function login(username, password, adminCode) {
     // Step 1: Get authorization code
     const authRes = await safeFetch('/oauth/authorize', {
       method: 'POST',
@@ -77,6 +79,7 @@ const CumuApi = (() => {
         response_type: 'code',
         username,
         password,
+        admin_code: adminCode || undefined,
       }),
     });
 
@@ -86,7 +89,11 @@ const CumuApi = (() => {
     } catch {
       throw new Error('Ungültige Antwort vom Server erhalten');
     }
-    if (!authRes.ok) throw new Error(authData.error_description || authData.error || 'Autorisierung fehlgeschlagen');
+    if (!authRes.ok) {
+      const err = new Error(authData.error_description || authData.error || 'Autorisierung fehlgeschlagen');
+      err.code = authData.error;
+      throw err;
+    }
 
     // Step 2: Exchange code for token
     const tokenRes = await safeFetch('/oauth/token', {

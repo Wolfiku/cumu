@@ -10,6 +10,7 @@ const morgan   = require('morgan');
 const cors     = require('cors');
 
 const { initDB, getDB, getConfig, setConfig, backupDatabase } = require('./db');
+const { initAdminCode } = require('./adminCode');
 const { createWsServer }    = require('./websocket');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
@@ -29,6 +30,10 @@ const dataDir = path.join(__dirname, '../data');
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
 initDB();
+initAdminCode();
+if (process.env.AUTO_LOGIN === 'true') {
+  console.warn('[cumu] AUTO_LOGIN is no longer supported and is ignored: admins must log in with the admin login code.');
+}
 
 const config = getConfig();
 const PORT = process.env.PORT || config.port || 3000;
