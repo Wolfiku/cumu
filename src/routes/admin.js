@@ -776,6 +776,44 @@ router.post('/songs/:id/lookup', requireAdmin, async (req, res) => {
 });
 
 
+/**
+ * Ask Watchtower (HTTP API, see docker-compose.yml) to pull and apply the
+ * latest image right now. The call only returns once Watchtower is done, and
+ * Watchtower replaces this container while updating — so a request that is
+ * still open after a few seconds means the update is running.
+ */
+function triggerWatchtowerUpdate() {
+  const base  = process.env.WATCHTOWER_URL || 'http://watchtower:8080';
+  const token = process.env.WATCHTOWER_HTTP_API_TOKEN;
+  const notConfigured = {
+    started: false,
+    message: 'Sofort-Update nicht verfügbar: Watchtower-HTTP-API ist nicht eingerichtet (siehe docker-compose.yml). Watchtower aktualisiert automatisch innerhalb von ca. 5 Minuten.',
+  };
+  if (!token) return Promise.resolve({ ...notConfigured, detail: 'WATCHTOWER_HTTP_API_TOKEN not set' });
+
+  let url;
+  try { url = new URL('/v1/update', base); } catch { return Promise.resolve({ ...notConfigured, detail: `invalid WATCHTOWER_URL ${base}` }); }
+  const client = url.protocol === 'https:' ? require('https') : require('http');
+
+  return new Promise(resolve => {
+    let settled = false;
+    const done = r => { if (!settled) { settled = true; resolve(r); } };
+
+    const req = client.request(url, { method: 'POST', headers: { Authorization: `Bearer ${token}` } }, response => {
+      response.resume();
+      if (response.statusCode === 200) {
+        // Still alive after Watchtower finished → there was no newer image
+        done({ started: false, detail: 'already up to date', message: 'Watchtower hat nach Updates gesucht: cumu ist bereits auf dem neuesten Stand.' });
+      } else {
+        done({ ...notConfigured, detail: `HTTP ${response.statusCode}`, message: `Watchtower hat das Update abgelehnt (HTTP ${response.statusCode}). Prüfe WATCHTOWER_HTTP_API_TOKEN.` });
+      }
+    });
+    req.on('error', err => done({ ...notConfigured, detail: err.message }));
+    setTimeout(() => done({ started: true, detail: 'update running', message: 'Update läuft: Watchtower lädt das neue Image und startet cumu gleich neu.' }), 4000);
+    req.end();
+  });
+}
+
 // POST /admin/update — trigger system update
 router.post('/update', requireAdmin, async (req, res) => {
   const isDocker = fs.existsSync('/.dockerenv');
@@ -800,18 +838,20 @@ router.post('/update', requireAdmin, async (req, res) => {
           } catch {}
           resolve();
         });
-      }).on('error', resolve);
+      }).on('error', resolve).setTimeout(5000, function () { this.destroy(); });
     });
   } catch {}
 
   if (isDocker) {
-    log('info', 'admin', 'Triggered update check on Docker container');
+    const result = await triggerWatchtowerUpdate();
+    log(result.started ? 'info' : 'warn', 'admin', `Watchtower update: ${result.detail}`);
     return res.json({
       ok: true,
       isDocker: true,
+      started: result.started,
       currentVersion: pkgVersion,
       latestCommit,
-      message: 'Watchtower aktualisiert das Docker-Image automatisch im Hintergrund.'
+      message: result.message,
     });
   }
 
@@ -819,13 +859,41 @@ router.post('/update', requireAdmin, async (req, res) => {
   const updateScript = '/usr/local/bin/cumu-update';
   if (fs.existsSync(updateScript)) {
     const { exec } = require('child_process');
-    exec(`${updateScript} --silent`, (err) => {
-      if (err) log('error', 'admin', `Update process failed: ${err.message}`);
+    // The script stops this service when it applies an update; an exit with an
+    // error within the first seconds means it never got that far (e.g. not root).
+    const early = await new Promise(resolve => {
+      exec(`${updateScript} --silent`, (err, stdout, stderr) => {
+        const msg = (stderr || err?.message || '').replace(/\x1b\[[0-9;]*m/g, '').trim();
+        if (err) log('error', 'admin', `Update process failed: ${msg}`);
+        resolve(err ? { error: msg } : { upToDate: true });
+      });
+      setTimeout(() => resolve(null), 3000);
     });
+    if (early?.upToDate) {
+      return res.json({
+        ok: true,
+        isDocker: false,
+        started: false,
+        currentVersion: pkgVersion,
+        latestCommit,
+        message: 'cumu ist bereits auf dem neuesten Stand.',
+      });
+    }
+    if (early?.error) {
+      return res.json({
+        ok: false,
+        isDocker: false,
+        started: false,
+        currentVersion: pkgVersion,
+        latestCommit,
+        message: `Update fehlgeschlagen: ${early.error}. Führe "sudo cumu-update" auf dem Server aus.`,
+      });
+    }
     log('info', 'admin', 'Triggered cumu-update background process');
     return res.json({
       ok: true,
       isDocker: false,
+      started: true,
       currentVersion: pkgVersion,
       latestCommit,
       message: 'Update gestartet! Der Server aktualisiert sich im Hintergrund und startet gleich neu.'
@@ -853,6 +921,7 @@ router.get('/stats', requireAdmin, (req, res) => {
     songs: songs.c, albums: albums.c, artists: artists.c, users: users.c,
     storageUsedBytes: totalSize.s || 0,
     maxStorageGb: cfg.maxStorageGb || 50,
+    version: require('../../package.json').version,
   });
 });
 

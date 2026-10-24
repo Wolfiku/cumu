@@ -708,7 +708,7 @@ const CumuAdmin = (function() {
         <h2 class="font-title-md text-title-md text-on-surface border-b border-border-subtle pb-sm">System Update & Version</h2>
         <div class="flex justify-between items-center p-md rounded-lg bg-surface-container-low flex-wrap gap-md">
           <div class="flex flex-col gap-xs">
-            <span class="font-body-lg text-body-lg text-on-surface">Version: <strong class="font-bold">v0.2.0</strong></span>
+            <span class="font-body-lg text-body-lg text-on-surface">Version: <strong class="font-bold">v${esc(stats.version || '?')}</strong></span>
             <span class="font-body-sm text-body-sm text-text-muted" id="adminUpdateStatusText">Automatic updates are enabled.</span>
           </div>
           <button id="btnTriggerAdminUpdate" class="px-md py-sm bg-text-muted text-on-primary font-body-sm text-body-sm rounded hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer">
@@ -740,7 +740,12 @@ const CumuAdmin = (function() {
       try {
         const res = await CumuApi.post('/admin/update', {});
         statusText.textContent = res.message || 'Executing update...';
-        btn.textContent = 'Update Started';
+        if (res.started) {
+          btn.textContent = 'Update Started';
+        } else {
+          btn.disabled = false;
+          btn.textContent = 'Check for updates & update now';
+        }
       } catch (err) {
         statusText.textContent = err.message || 'Update check failed.';
         btn.disabled = false;
