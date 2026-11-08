@@ -12,24 +12,39 @@ const { v4: uuidv4 } = require('uuid');
 const { getDB, getConfig, setConfig } = require('../db');
 const { adminCodeError, verifyAdminCode, adminCodeFingerprint, adminCodeValid, isAdminRole, trustForLogin } = require('../adminCode');
 
+const limiter = require('../utils/loginLimiter');
+
 const router = express.Router();
+
+// bcrypt hash of a random string, compared against for unknown usernames
+const DUMMY_HASH = bcrypt.hashSync(require('crypto').randomBytes(16).toString('hex'), 12);
 
 // POST /auth/login — session login (web client convenience)
 router.post('/login', async (req, res) => {
   const { username, password, admin_code, admin_trust } = req.body;
   if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
 
+  const lock = limiter.check(req, 'login', username);
+  if (lock) return limiter.reject(res, lock);
+
   const db   = getDB();
   const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
-  if (!user) return res.status(401).json({ error: 'Invalid credentials' });
-
-  const ok = await bcrypt.compare(password, user.password);
-  if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
+  // Compare against a dummy hash for unknown users, so the response time
+  // does not reveal which usernames exist
+  const ok = await bcrypt.compare(password, user ? user.password : DUMMY_HASH);
+  if (!user || !ok) {
+    limiter.fail(req, 'login', username);
+    return res.status(401).json({ error: 'Invalid credentials' });
+  }
 
   if (user.is_blocked) return res.status(403).json({ error: 'Account is blocked' });
 
   const codeErr = adminCodeError(user, admin_code, admin_trust);
-  if (codeErr) return res.status(401).json({ error: codeErr.message, code: codeErr.code });
+  if (codeErr) {
+    if (codeErr.code === 'admin_code_invalid') limiter.fail(req, 'login', username);
+    return res.status(401).json({ error: codeErr.message, code: codeErr.code });
+  }
+  limiter.succeed(req, 'login', username);
   const trust = trustForLogin(user, admin_code);
 
   req.session.userId        = user.id;
@@ -91,7 +106,13 @@ router.post('/setup', async (req, res) => {
   const { username, password, musicDir, musicPath, port, admin_code } = req.body;
   if (!username || !password) return res.status(400).json({ error: 'Username and password are required' });
   if (!admin_code) return res.status(401).json({ error: 'Admin login code required', code: 'admin_code_required' });
-  if (!verifyAdminCode(admin_code)) return res.status(401).json({ error: 'Invalid admin login code', code: 'admin_code_invalid' });
+  const lock = limiter.check(req, 'setup', '');
+  if (lock) return limiter.reject(res, lock);
+  if (!verifyAdminCode(admin_code)) {
+    limiter.fail(req, 'setup', '');
+    return res.status(401).json({ error: 'Invalid admin login code', code: 'admin_code_invalid' });
+  }
+  limiter.succeed(req, 'setup', '');
 
   const targetMusic = musicPath || musicDir || '/music';
   const pathCheck = await validateMusicPath(targetMusic);

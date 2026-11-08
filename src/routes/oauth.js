@@ -18,7 +18,12 @@ const { v4: uuidv4 } = require('uuid');
 const { getDB, log } = require('../db');
 const { adminCodeError, adminCodeFingerprint, adminCodeValid, isAdminRole, trustForLogin } = require('../adminCode');
 
+const limiter = require('../utils/loginLimiter');
+
 const router = express.Router();
+
+// bcrypt hash of a random string, compared against for unknown usernames
+const DUMMY_HASH = bcrypt.hashSync(crypto.randomBytes(16).toString('hex'), 12);
 
 const ACCESS_TOKEN_TTL  = 60 * 60;          // 1 hour
 const REFRESH_TOKEN_TTL = 30 * 24 * 60 * 60; // 30 days
@@ -158,15 +163,24 @@ router.post('/authorize', (req, res) => {
     return res.status(400).json({ error: 'invalid_request', error_description: 'username and password required' });
   }
 
+  const lock = limiter.check(req, 'login', username);
+  if (lock) return limiter.reject(res, lock, 'oauth');
+
   const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
-  if (!user) return res.status(401).json({ error: 'access_denied', error_description: 'Invalid credentials' });
-  if (!bcrypt.compareSync(password, user.password)) {
+  // Dummy compare for unknown users keeps the response time the same
+  const ok = bcrypt.compareSync(password, user ? user.password : DUMMY_HASH);
+  if (!user || !ok) {
+    limiter.fail(req, 'login', username);
     return res.status(401).json({ error: 'access_denied', error_description: 'Invalid credentials' });
   }
   if (user.is_blocked) return res.status(403).json({ error: 'access_denied', error_description: 'User is blocked' });
 
   const codeErr = adminCodeError(user, admin_code, admin_trust);
-  if (codeErr) return res.status(401).json({ error: codeErr.code, error_description: codeErr.message });
+  if (codeErr) {
+    if (codeErr.code === 'admin_code_invalid') limiter.fail(req, 'login', username);
+    return res.status(401).json({ error: codeErr.code, error_description: codeErr.message });
+  }
+  limiter.succeed(req, 'login', username);
   const trust = trustForLogin(user, admin_code);
 
   // Limit scope to what client is allowed

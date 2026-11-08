@@ -10,6 +10,7 @@ const express = require('express');
 const bcrypt  = require('bcryptjs');
 const { getDB, getConfig } = require('../db');
 const { requireAuth } = require('../middleware/auth');
+const limiter = require('../utils/loginLimiter');
 
 const router = express.Router();
 
@@ -60,8 +61,14 @@ router.post('/change-password', requireAuth, async (req, res) => {
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
+  const lock = limiter.check(req, 'password', user.id);
+  if (lock) return limiter.reject(res, lock);
   const match = await bcrypt.compare(currentPassword, user.password);
-  if (!match) return res.status(401).json({ error: 'Current password is incorrect.' });
+  if (!match) {
+    limiter.fail(req, 'password', user.id);
+    return res.status(401).json({ error: 'Current password is incorrect.' });
+  }
+  limiter.succeed(req, 'password', user.id);
 
   const hashed = await bcrypt.hash(newPassword, 12);
   db.prepare('UPDATE users SET password = ?, updated_at = unixepoch() WHERE id = ?').run(hashed, req.user.id);

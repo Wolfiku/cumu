@@ -41,6 +41,15 @@ const HOST = process.env.HOST || config.host || '0.0.0.0';
 
 // ── Security & Logging ────────────────────────────────────────────────────────
 
+// Behind a reverse proxy (nginx, Caddy, Traefik, NPM …) set TRUST_PROXY so the
+// login limiter sees the real client IP from X-Forwarded-For. Accepts "true",
+// a hop count ("1") or addresses/subnets ("loopback", "10.0.0.0/8").
+// Off by default: without a proxy, the header could be faked by anyone.
+if (process.env.TRUST_PROXY && process.env.TRUST_PROXY !== 'false') {
+  const tp = process.env.TRUST_PROXY;
+  app.set('trust proxy', tp === 'true' ? true : /^\d+$/.test(tp) ? Number(tp) : tp);
+}
+
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(morgan('dev'));
 app.use(cors({
