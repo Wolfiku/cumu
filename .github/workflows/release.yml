@@ -78,7 +78,8 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - uses: android-actions/setup-android@v3
+      # The Android SDK is preinstalled on GitHub's Ubuntu runners (ANDROID_HOME);
+      # Gradle downloads missing platform/build-tools versions itself.
 
       # Optional release signing: add the secrets ANDROID_KEYSTORE_BASE64,
       # ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD.
