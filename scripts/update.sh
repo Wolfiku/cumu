@@ -26,7 +26,10 @@ log()   { [[ "$SILENT_MODE" == false ]] && echo -e "${GREEN}[cumu-update]${NC} $
 warn()  { [[ "$SILENT_MODE" == false ]] && echo -e "${YELLOW}[warn]${NC} $*" || true; }
 error() { echo -e "${RED}[error]${NC} $*" >&2; exit 1; }
 
-[[ $EUID -ne 0 ]] && error "Update script must run as root. Try running without sudo if already root."
+CURRENT_UID="$(id -u 2>/dev/null || echo "${EUID:-unknown}")"
+if [[ "$CURRENT_UID" != "0" ]]; then
+  error "Das Update-Skript muss als root laufen, läuft aber als '$(id -un 2>/dev/null || whoami)' (UID ${CURRENT_UID}). Versuche: sudo cumu-update"
+fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in

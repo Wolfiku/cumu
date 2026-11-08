@@ -1,0 +1,50 @@
+# cumu — docker-compose for NAS systems (paste into your NAS's container UI)
+#
+# Easier: the one-line installer detects the NAS and sets everything up itself:
+#   curl -fsSL https://raw.githubusercontent.com/Wolfiku/cumu/main/scripts/install.sh | bash
+#
+# Manual use — adjust the two host paths under "volumes" (left side of ":"):
+#   Synology  (Container Manager → Project)   /volume1/docker/cumu/data   /volume1/music
+#   QNAP      (Container Station → Apps)      /share/Container/cumu/data  /share/Music
+#   Unraid    (Compose Manager plugin)        /mnt/user/appdata/cumu/data /mnt/user/music
+#   TrueNAS SCALE (Apps → Install via YAML)   /mnt/<pool>/apps/cumu/data  /mnt/<pool>/music
+#   Asustor   (Portainer)                     /volume1/Docker/cumu/data   /volume1/Music
+#   Others with Portainer: any absolute paths on your NAS
+# Create the data folder first, change SESSION_SECRET, then start.
+#
+# Uses the prebuilt image (x86_64 + arm64, no build on the NAS). The admin
+# login code is generated on first start and stored in <data>/.env.
+
+services:
+  cumu:
+    image: ghcr.io/wolfiku/cumu:latest
+    container_name: cumu
+    restart: unless-stopped
+    ports:
+      - "3000:3000"            # left side = port on the NAS, change if 3000 is taken
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - SESSION_SECRET=change-me-to-a-long-random-string
+      - MUSIC_PATH=/music
+      - WATCHTOWER_URL=http://watchtower:8080
+      - WATCHTOWER_HTTP_API_TOKEN=cumu-watchtower-internal
+    volumes:
+      - /volume1/docker/cumu/data:/app/data   # database, sessions, .env  ← adjust
+      - /volume1/music:/music                 # your music folder         ← adjust
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: cumu_watchtower
+    restart: unless-stopped
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_POLL_INTERVAL=300
+      - WATCHTOWER_LABEL_ENABLE=true
+      - WATCHTOWER_HTTP_API_UPDATE=true
+      - WATCHTOWER_HTTP_API_PERIODIC_POLLS=true
+      - WATCHTOWER_HTTP_API_TOKEN=cumu-watchtower-internal
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock

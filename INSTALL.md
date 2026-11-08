@@ -89,6 +89,20 @@ volumes:
 
 The `WATCHTOWER_HTTP_*` lines let admins trigger an immediate update from cumu ("Update installieren" in the admin panel, or bottom right on desktop while a library scan runs) instead of waiting for the next 5-minute poll. Existing installations need these lines added once to their `docker-compose.yml`, then `docker compose up -d`.
 
+### NAS (Synology, QNAP, Unraid, TrueNAS SCALE, Asustor, …)
+
+**Option A — one-line installer (recommended).** Install your NAS's Docker package and start it (Synology: Container Manager, QNAP: Container Station, Unraid: enable Docker, TrueNAS SCALE: set up Apps, Asustor: Docker-CE). Enable SSH, log in, become root (`sudo -i`), then run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Wolfiku/cumu/main/scripts/install.sh | bash
+```
+
+The installer detects the NAS, suggests suitable data and music folders, and starts cumu plus Watchtower as containers. It prints the URL and the admin login code at the end; the code is stored in `<data folder>/cumu.env`. On other systems you can force this mode with `--docker`; set the folders with `--data-dir` and `--music-path`.
+
+**Option B — container UI.** Paste [`docker-compose.nas.yml`](docker-compose.nas.yml) into your NAS's compose/project dialog. Its header lists the matching folder paths for each NAS.
+
+TrueNAS CORE (FreeBSD) is not supported. The image is available for x86_64 and arm64; older 32-bit ARM NAS models can't run it.
+
 ---
 
 ## 📦 3. Debian Package (`.deb`)

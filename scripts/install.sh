@@ -14,6 +14,7 @@ YELLOW="\033[1;33m"
 RED="\033[0;31m"
 NC="\033[0m"
 BOLD="\033[1m"
+WHITE="\033[1;37m"
 
 INSTALL_DIR="/opt/cumu"
 DATA_DIR="/var/lib/cumu"
@@ -28,7 +29,7 @@ warn()  { echo -e "${YELLOW}[warn]${NC} $*"; }
 error() { echo -e "${RED}[error]${NC} $*" >&2; exit 1; }
 
 # ── Print ASCII Logo ─────────────────────────────────────────────────────────
-echo -e "${BOLD}${GREEN}"
+echo -e "${BOLD}${WHITE}"
 echo "  ██████╗██╗   ██╗███╗   ███╗██╗   ██╗"
 echo " ██╔════╝██║   ██║████╗ ████║██║   ██║"
 echo " ██║     ██║   ██║██╔████╔██║██║   ██║"
@@ -40,11 +41,16 @@ echo -e "${BOLD}  cumu — Self-hosted music & podcast streaming server${NC}\n"
 
 # ── Parse arguments ──────────────────────────────────────────────────────────
 PORT_SET_VIA_ARG=false
+MUSIC_SET_VIA_ARG=false
+FORCE_DOCKER=false
+DOCKER_BASE=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --port)        PORT="$2"; PORT_SET_VIA_ARG=true; shift 2 ;;
-    --music-path)  MUSIC_DIR="$2";                   shift 2 ;;
+    --music-path)  MUSIC_DIR="$2"; MUSIC_SET_VIA_ARG=true; shift 2 ;;
     --install-dir) INSTALL_DIR="$2";                 shift 2 ;;
+    --docker)      FORCE_DOCKER=true;                shift ;;
+    --data-dir)    DOCKER_BASE="$2";                 shift 2 ;;
     *) warn "Unknown argument: $1"; shift ;;
   esac
 done
@@ -63,17 +69,211 @@ fi
 log "Verwende Server-Port: ${PORT}"
 
 # ── Root check ───────────────────────────────────────────────────────────────
-[[ $EUID -ne 0 ]] && error "This installer must run as root. Try running without sudo if already root."
-
-# ── Detect OS ────────────────────────────────────────────────────────────────
-if [[ -f /etc/os-release ]]; then
-  . /etc/os-release
-  OS_ID="$ID"
-else
-  error "Cannot detect OS. Please install manually."
+# Use `id -u` instead of relying only on $EUID, and say who we actually run as.
+# Common pitfall: `sudo curl ... | bash` runs only curl as root, NOT bash.
+CURRENT_UID="$(id -u 2>/dev/null || echo "${EUID:-unknown}")"
+if [[ "$CURRENT_UID" != "0" ]]; then
+  error "Der Installer muss als root laufen, läuft aber als '$(id -un 2>/dev/null || whoami)' (UID ${CURRENT_UID}).
+        Richtig:  curl -fsSL https://raw.githubusercontent.com/Wolfiku/cumu/main/scripts/install.sh | sudo bash
+        Falsch:   sudo curl -fsSL ... | bash   (dabei läuft nur curl als root, nicht bash)"
 fi
 
-log "Detected OS: ${OS_ID}"
+# ── Detect NAS platform ──────────────────────────────────────────────────────
+# NAS systems (Synology, QNAP, Unraid, TrueNAS SCALE, Asustor) have no usable
+# package manager / systemd setup, so cumu is installed there as a Docker
+# container instead. `--docker` forces this mode on any system.
+PLATFORM="linux"
+if   [[ "$(uname -s 2>/dev/null)" == "FreeBSD" ]]; then PLATFORM="freebsd"
+elif [[ -f /etc/synoinfo.conf || -f /etc.defaults/VERSION ]]; then PLATFORM="synology"
+elif [[ -f /etc/config/uLinux.conf ]] || command -v getcfg &>/dev/null; then PLATFORM="qnap"
+elif [[ -f /etc/unraid-version ]]; then PLATFORM="unraid"
+elif command -v midclt &>/dev/null; then PLATFORM="truenas"
+elif [[ -f /etc/nas.conf || -d /usr/local/AppCentral ]]; then PLATFORM="asustor"
+fi
+
+[[ "$PLATFORM" == "freebsd" ]] && error "FreeBSD / TrueNAS CORE wird nicht unterstützt (kein Docker).
+        Nutze eine Linux-VM oder TrueNAS SCALE."
+
+find_docker() {
+  local c
+  if command -v docker &>/dev/null; then command -v docker; return 0; fi
+  for c in /usr/local/bin/docker /usr/bin/docker \
+           /share/*/.qpkg/container-station/bin/docker \
+           /usr/local/AppCentral/docker-ce/bin/docker; do
+    [[ -x "$c" ]] && { echo "$c"; return 0; }
+  done
+  return 1
+}
+
+# 16 chars in groups of 4, same alphabet as src/adminCode.js
+gen_admin_code() {
+  local a='ABCDEFGHJKMNPQRSTUVWXYZ23456789' c='' n
+  for n in $(od -An -N16 -tu1 /dev/urandom); do
+    (( ${#c} % 5 == 4 )) && c+='-'
+    c+="${a:n%31:1}"
+  done
+  echo "$c"
+}
+
+ask() { # ask "<question>" "<default>" → prints answer (default without a tty)
+  local answer=""
+  if [[ -c /dev/tty ]]; then
+    echo -ne "    $1 [Standard: $2]: " >/dev/tty
+    read -r answer </dev/tty || answer=""
+  fi
+  answer="${answer#"${answer%%[![:space:]]*}"}"; answer="${answer%"${answer##*[![:space:]]}"}"
+  echo "${answer:-$2}"
+}
+
+install_docker_mode() {
+  local DOCKER BASE DEF_MUSIC ARCH pool
+  DOCKER="$(find_docker)" || error "Docker wurde nicht gefunden. Installiere zuerst das Docker-Paket deines NAS:
+        Synology: Container Manager · QNAP: Container Station · Unraid: Docker aktivieren
+        TrueNAS SCALE: Apps einrichten · Asustor: Docker-CE (App Central)"
+  "$DOCKER" info &>/dev/null || error "Docker ist installiert, läuft aber nicht. Bitte das Docker-Paket im NAS starten."
+
+  ARCH="$(uname -m)"
+  case "$ARCH" in
+    x86_64|amd64|aarch64|arm64) ;;
+    *) error "CPU-Architektur '${ARCH}' wird vom cumu-Image nicht unterstützt (nur x86_64 und arm64)." ;;
+  esac
+
+  case "$PLATFORM" in
+    synology) BASE="/volume1/docker/cumu";     DEF_MUSIC="/volume1/music" ;;
+    qnap)     if [[ -d /share/Container ]]; then BASE="/share/Container/cumu"; else BASE="/share/CACHEDEV1_DATA/Container/cumu"; fi
+              if [[ -d /share/Music ]]; then DEF_MUSIC="/share/Music"; else DEF_MUSIC="/share/Multimedia"; fi ;;
+    unraid)   BASE="/mnt/user/appdata/cumu";   DEF_MUSIC="/mnt/user/music" ;;
+    truenas)  pool="$(find /mnt -mindepth 1 -maxdepth 1 -type d ! -name '.*' 2>/dev/null | head -n1)"
+              BASE="${pool:-/mnt/pool}/apps/cumu"; DEF_MUSIC="${pool:-/mnt/pool}/music" ;;
+    asustor)  BASE="/volume1/Docker/cumu";     DEF_MUSIC="/volume1/Music" ;;
+    *)        BASE="/opt/cumu-docker";         DEF_MUSIC="/opt/cumu-docker/music" ;;
+  esac
+
+  echo -e "${BOLD}[+] Docker-Installation (${PLATFORM}):${NC}"
+  [[ -n "$DOCKER_BASE" ]] && BASE="$DOCKER_BASE" || BASE="$(ask "Ordner für cumu-Daten" "$BASE")"
+  [[ "$MUSIC_SET_VIA_ARG" == true ]] || MUSIC_DIR="$(ask "Musik-Ordner" "$DEF_MUSIC")"
+
+  mkdir -p "${BASE}/data" "$MUSIC_DIR" || error "Ordner konnten nicht angelegt werden: ${BASE}/data, ${MUSIC_DIR}
+        Gibt es das Volume / den Pool? Pfad mit --data-dir bzw. --music-path angeben."
+
+  # Config file: keep secrets across re-installs
+  local ENV_FILE="${BASE}/cumu.env" SECRET CODE
+  SECRET="$(grep -E '^SESSION_SECRET=.+' "$ENV_FILE" 2>/dev/null | tail -n1 | cut -d= -f2- || true)"
+  CODE="$(grep -E '^ADMIN_LOGIN_CODE=.+' "$ENV_FILE" 2>/dev/null | tail -n1 | cut -d= -f2- || true)"
+  [[ -n "$SECRET" ]] || SECRET="$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
+  [[ -n "$CODE" ]]   || CODE="$(gen_admin_code)"
+  cat > "$ENV_FILE" << ENVEOF
+NODE_ENV=production
+PORT=3000
+MUSIC_PATH=/music
+SESSION_SECRET=${SECRET}
+ADMIN_LOGIN_CODE=${CODE}
+WATCHTOWER_URL=http://cumu_watchtower:8080
+WATCHTOWER_HTTP_API_TOKEN=cumu-watchtower-internal
+ENVEOF
+  chmod 600 "$ENV_FILE"
+
+  log "Lade das cumu-Image..."
+  "$DOCKER" pull ghcr.io/wolfiku/cumu:latest
+  "$DOCKER" pull containrrr/watchtower:latest
+
+  "$DOCKER" network inspect cumu-net &>/dev/null || "$DOCKER" network create cumu-net >/dev/null
+  "$DOCKER" rm -f cumu cumu_watchtower &>/dev/null || true
+
+  log "Starte cumu..."
+  "$DOCKER" run -d --name cumu --restart unless-stopped --network cumu-net \
+    -p "${PORT}:3000" --env-file "$ENV_FILE" \
+    -v "${BASE}/data:/app/data" -v "${MUSIC_DIR}:/music" \
+    --label com.centurylinklabs.watchtower.enable=true \
+    ghcr.io/wolfiku/cumu:latest >/dev/null
+
+  "$DOCKER" run -d --name cumu_watchtower --restart unless-stopped --network cumu-net \
+    -e WATCHTOWER_CLEANUP=true -e WATCHTOWER_POLL_INTERVAL=300 -e WATCHTOWER_LABEL_ENABLE=true \
+    -e WATCHTOWER_HTTP_API_UPDATE=true -e WATCHTOWER_HTTP_API_PERIODIC_POLLS=true \
+    -e WATCHTOWER_HTTP_API_TOKEN=cumu-watchtower-internal \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    containrrr/watchtower:latest >/dev/null
+
+  local IP
+  IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
+  [[ -n "$IP" ]] || IP=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<NF;i++) if($i=="src") print $(i+1)}' || true)
+  [[ -n "$IP" ]] || IP="<NAS-IP>"
+
+  echo ""
+  echo -e "${BOLD}${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  echo -e "${BOLD}  cumu läuft jetzt als Docker-Container!${NC}"
+  echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  echo ""
+  echo -e "  [+] ${BOLD}Erreichbar unter:${NC}  ${BOLD}${GREEN}http://${IP}:${PORT}${NC}"
+  echo ""
+  echo -e "  [+] ${BOLD}Admin-Code (bei jedem Admin-Login erforderlich):${NC}"
+  echo -e "      ${BOLD}${GREEN}${CODE}${NC}"
+  echo -e "      Gespeichert in ${ENV_FILE}"
+  echo ""
+  echo -e "  [+] ${BOLD}Ordner:${NC}"
+  echo -e "      Daten:  ${BASE}/data"
+  echo -e "      Musik:  ${MUSIC_DIR}"
+  echo ""
+  echo -e "  [+] ${BOLD}Verwaltung:${NC}"
+  echo -e "      Logs:          ${BOLD}docker logs -f cumu${NC}"
+  echo -e "      Neu starten:   ${BOLD}docker restart cumu${NC}"
+  echo -e "      Updates:       automatisch (Watchtower) oder Admin-Bereich"
+  echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  echo ""
+}
+
+if [[ "$FORCE_DOCKER" == true || "$PLATFORM" != "linux" ]]; then
+  log "Plattform: ${PLATFORM} — installiere cumu als Docker-Container"
+  install_docker_mode
+  exit 0
+fi
+
+# ── Detect OS ────────────────────────────────────────────────────────────────
+# Detect the distro name, then reduce it to a family the install steps know:
+# debian (apt), fedora (dnf/yum) or arch (pacman). Falls back to release files
+# and finally to whichever package manager exists.
+OS_NAME=""
+OS_FAMILY=""
+for f in /etc/os-release /usr/lib/os-release; do
+  if [[ -r "$f" ]]; then
+    OS_NAME="$(. "$f" && echo "${ID:-}")"
+    OS_LIKE="$(. "$f" && echo "${ID_LIKE:-}")"
+    for id in $OS_NAME $OS_LIKE; do
+      case "$id" in
+        ubuntu|debian|linuxmint|pop|raspbian|elementary|zorin|kali|devuan) OS_FAMILY="debian"; break ;;
+        fedora|rhel|centos|rocky|almalinux|ol|amzn) OS_FAMILY="fedora"; break ;;
+        arch|manjaro|endeavouros|garuda) OS_FAMILY="arch"; break ;;
+      esac
+    done
+    break
+  fi
+done
+
+if [[ -z "$OS_FAMILY" ]]; then
+  if   [[ -f /etc/debian_version ]]; then OS_FAMILY="debian"
+  elif [[ -f /etc/redhat-release || -f /etc/fedora-release ]]; then OS_FAMILY="fedora"
+  elif [[ -f /etc/arch-release ]]; then OS_FAMILY="arch"
+  elif command -v apt-get &>/dev/null; then OS_FAMILY="debian"
+  elif command -v dnf &>/dev/null || command -v yum &>/dev/null; then OS_FAMILY="fedora"
+  elif command -v pacman &>/dev/null; then OS_FAMILY="arch"
+  fi
+fi
+
+# Unknown system without a supported package manager, but Docker exists
+# (e.g. TerraMaster, UGREEN or other NAS) → use the container install.
+if [[ -z "$OS_FAMILY" ]] && find_docker &>/dev/null; then
+  log "Kein unterstützter Paketmanager, aber Docker gefunden — installiere als Container"
+  install_docker_mode
+  exit 0
+fi
+
+if [[ -z "$OS_FAMILY" ]]; then
+  error "Betriebssystem nicht unterstützt oder nicht erkannt ($(uname -s 2>/dev/null) $(uname -r 2>/dev/null), ID='${OS_NAME:-?}').
+        Unterstützt: Debian/Ubuntu, Fedora/RHEL, Arch. Alternativ: Docker (docker-compose.yml)."
+fi
+
+OS_ID="$OS_FAMILY"
+log "Detected OS: ${OS_NAME:-unknown} (${OS_FAMILY})"
 
 # ── Install dependencies ──────────────────────────────────────────────────────
 install_node() {
@@ -227,8 +427,8 @@ CRONEOF
 fi
 
 # ── Done ─────────────────────────────────────────────────────────────────────
-IP=$(hostname -I 2>/dev/null | awk '{print $1}')
-[[ -z "$IP" ]] && IP="<server-ip>"
+IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
+[[ -n "$IP" ]] || IP="<server-ip>"
 
 echo ""
 echo -e "${BOLD}${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
