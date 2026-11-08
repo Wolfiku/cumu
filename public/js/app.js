@@ -469,7 +469,7 @@ function showToast(msg) {
         adminCodeInput.focus();
         errEl.textContent = err.code === 'admin_code_invalid'
           ? 'Invalid admin code.'
-          : 'Admin account: please enter the admin code (ADMIN_LOGIN_CODE in the server .env).';
+          : 'Admin account: please enter the admin code (ADMIN_LOGIN_CODE in the server .env). This device remembers it for 30 days.';
         errEl.classList.remove('hidden');
         return;
       }

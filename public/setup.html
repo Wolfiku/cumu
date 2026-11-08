@@ -190,13 +190,7 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ path: p })
         });
-        const json = await res.json();
-        if (json.inDocker) {
-          document.getElementById('setupMusicPathHint').innerHTML =
-            'Folder where your music files are, e.g. <code>/volume1/music</code>. Subfolders are included.'
-            + (json.suggestions && json.suggestions.length ? ` cumu runs in Docker and can see: <code>${json.suggestions.map(s => s.replace(/[<>&]/g, '')).join('</code>, <code>')}</code>` : '');
-        }
-        return json;
+        return res.json();
       }
     });
 
@@ -227,6 +221,14 @@
         });
         const json = await res.json();
         if (json.ok || json.success) {
+          // Remember this device for 30 days, so the next login needs no admin code
+          if (json.admin_trust) {
+            try {
+              const all = JSON.parse(localStorage.getItem('cumu_admin_trust') || '{}');
+              all[data.username] = json.admin_trust;
+              localStorage.setItem('cumu_admin_trust', JSON.stringify(all));
+            } catch {}
+          }
           btn.textContent = 'success! redirecting...';
           setTimeout(() => { window.location.href = '/'; }, 500);
         } else {

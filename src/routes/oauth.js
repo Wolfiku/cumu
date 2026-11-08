@@ -16,7 +16,7 @@ const bcrypt  = require('bcryptjs');
 const crypto  = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 const { getDB, log } = require('../db');
-const { adminCodeError, adminCodeFingerprint, adminCodeValid, isAdminRole } = require('../adminCode');
+const { adminCodeError, adminCodeFingerprint, adminCodeValid, isAdminRole, trustForLogin } = require('../adminCode');
 
 const router = express.Router();
 
@@ -135,7 +135,7 @@ router.post('/token', (req, res) => {
 // For the web client, the SPA performs a headless authorization using session credentials.
 router.post('/authorize', (req, res) => {
   const db = getDB();
-  const { client_id, redirect_uri, scope = 'read write', response_type, username, password, admin_code } = req.body;
+  const { client_id, redirect_uri, scope = 'read write', response_type, username, password, admin_code, admin_trust } = req.body;
 
   if (response_type !== 'code') {
     return res.status(400).json({ error: 'unsupported_response_type' });
@@ -165,8 +165,9 @@ router.post('/authorize', (req, res) => {
   }
   if (user.is_blocked) return res.status(403).json({ error: 'access_denied', error_description: 'User is blocked' });
 
-  const codeErr = adminCodeError(user, admin_code);
+  const codeErr = adminCodeError(user, admin_code, admin_trust);
   if (codeErr) return res.status(401).json({ error: codeErr.code, error_description: codeErr.message });
+  const trust = trustForLogin(user, admin_code);
 
   // Limit scope to what client is allowed
   const clientScopes = client.scopes.split(' ');
@@ -183,7 +184,10 @@ router.post('/authorize', (req, res) => {
 
   log('info', 'oauth', `Auth code issued for user ${user.id}`);
 
-  res.json({ code, redirect_uri: finalRedirectUri, scope: grantedScope });
+  res.json({
+    code, redirect_uri: finalRedirectUri, scope: grantedScope,
+    ...(trust ? { admin_trust: trust.token, admin_trust_expires_at: trust.expiresAt } : {}),
+  });
 });
 
 // ── POST /oauth/revoke ───────────────────────────────────────────────────────

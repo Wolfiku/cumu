@@ -11,13 +11,16 @@ const IN_DOCKER = fs.existsSync('/.dockerenv');
 
 // Mount points of bind mounts / volumes inside the container (Linux only).
 // System mounts and single-file mounts (/etc/hosts …) are not music folders.
+// Only the top-level ones are returned: on a NAS every shared folder below
+// /volume1 is a mount of its own, which would make the list very long.
 function getDataMounts() {
   try {
-    return fs.readFileSync('/proc/self/mountinfo', 'utf8')
+    const all = [...new Set(fs.readFileSync('/proc/self/mountinfo', 'utf8')
       .split('\n')
       .map(line => (line.split(' ')[4] || '').replace(/\\040/g, ' '))
       .filter(mp => mp && mp !== '/' && !/^\/(proc|sys|dev|run|etc)(\/|$)/.test(mp))
-      .filter(mp => { try { return fs.statSync(mp).isDirectory(); } catch { return false; } });
+      .filter(mp => { try { return fs.statSync(mp).isDirectory(); } catch { return false; } }))];
+    return all.filter(mp => !all.some(other => other !== mp && isInside(mp, other))).sort();
   } catch {
     return [];
   }
@@ -26,6 +29,10 @@ function getDataMounts() {
 function isInside(child, parent) {
   const rel = path.relative(parent, child);
   return rel === '' || (!!rel && !rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+function shortList(items, max = 3) {
+  return items.length > max ? `${items.slice(0, max).join(', ')} und ${items.length - max} weitere` : items.join(', ');
 }
 
 async function countAudioFiles(dir) {
@@ -63,7 +70,7 @@ async function countAudioFiles(dir) {
  */
 async function inspectMusicPath(targetPath) {
   const mounts = IN_DOCKER ? getDataMounts().filter(mp => mp !== '/app/data') : [];
-  const base = { inDocker: IN_DOCKER, suggestions: mounts };
+  const base = { inDocker: IN_DOCKER, suggestions: mounts.slice(0, 3) };
   const raw = typeof targetPath === 'string' ? targetPath.trim() : '';
 
   if (!raw) {
@@ -82,7 +89,7 @@ async function inspectMusicPath(targetPath) {
 
 async function inspectAbsolute(resolved, base, mounts) {
   const dockerHint = mounts.length
-    ? ` Für cumu freigegeben: ${mounts.join(', ')}.`
+    ? ` Für cumu freigegeben: ${shortList(mounts)}.`
     : ' Gib das Laufwerk im docker run / docker-compose frei, unter demselben Pfad (z. B. -v /volume1:/volume1).';
 
   if (IN_DOCKER && !mounts.some(mp => isInside(resolved, mp))) {

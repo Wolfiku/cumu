@@ -51,22 +51,28 @@ while [[ $# -gt 0 ]]; do
     --install-dir) INSTALL_DIR="$2";                 shift 2 ;;
     --docker)      FORCE_DOCKER=true;                shift ;;
     --data-dir)    DOCKER_BASE="$2";                 shift 2 ;;
+    --update)      ACTION="update";                  shift ;;
+    --reinstall)   ACTION="reinstall";               shift ;;
     *) warn "Unknown argument: $1"; shift ;;
   esac
 done
+ACTION="${ACTION:-}"
+CHOSEN_IN_MENU=false
 
-if [[ "$PORT_SET_VIA_ARG" == false ]]; then
-  if [[ -c /dev/tty ]]; then
+# True when we can talk to the user (also works with curl ... | bash)
+has_tty() { { : </dev/tty; } 2>/dev/null; }
+
+ask_port() {
+  if [[ "$PORT_SET_VIA_ARG" == false ]] && has_tty; then
     echo -e "${BOLD}[+] Server-Konfiguration:${NC}"
-    echo -ne "    Welcher Port soll für cumu verwendet werden? [Standard: 3000]: "
+    echo -ne "    Welcher Port soll für cumu verwendet werden? [Standard: ${PORT}]: "
     read -r USER_PORT </dev/tty || USER_PORT=""
     if [[ -n "${USER_PORT// /}" ]]; then
       PORT="${USER_PORT// /}"
     fi
   fi
-fi
-
-log "Verwende Server-Port: ${PORT}"
+  log "Verwende Server-Port: ${PORT}"
+}
 
 # ── Root check ───────────────────────────────────────────────────────────────
 # Use `id -u` instead of relying only on $EUID, and say who we actually run as.
@@ -117,7 +123,7 @@ gen_admin_code() {
 
 ask() { # ask "<question>" "<default>" → prints answer (default without a tty)
   local answer=""
-  if [[ -c /dev/tty ]]; then
+  if has_tty; then
     echo -ne "    $1 [Standard: $2]: " >/dev/tty
     read -r answer </dev/tty || answer=""
   fi
@@ -236,6 +242,82 @@ ENVEOF
   echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
   echo ""
 }
+
+# ── Existing installation: update or fresh install? ─────────────────────────
+# Update keeps database, users, settings and the admin code. A fresh install
+# deletes them. Music files are never deleted.
+EXISTING=""
+DOCKER_BIN="$(find_docker 2>/dev/null || true)"
+if [[ -n "$DOCKER_BIN" ]] && "$DOCKER_BIN" inspect cumu &>/dev/null; then
+  EXISTING="docker"
+elif [[ -f /etc/systemd/system/cumu.service || -f "${INSTALL_DIR}/src/server.js" ]]; then
+  EXISTING="native"
+fi
+
+if [[ -n "$EXISTING" ]]; then
+  if [[ -z "$ACTION" ]]; then
+    ACTION="update"
+    if has_tty; then
+      CHOSEN_IN_MENU=true
+      echo ""
+      echo -e "${BOLD}[+] cumu ist bereits installiert ($([[ "$EXISTING" == docker ]] && echo "Docker-Container" || echo "${INSTALL_DIR}")).${NC}"
+      echo "    1) Aktualisieren        — Benutzer, Einstellungen, Bibliothek und Admin-Code bleiben"
+      echo "    2) Komplett neu installieren — Datenbank, Benutzer und Einstellungen werden gelöscht"
+      echo "                               (deine Musikdateien bleiben erhalten)"
+      echo "    3) Abbrechen"
+      echo -ne "    Auswahl [Standard: 1]: "
+      read -r choice </dev/tty || choice=""
+      case "${choice// /}" in
+        2) ACTION="reinstall" ;;
+        3) log "Abgebrochen."; exit 0 ;;
+        *) ACTION="update" ;;
+      esac
+    fi
+  fi
+
+  if [[ "$ACTION" == "reinstall" && "$CHOSEN_IN_MENU" == true ]]; then
+    echo -ne "    ${RED}Wirklich alles außer den Musikdateien löschen?${NC} Zum Bestätigen 'ja' eingeben: "
+    read -r confirm </dev/tty || confirm=""
+    [[ "$confirm" == "ja" ]] || { log "Abgebrochen, nichts wurde gelöscht."; exit 0; }
+  fi
+
+  if [[ "$EXISTING" == "docker" ]]; then
+    OLD_DATA="$("$DOCKER_BIN" inspect -f '{{range .Mounts}}{{if eq .Destination "/app/data"}}{{.Source}}{{end}}{{end}}' cumu 2>/dev/null || true)"
+    OLD_BASE="${OLD_DATA%/data}"
+    OLD_PORT="$("$DOCKER_BIN" port cumu 3000/tcp 2>/dev/null | head -n1 | awk -F: '{print $NF}' || true)"
+    if [[ "$ACTION" == "update" ]]; then
+      [[ -n "$OLD_BASE" && -z "$DOCKER_BASE" ]] && DOCKER_BASE="$OLD_BASE"
+      OLD_MUSIC="$(grep -E '^MUSIC_PATH=.+' "${DOCKER_BASE}/cumu.env" 2>/dev/null | tail -n1 | cut -d= -f2- || true)"
+      [[ -n "$OLD_MUSIC" && "$MUSIC_SET_VIA_ARG" == false ]] && { MUSIC_DIR="$OLD_MUSIC"; MUSIC_SET_VIA_ARG=true; }
+      [[ -n "$OLD_PORT" && "$PORT_SET_VIA_ARG" == false ]] && { PORT="$OLD_PORT"; PORT_SET_VIA_ARG=true; }
+      FORCE_DOCKER=true
+      log "Aktualisiere cumu (Daten in ${DOCKER_BASE:-?})..."
+    else
+      log "Entferne die bisherige Installation..."
+      "$DOCKER_BIN" rm -f cumu cumu_watchtower &>/dev/null || true
+      if [[ -n "$OLD_DATA" && -d "$OLD_DATA" ]]; then rm -rf "$OLD_DATA"; fi
+      [[ -n "$OLD_BASE" ]] && rm -f "${OLD_BASE}/cumu.env"
+      [[ -n "$OLD_BASE" && -z "$DOCKER_BASE" ]] && DOCKER_BASE="$OLD_BASE"
+    fi
+  else
+    if [[ "$ACTION" == "update" ]]; then
+      OLD_PORT="$(grep -E '^PORT=.+' "${INSTALL_DIR}/.env" 2>/dev/null | tail -n1 | cut -d= -f2- || true)"
+      [[ -n "$OLD_PORT" && "$PORT_SET_VIA_ARG" == false ]] && { PORT="$OLD_PORT"; PORT_SET_VIA_ARG=true; }
+      log "Aktualisiere cumu in ${INSTALL_DIR} ..."
+    else
+      log "Entferne die bisherige Installation..."
+      systemctl stop cumu &>/dev/null || true
+      # Only delete a folder that really is a cumu installation (contains
+      # database and .env); the music folder lives elsewhere and is kept
+      # (a "music" folder inside the installation is kept as well)
+      if [[ -f "${INSTALL_DIR}/src/server.js" ]]; then
+        find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 ! -name music -exec rm -rf {} +
+      fi
+    fi
+  fi
+fi
+
+ask_port
 
 if [[ "$FORCE_DOCKER" == true || "$PLATFORM" != "linux" ]]; then
   log "Plattform: ${PLATFORM} — installiere cumu als Docker-Container"

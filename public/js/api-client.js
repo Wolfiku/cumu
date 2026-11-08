@@ -67,6 +67,20 @@ const CumuApi = (() => {
    * Returns { ok: true, username, role, theme } or throws (err.code is set to
    * 'admin_code_required' / 'admin_code_invalid' when the admin code is missing or wrong).
    */
+  // Admin code is remembered for 30 days per device: the server hands out a
+  // trust token after the code was entered, stored per username.
+  const ADMIN_TRUST_KEY = 'cumu_admin_trust';
+  function getAdminTrust(username) {
+    try { return (JSON.parse(localStorage.getItem(ADMIN_TRUST_KEY) || '{}'))[username] || undefined; } catch { return undefined; }
+  }
+  function setAdminTrust(username, token) {
+    try {
+      const all = JSON.parse(localStorage.getItem(ADMIN_TRUST_KEY) || '{}');
+      all[username] = token;
+      localStorage.setItem(ADMIN_TRUST_KEY, JSON.stringify(all));
+    } catch {}
+  }
+
   async function login(username, password, adminCode) {
     // Step 1: Get authorization code
     const authRes = await safeFetch('/oauth/authorize', {
@@ -80,6 +94,7 @@ const CumuApi = (() => {
         username,
         password,
         admin_code: adminCode || undefined,
+        admin_trust: adminCode ? undefined : getAdminTrust(username),
       }),
     });
 
@@ -94,6 +109,7 @@ const CumuApi = (() => {
       err.code = authData.error;
       throw err;
     }
+    if (authData.admin_trust) setAdminTrust(username, authData.admin_trust);
 
     // Step 2: Exchange code for token
     const tokenRes = await safeFetch('/oauth/token', {

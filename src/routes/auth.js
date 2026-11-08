@@ -10,13 +10,13 @@ const express = require('express');
 const bcrypt  = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const { getDB, getConfig, setConfig } = require('../db');
-const { adminCodeError, verifyAdminCode, adminCodeFingerprint, adminCodeValid, isAdminRole } = require('../adminCode');
+const { adminCodeError, verifyAdminCode, adminCodeFingerprint, adminCodeValid, isAdminRole, trustForLogin } = require('../adminCode');
 
 const router = express.Router();
 
 // POST /auth/login — session login (web client convenience)
 router.post('/login', async (req, res) => {
-  const { username, password, admin_code } = req.body;
+  const { username, password, admin_code, admin_trust } = req.body;
   if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
 
   const db   = getDB();
@@ -28,8 +28,9 @@ router.post('/login', async (req, res) => {
 
   if (user.is_blocked) return res.status(403).json({ error: 'Account is blocked' });
 
-  const codeErr = adminCodeError(user, admin_code);
+  const codeErr = adminCodeError(user, admin_code, admin_trust);
   if (codeErr) return res.status(401).json({ error: codeErr.message, code: codeErr.code });
+  const trust = trustForLogin(user, admin_code);
 
   req.session.userId        = user.id;
   req.session.username      = user.username;
@@ -39,7 +40,10 @@ router.post('/login', async (req, res) => {
   req.session.save(err => {
     if (err) return res.status(500).json({ error: 'Session error' });
     const cfg = getConfig();
-    res.json({ ok: true, username: user.username, role: user.role, theme: user.theme || 'standard', enablePodcasts: cfg.enablePodcasts !== false });
+    res.json({
+      ok: true, username: user.username, role: user.role, theme: user.theme || 'standard', enablePodcasts: cfg.enablePodcasts !== false,
+      ...(trust ? { admin_trust: trust.token, admin_trust_expires_at: trust.expiresAt } : {}),
+    });
   });
 });
 
@@ -109,7 +113,8 @@ router.post('/setup', async (req, res) => {
   req.session.username = username;
   req.session.role     = 'admin';
   req.session.adminCodeFp = adminCodeFingerprint();
-  req.session.save(() => res.json({ ok: true, success: true }));
+  const trust = trustForLogin({ id: user.id, role: 'admin' }, admin_code);
+  req.session.save(() => res.json({ ok: true, success: true, admin_trust: trust.token, admin_trust_expires_at: trust.expiresAt }));
 });
 
 module.exports = router;
