@@ -39,6 +39,8 @@ curl -fsSL https://raw.githubusercontent.com/Wolfiku/cumu/main/scripts/install.s
 [+] Recursive Library Scanner    — auto-scans nested subdirectories (Artist/Album/Song.mp3)
 [+] Podcast Search & Player      — search millions of shows/episodes, manage feeds & progress
 [+] PWA & Offline Mode           — save playlists offline for playback without internet
+[+] Native Android App           — streaming, background playback, offline library & downloads (APK in Releases)
+[+] Login Brute-Force Protection — failed logins are rate-limited per account and IP
 [+] Multi-Format Audio           — MP3, FLAC, M4A, AAC, WAV, OGG, OPUS, ALAC support
 [+] Embedded Artwork Extraction  — auto-extracts ID3 album covers or upload custom JPG/PNG
 [+] Audio Seeking & Range Stream — HTTP Range requests for instant scrubbing

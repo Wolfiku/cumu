@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- cumu app icon: the cow with headphones (drawable-nodpi/cumu_logo.png) on the
+     white launcher background. A small inset keeps it inside round icon masks. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/cumu_logo"
+    android:inset="4%" />

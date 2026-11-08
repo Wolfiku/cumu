@@ -1,9 +1,9 @@
 node_modules/
 **/node_modules/
 .env
-data/
-music/
-uploads/
+/data/
+/music/
+/uploads/
 *.db
 *.log
 
@@ -15,3 +15,6 @@ design.md
 stitch_*
 rewrite.py
 skills-lock.json
+
+# Locally built Android packages
+*.apk

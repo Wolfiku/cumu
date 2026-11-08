@@ -1,6 +1,6 @@
 {
   "name": "cumu",
-  "version": "0.4.6-alpha",
+  "version": "0.5.0-alpha",
   "description": "Self-hosted music streaming application",
   "main": "src/server.js",
   "scripts": {
