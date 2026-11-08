@@ -180,12 +180,12 @@ jobs:
           dpkg-deb --build --root-owner-group "${PKG}"
           echo "DEB_FILE=${PKG}.deb" >> $GITHUB_ENV
 
-      # RELEASE_NOTES_<tag>.md becomes the release page text when it exists.
+      # docs/release-notes/RELEASE_NOTES_<tag>.md becomes the release page text when it exists.
       # Without it release_body.md is missing and the action falls back to the
       # installation text in `body`.
       - name: Prepare release notes
         run: |
-          NOTES="RELEASE_NOTES_${GITHUB_REF_NAME}.md"
+          NOTES="docs/release-notes/RELEASE_NOTES_${GITHUB_REF_NAME}.md"
           if [[ -f "$NOTES" ]]; then cp "$NOTES" release_body.md; fi
 
       - name: Create GitHub Release
