@@ -162,10 +162,25 @@ install_docker_mode() {
   CODE="$(grep -E '^ADMIN_LOGIN_CODE=.+' "$ENV_FILE" 2>/dev/null | tail -n1 | cut -d= -f2- || true)"
   [[ -n "$SECRET" ]] || SECRET="$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
   [[ -n "$CODE" ]]   || CODE="$(gen_admin_code)"
+  # NAS drives are shared with the container under the SAME path, so any NAS
+  # path (e.g. /volume1/music) can be entered in cumu as it is.
+  local -a SHARES=() MOUNTS=()
+  local d
+  case "$PLATFORM" in
+    synology|asustor) for d in /volume[0-9]*; do [[ -d "$d" ]] && SHARES+=("$d"); done ;;
+    qnap)             [[ -d /share ]] && SHARES+=("/share") ;;
+    unraid|truenas)   [[ -d /mnt ]] && SHARES+=("/mnt") ;;
+  esac
+  local inside=false
+  for d in "${SHARES[@]}"; do [[ "$MUSIC_DIR" == "$d" || "$MUSIC_DIR" == "$d"/* ]] && inside=true; done
+  [[ "$inside" == true ]] || SHARES+=("$MUSIC_DIR")
+  for d in "${SHARES[@]}"; do MOUNTS+=(-v "${d}:${d}"); done
+  log "Für cumu freigegeben: ${SHARES[*]}"
+
   cat > "$ENV_FILE" << ENVEOF
 NODE_ENV=production
 PORT=3000
-MUSIC_PATH=/music
+MUSIC_PATH=${MUSIC_DIR}
 SESSION_SECRET=${SECRET}
 ADMIN_LOGIN_CODE=${CODE}
 WATCHTOWER_URL=http://cumu_watchtower:8080
@@ -183,7 +198,7 @@ ENVEOF
   log "Starte cumu..."
   "$DOCKER" run -d --name cumu --restart unless-stopped --network cumu-net \
     -p "${PORT}:3000" --env-file "$ENV_FILE" \
-    -v "${BASE}/data:/app/data" -v "${MUSIC_DIR}:/music" \
+    -v "${BASE}/data:/app/data" "${MOUNTS[@]}" \
     --label com.centurylinklabs.watchtower.enable=true \
     ghcr.io/wolfiku/cumu:latest >/dev/null
 
@@ -212,7 +227,7 @@ ENVEOF
   echo ""
   echo -e "  [+] ${BOLD}Ordner:${NC}"
   echo -e "      Daten:  ${BASE}/data"
-  echo -e "      Musik:  ${MUSIC_DIR}"
+  echo -e "      Musik:  ${MUSIC_DIR}  (in cumu jederzeit änderbar, freigegeben: ${SHARES[*]})"
   echo ""
   echo -e "  [+] ${BOLD}Verwaltung:${NC}"
   echo -e "      Logs:          ${BOLD}docker logs -f cumu${NC}"

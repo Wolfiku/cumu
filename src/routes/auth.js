@@ -61,7 +61,25 @@ router.post('/logout', (req, res) => {
   req.session.destroy(() => res.json({ ok: true }));
 });
 
-const { validateMusicPath } = require('../utils/pathValidator');
+const { validateMusicPath, inspectMusicPath } = require('../utils/pathValidator');
+
+// GET /auth/setup/info — suggested music folder for the setup wizard
+// (MUSIC_PATH set by the installer / container), until setup is done
+router.get('/setup/info', (req, res) => {
+  if (getConfig().setupDone) return res.status(403).json({ error: 'Setup already done' });
+  res.json({ musicPath: process.env.MUSIC_PATH || '/music' });
+});
+
+// POST /auth/setup/path-check — live check of the music folder in the setup
+// wizard. Only available until setup is done.
+router.post('/setup/path-check', async (req, res) => {
+  if (getConfig().setupDone) return res.status(403).json({ error: 'Setup already done' });
+  try {
+    res.json(await inspectMusicPath(req.body?.path));
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: 'Prüfung fehlgeschlagen: ' + err.message });
+  }
+});
 
 // POST /auth/setup — initial server setup (creates admin user)
 router.post('/setup', async (req, res) => {
@@ -72,7 +90,7 @@ router.post('/setup', async (req, res) => {
   if (!verifyAdminCode(admin_code)) return res.status(401).json({ error: 'Invalid admin login code', code: 'admin_code_invalid' });
 
   const targetMusic = musicPath || musicDir || '/music';
-  const pathCheck = validateMusicPath(targetMusic);
+  const pathCheck = await validateMusicPath(targetMusic);
   if (!pathCheck.ok) {
     return res.status(400).json({ error: pathCheck.error });
   }
@@ -82,6 +100,7 @@ router.post('/setup', async (req, res) => {
   const id   = uuidv4();
   db.prepare('INSERT OR IGNORE INTO users (id, username, password, role) VALUES (?, ?, ?, ?)').run(id, username, hash, 'admin');
   setConfig('musicPath', pathCheck.path);
+  setConfig('musicPathChosen', true);
   if (port) setConfig('port', port);
   setConfig('setupDone', 'true');
 

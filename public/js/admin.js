@@ -197,14 +197,12 @@ const CumuAdmin = (function() {
       btn.disabled = s.running;
       btn.textContent = s.running ? 'Scan running…' : 'Start Scan';
       if (s.running) {
-        const pct = CumuScan.percent(s);
         el.innerHTML = `
-          <div class="flex justify-between"><span class="text-on-surface font-semibold">${esc(CumuScan.phaseText(s))}</span><span class="tabular-nums">${pct} %</span></div>
-          <div class="h-1.5 w-full rounded-full bg-surface-container-high overflow-hidden"><div class="h-full bg-text-high-contrast rounded-full transition-all duration-500" style="width:${pct}%"></div></div>
-          <div class="flex justify-between gap-md"><span class="truncate">${esc(s.current || '')}</span><span class="whitespace-nowrap">noch ${esc(CumuScan.formatEta(s.etaSeconds))}</span></div>`;
+          <div class="flex justify-between gap-md"><span class="text-on-surface font-semibold">${esc(CumuScan.phaseText(s))}</span><span class="tabular-nums">${esc(CumuScan.percentText(s))}</span></div>
+          ${CumuScan.barHtml(s, 'h-1.5')}
+          <div class="flex justify-between gap-md"><span class="truncate" title="${esc(CumuScan.currentText(s))}">${esc(CumuScan.currentText(s))}</span><span class="whitespace-nowrap">${esc(CumuScan.etaText(s))}</span></div>`;
       } else if (s.lastResult) {
-        const r = s.lastResult;
-        el.innerHTML = `Last scan: ${r.added} new song(s) added, ${r.matched} recognized, ${r.unmatched} without match${r.error ? `, ${r.error} failed` : ''}.`;
+        el.textContent = CumuScan.lastResultText(s.lastResult);
       } else {
         el.innerHTML = s.newFiles || s.pending
           ? `${s.newFiles + s.pending} song(s) waiting to be scanned.`
@@ -656,12 +654,16 @@ const CumuAdmin = (function() {
         <h2 class="font-title-md text-title-md text-on-surface border-b border-border-subtle pb-sm">Server Configuration</h2>
         <form id="adminConfigForm" class="flex flex-col gap-md">
           
-          <div class="flex justify-between items-center p-md rounded-lg hover:bg-surface-bright transition-colors">
-            <div class="flex flex-col gap-xs">
-              <span class="font-body-lg text-body-lg text-on-surface">Music Storage Path</span>
-              <span class="font-body-sm text-body-sm text-text-muted">Path on server (e.g. /home/user/music)</span>
+          <div class="flex flex-col md:flex-row md:justify-between md:items-start gap-sm p-md rounded-lg hover:bg-surface-bright transition-colors">
+            <div class="flex flex-col gap-xs md:max-w-sm">
+              <span class="font-body-lg text-body-lg text-on-surface">Music Folder</span>
+              <span id="cfgMusicPathHint" class="font-body-sm text-body-sm text-text-muted">Folder on the server where your music files are (subfolders included), e.g. <code>/volume1/music</code> or <code>/home/user/music</code>.</span>
             </div>
-            <input type="text" id="cfgMusicPath" name="musicPath" value="${esc(config.musicPath || '')}" class="font-body-lg text-body-lg text-on-surface bg-transparent border-0 border-b border-border-subtle focus:border-text-muted focus:ring-0 p-0 text-right w-64" />
+            <div class="flex flex-col md:items-end md:text-right gap-xs w-full md:w-80 md:flex-shrink-0">
+              <div id="cfgMusicPathRow" class="flex items-center gap-sm w-full md:w-auto">
+                <input type="text" id="cfgMusicPath" name="musicPath" value="${esc(config.musicPath || '')}" spellcheck="false" autocomplete="off" class="font-body-lg text-body-lg text-on-surface bg-transparent border-0 border-b border-border-subtle focus:border-text-muted focus:ring-0 p-0 md:text-right w-full md:w-72" />
+              </div>
+            </div>
           </div>
 
           <div class="flex justify-between items-center p-md rounded-lg hover:bg-surface-bright transition-colors">
@@ -718,12 +720,34 @@ const CumuAdmin = (function() {
       </section>
     `;
 
+    const musicPathRow = document.getElementById('cfgMusicPathRow');
+    const musicPathCheck = CumuPathCheck.attach(document.getElementById('cfgMusicPath'), {
+      iconHost: musicPathRow,
+      messageHost: musicPathRow.parentElement,
+      check: async (p) => {
+        const res = await CumuApi.post('/admin/music-path/check', { path: p });
+        const hint = document.getElementById('cfgMusicPathHint');
+        if (hint && res && res.inDocker) {
+          hint.innerHTML = 'Folder where your music files are (subfolders included), e.g. <code>/volume1/music</code>.'
+            + (res.suggestions && res.suggestions.length ? ` cumu runs in Docker and can see: ${res.suggestions.map(s => `<code>${esc(s)}</code>`).join(', ')}` : '');
+        }
+        return res;
+      }
+    });
+
     document.getElementById('adminConfigForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       const body = Object.fromEntries(new FormData(e.target));
       body.maxStorageGb = parseInt(body.maxStorageGb, 10);
+      const pathResult = await musicPathCheck.run();
+      if (pathResult && pathResult.status === 'error') {
+        alert('Music folder: ' + pathResult.message + (pathResult.details ? '\n\n' + pathResult.details : ''));
+        document.getElementById('cfgMusicPath').focus();
+        return;
+      }
       try {
-        await CumuApi.put('/admin/config', body);
+        const res = await CumuApi.put('/admin/config', body);
+        if (res && res.error) throw new Error(res.error);
         alert('Configuration saved!');
       } catch (err) {
         alert(err.message || 'Failed to save');

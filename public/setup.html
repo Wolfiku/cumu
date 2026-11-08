@@ -155,8 +155,11 @@
 
       <div class="flex flex-col gap-xs">
         <label for="setupMusicPath" class="font-label-caps text-label-caps text-text-muted lowercase">music path</label>
-        <input type="text" id="setupMusicPath" name="musicPath" value="/music" required placeholder="/music"
-               class="w-full px-md py-sm bg-background border border-border-subtle rounded-lg font-body-sm text-body-sm text-on-surface focus:outline-none focus:border-text-muted transition-colors">
+        <div id="setupMusicPathRow" class="flex items-center gap-sm">
+          <input type="text" id="setupMusicPath" name="musicPath" value="/music" required placeholder="/music" spellcheck="false" autocomplete="off"
+                 class="w-full px-md py-sm bg-background border border-border-subtle rounded-lg font-body-sm text-body-sm text-on-surface focus:outline-none focus:border-text-muted transition-colors">
+        </div>
+        <p id="setupMusicPathHint" class="font-body-sm text-body-sm text-text-muted">Folder where your music files are, e.g. <code>/volume1/music</code>. Subfolders are included.</p>
       </div>
 
       <div id="setupError" class="hidden font-body-sm text-body-sm text-error bg-error-container/30 border border-error/20 rounded-lg p-sm text-center" role="alert"></div>
@@ -167,13 +170,50 @@
     </form>
   </div>
 
+  <script src="/js/path-check.js"></script>
   <script>
+    // Pre-fill the folder the installer / container configured
+    fetch('/auth/setup/info').then(r => r.json()).then(info => {
+      const input = document.getElementById('setupMusicPath');
+      if (info && info.musicPath && input.value === '/music' && info.musicPath !== '/music') {
+        input.value = info.musicPath;
+        musicPathCheck.run();
+      }
+    }).catch(() => {});
+
+    const musicPathCheck = CumuPathCheck.attach(document.getElementById('setupMusicPath'), {
+      iconHost: document.getElementById('setupMusicPathRow'),
+      messageHost: document.getElementById('setupMusicPathRow').parentElement,
+      check: async (p) => {
+        const res = await fetch('/auth/setup/path-check', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: p })
+        });
+        const json = await res.json();
+        if (json.inDocker) {
+          document.getElementById('setupMusicPathHint').innerHTML =
+            'Folder where your music files are, e.g. <code>/volume1/music</code>. Subfolders are included.'
+            + (json.suggestions && json.suggestions.length ? ` cumu runs in Docker and can see: <code>${json.suggestions.map(s => s.replace(/[<>&]/g, '')).join('</code>, <code>')}</code>` : '');
+        }
+        return json;
+      }
+    });
+
     document.getElementById('setupForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       const form = e.target;
       const data = Object.fromEntries(new FormData(form));
       const errEl = document.getElementById('setupError');
       const btn = document.getElementById('submitBtn');
+
+      const pathResult = await musicPathCheck.run();
+      if (pathResult && pathResult.status === 'error') {
+        errEl.textContent = 'Music path: ' + pathResult.message;
+        errEl.classList.remove('hidden');
+        document.getElementById('setupMusicPath').focus();
+        return;
+      }
 
       errEl.classList.add('hidden');
       btn.disabled = true;

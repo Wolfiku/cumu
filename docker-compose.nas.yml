@@ -3,12 +3,14 @@
 # Easier: the one-line installer detects the NAS and sets everything up itself:
 #   curl -fsSL https://raw.githubusercontent.com/Wolfiku/cumu/main/scripts/install.sh | bash
 #
-# Manual use — adjust the two host paths under "volumes" (left side of ":"):
-#   Synology  (Container Manager → Project)   /volume1/docker/cumu/data   /volume1/music
-#   QNAP      (Container Station → Apps)      /share/Container/cumu/data  /share/Music
-#   Unraid    (Compose Manager plugin)        /mnt/user/appdata/cumu/data /mnt/user/music
-#   TrueNAS SCALE (Apps → Install via YAML)   /mnt/<pool>/apps/cumu/data  /mnt/<pool>/music
-#   Asustor   (Portainer)                     /volume1/Docker/cumu/data   /volume1/Music
+# Manual use — adjust the data folder and the shared NAS drive under "volumes".
+# The drive is shared under the SAME path, so any NAS path works in cumu.
+# Typical data folder and drive per NAS:
+#   Synology  (Container Manager → Project)   /volume1/docker/cumu/data   /volume1
+#   QNAP      (Container Station → Apps)      /share/Container/cumu/data  /share
+#   Unraid    (Compose Manager plugin)        /mnt/user/appdata/cumu/data /mnt
+#   TrueNAS SCALE (Apps → Install via YAML)   /mnt/<pool>/apps/cumu/data  /mnt
+#   Asustor   (Portainer)                     /volume1/Docker/cumu/data   /volume1
 #   Others with Portainer: any absolute paths on your NAS
 # Create the data folder first, change SESSION_SECRET, then start.
 #
@@ -26,12 +28,12 @@ services:
       - NODE_ENV=production
       - PORT=3000
       - SESSION_SECRET=change-me-to-a-long-random-string
-      - MUSIC_PATH=/music
+      - MUSIC_PATH=/volume1/music      # suggested music folder, can be changed in cumu
       - WATCHTOWER_URL=http://watchtower:8080
       - WATCHTOWER_HTTP_API_TOKEN=cumu-watchtower-internal
     volumes:
       - /volume1/docker/cumu/data:/app/data   # database, sessions, .env  ← adjust
-      - /volume1/music:/music                 # your music folder         ← adjust
+      - /volume1:/volume1                     # NAS drive, same path inside ← adjust
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
 

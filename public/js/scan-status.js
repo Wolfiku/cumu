@@ -38,14 +38,60 @@ const CumuScan = (() => {
     return rest ? `ca. ${hours} Std. ${rest} Min.` : `ca. ${hours} Std.`;
   }
 
+  const num = n => Number(n || 0).toLocaleString('de-DE');
+
   function phaseText(s) {
-    if (s.phase === 'indexing') return `Dateien einlesen · ${s.index.done} von ${s.index.total}`;
-    if (s.phase === 'lookup') return `Lieder erkennen · ${s.lookup.done} von ${s.lookup.total}`;
+    const steps = s.lookupEnabled ? 3 : 2;
+    if (s.phase === 'discovering') return `Schritt 1/${steps} · Ordner durchsuchen · ${num(s.discovered)} Audiodateien gefunden`;
+    if (s.phase === 'indexing') return `Schritt 2/${steps} · Dateien einlesen · ${num(s.index.done)} von ${num(s.index.total)}`;
+    if (s.phase === 'lookup') return `Schritt 3/${steps} · Lieder erkennen · ${num(s.lookup.done)} von ${num(s.lookup.total)}`;
     return 'Wird vorbereitet…';
+  }
+
+  // What the scan is working on right now, with a label saying what it is
+  function currentText(s) {
+    if (!s.current) return s.phase === 'discovering' && s.musicPath ? `Ordner: ${s.musicPath}` : '';
+    if (s.phase === 'discovering') return `Ordner: ${s.current}`;
+    if (s.phase === 'indexing') return `Datei: ${s.current}`;
+    if (s.phase === 'lookup') return `Lied: ${s.current}`;
+    return s.current;
+  }
+
+  function etaText(s) {
+    return s.phase === 'discovering' ? 'Dauer wird berechnet…' : `noch ${formatEta(s.etaSeconds)}`;
   }
 
   function percent(s) {
     return Math.min(100, Math.max(0, Math.round((s.progress || 0) * 100)));
+  }
+
+  function percentText(s) {
+    return s.phase === 'discovering' ? '' : `${percent(s)} %`;
+  }
+
+  // Progress bar; while the folder is searched the total is unknown, so the
+  // bar moves back and forth instead of filling up
+  function barHtml(s, heightClass = 'h-1.5') {
+    if (!document.getElementById('cumuScanBarStyles')) {
+      const st = document.createElement('style');
+      st.id = 'cumuScanBarStyles';
+      st.textContent = '@keyframes cumu-scan-indet{0%{transform:translateX(-100%)}100%{transform:translateX(250%)}}'
+        + '.cumu-scan-indet{width:40%;animation:cumu-scan-indet 1.3s ease-in-out infinite}'
+        + '@media (prefers-reduced-motion: reduce){.cumu-scan-indet{animation:none;width:100%;opacity:.5}}';
+      document.head.appendChild(st);
+    }
+    const indet = s.phase === 'discovering';
+    const pct = percent(s);
+    return `<div class="${heightClass} w-full rounded-full bg-surface-container-high overflow-hidden" role="progressbar" aria-valuemin="0" aria-valuemax="100" ${indet ? 'aria-valuetext="Ordner werden durchsucht"' : `aria-valuenow="${pct}"`}>
+      <div class="h-full bg-text-high-contrast rounded-full ${indet ? 'cumu-scan-indet' : 'transition-all duration-500'}" ${indet ? '' : `style="width:${pct}%"`}></div>
+    </div>`;
+  }
+
+  function lastResultText(r) {
+    if (!r) return '';
+    const where = r.musicPath ? ` in ${r.musicPath}` : '';
+    if (!r.found && !r.added) return `Letzter Scan: keine Audiodateien${where} gefunden. Stimmt der Musik-Ordner in den Einstellungen?`;
+    return `Letzter Scan: ${num(r.found)} Audiodateien${where}, ${num(r.added)} neu hinzugefügt, ${num(r.matched)} erkannt, ${num(r.unmatched)} ohne Treffer${r.error ? `, ${num(r.error)} fehlgeschlagen` : ''}.`;
   }
 
   // ── Polling ────────────────────────────────────────────────────────────────
@@ -136,16 +182,14 @@ const CumuScan = (() => {
         <h1 id="scanBlockerTitle" class="font-title-md text-title-md text-on-surface font-semibold">Bibliothek wird eingerichtet</h1>
         <p class="font-body-lg text-body-lg text-text-muted">cumu liest deine Musik ein und erkennt jedes Lied. Das passiert einmalig, danach kannst du loslegen. Du kannst das Fenster schließen, der Scan läuft auf dem Server weiter.</p>
         <div class="flex flex-col gap-xs mt-sm">
-          <div class="flex justify-between font-body-sm text-body-sm">
+          <div class="flex justify-between gap-md font-body-sm text-body-sm">
             <span class="text-on-surface font-semibold">${esc(phaseText(s))}</span>
-            <span class="text-text-muted tabular-nums">${percent(s)} %</span>
+            <span class="text-text-muted tabular-nums">${esc(percentText(s))}</span>
           </div>
-          <div class="h-2 w-full rounded-full bg-surface-container-high overflow-hidden" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent(s)}">
-            <div class="h-full bg-text-high-contrast rounded-full transition-all duration-500" style="width:${percent(s)}%"></div>
-          </div>
+          ${barHtml(s, 'h-2')}
           <div class="flex justify-between gap-md font-body-sm text-body-sm text-text-muted">
-            <span class="truncate">${esc(s.current || '')}</span>
-            <span class="whitespace-nowrap">noch ${esc(formatEta(s.etaSeconds))}</span>
+            <span class="truncate" title="${esc(currentText(s))}">${esc(currentText(s))}</span>
+            <span class="whitespace-nowrap">${esc(etaText(s))}</span>
           </div>
         </div>`;
     } else if (isAdmin()) {
@@ -202,7 +246,7 @@ const CumuScan = (() => {
       return;
     }
 
-    const label = `${phaseText(s)} · noch ${formatEta(s.etaSeconds)}`;
+    const label = `${phaseText(s)} · ${etaText(s)}`;
 
     const settingsLink = document.getElementById('navItem-settings');
     if (!card && settingsLink) {
@@ -215,12 +259,11 @@ const CumuScan = (() => {
     if (card) {
       card.innerHTML = `
         <div class="flex justify-between font-label-caps text-label-caps text-on-surface">
-          <span>scan läuft</span><span class="tabular-nums">${percent(s)} %</span>
+          <span>scan läuft</span><span class="tabular-nums">${esc(percentText(s))}</span>
         </div>
-        <div class="h-1 w-full rounded-full bg-surface-container-high overflow-hidden">
-          <div class="h-full bg-text-high-contrast rounded-full transition-all duration-500" style="width:${percent(s)}%"></div>
-        </div>
-        <span class="font-body-sm text-body-sm text-text-muted leading-tight">${esc(label)}</span>`;
+        ${barHtml(s, 'h-1')}
+        <span class="font-body-sm text-body-sm text-text-muted leading-tight">${esc(label)}</span>
+        <span class="font-body-sm text-body-sm text-text-muted leading-tight truncate" title="${esc(currentText(s))}">${esc(currentText(s))}</span>`;
     }
 
     if (!strip) {
@@ -231,8 +274,8 @@ const CumuScan = (() => {
       document.body.appendChild(strip);
     }
     strip.innerHTML = `
-      <div class="h-0.5 bg-text-high-contrast transition-all duration-500" style="width:${percent(s)}%"></div>
-      <div class="px-gutter py-xs font-body-sm text-body-sm text-text-muted truncate">Scan ${percent(s)} % · ${esc(label)}</div>`;
+      ${barHtml(s, 'h-0.5')}
+      <div class="px-gutter py-xs font-body-sm text-body-sm text-text-muted truncate">Scan ${esc(percentText(s))} · ${esc(label)}</div>`;
   }
 
   // ── Update during a scan (admins, desktop only) ─────────────────────────────
@@ -315,6 +358,7 @@ const CumuScan = (() => {
 
   return {
     start, stop, poll, startScan, onChange, formatEta, phaseText, percent,
+    percentText, currentText, etaText, barHtml, lastResultText,
     get status() { return lastStatus; },
   };
 })();

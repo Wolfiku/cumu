@@ -37,8 +37,12 @@ const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp'];
 // the scanner reads MUSIC_PATH first, while uploads, deletes and streaming
 // (routes/stream.js) use the configured path. Changing either would move files
 // away from where existing installations expect them.
+// Exception: once an admin picked the folder explicitly (setup wizard with the
+// path check, or the settings page), that folder is used for everything.
 function getScanPath() {
-  return process.env.MUSIC_PATH || getConfig().musicPath || path.join(process.cwd(), 'music');
+  const cfg = getConfig();
+  if (cfg.musicPathChosen === true && cfg.musicPath) return cfg.musicPath;
+  return process.env.MUSIC_PATH || cfg.musicPath || path.join(process.cwd(), 'music');
 }
 function getStoragePath() {
   return getConfig().musicPath || path.join(process.cwd(), 'music');
@@ -212,7 +216,7 @@ async function processUpload(req, res) {
   try {
     const db        = getDB();
     const cfg       = getConfig();
-    const musicPath = process.env.MUSIC_PATH || cfg.musicPath || path.join(process.cwd(), 'music');
+    const musicPath = getScanPath();
     const coverFile = req.files?.cover?.[0];
     const songFiles = (req.files?.files || []).filter(f => AUDIO_EXTS.includes(path.extname(f.originalname).toLowerCase()));
 
@@ -336,25 +340,6 @@ function findAlbumInFolder(db, relativePath, albumTitle) {
   return hit ? hit.album_id : null;
 }
 
-function scanDirectoryRecursive(dirPath, baseDir = dirPath) {
-  let results = [];
-  if (!fs.existsSync(dirPath)) return results;
-  const list = fs.readdirSync(dirPath, { withFileTypes: true });
-  for (const entry of list) {
-    const fullPath = path.join(dirPath, entry.name);
-    if (entry.isDirectory()) {
-      results = results.concat(scanDirectoryRecursive(fullPath, baseDir));
-    } else if (entry.isFile()) {
-      const ext = path.extname(entry.name).toLowerCase();
-      if (AUDIO_EXTS.includes(ext)) {
-        const relativePath = path.relative(baseDir, fullPath).replace(/\\/g, '/');
-        results.push({ fullPath, relativePath });
-      }
-    }
-  }
-  return results;
-}
-
 // ── Scan job ──────────────────────────────────────────────────────────────────
 // A scan runs entirely on the server, so closing the browser does not stop it:
 //   1. new files in the music folder are indexed (tags read, song inserted),
@@ -373,7 +358,9 @@ const TIMING_WINDOW     = 25;
 const scan = {
   running: false,
   initial: false,
-  phase: 'idle',        // 'indexing' | 'lookup' | 'idle'
+  phase: 'idle',        // 'discovering' | 'indexing' | 'lookup' | 'idle'
+  discovered: 0,        // audio files found so far while walking the folder
+  musicPath: null,
   indexTotal: 0, indexDone: 0,
   lookupTotal: 0, lookupDone: 0,
   current: null,
@@ -422,8 +409,35 @@ function getExistingScanPath() {
   return fs.existsSync(musicPath) ? musicPath : null;
 }
 
-function findNewFiles(db, musicPath) {
-  const allAudioFiles = scanDirectoryRecursive(musicPath, musicPath);
+// Walks the music folder without blocking the server (large NAS libraries can
+// take minutes) and reports progress: onProgress(foundCount, currentFolder)
+async function listAudioFiles(baseDir, onProgress) {
+  const results = [];
+  const stack = [baseDir];
+  let lastReport = 0;
+  while (stack.length) {
+    const dir = stack.pop();
+    let entries;
+    try { entries = await fs.promises.readdir(dir, { withFileTypes: true }); } catch { continue; }
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(fullPath);
+      } else if (entry.isFile() && AUDIO_EXTS.includes(path.extname(entry.name).toLowerCase())) {
+        results.push({ fullPath, relativePath: path.relative(baseDir, fullPath).replace(/\\/g, '/') });
+      }
+    }
+    if (onProgress && Date.now() - lastReport > 250) {
+      lastReport = Date.now();
+      onProgress(results.length, path.relative(baseDir, dir).replace(/\\/g, '/') || '/');
+    }
+  }
+  if (onProgress) onProgress(results.length, null);
+  return results;
+}
+
+async function findNewFiles(db, musicPath, onProgress) {
+  const allAudioFiles = await listAudioFiles(musicPath, onProgress);
   const known = new Set([...db.prepare('SELECT filename FROM songs').all().map(r => r.filename), ...getIgnoredFiles(db)]);
   return allAudioFiles.filter(item => !known.has(item.relativePath) && !pendingUploads.has(item.relativePath));
 }
@@ -489,8 +503,9 @@ async function scanLibrary() {
   const musicPath = getExistingScanPath();
 
   Object.assign(scan, {
-    running: true, initial: isInitialMode(db), phase: 'indexing',
+    running: true, initial: isInitialMode(db), phase: 'discovering',
     indexTotal: 0, indexDone: 0, lookupTotal: 0, lookupDone: 0,
+    discovered: 0, musicPath,
     current: null, startedAt: Date.now(),
   });
 
@@ -498,8 +513,15 @@ async function scanLibrary() {
     // Lookups that failed last time (e.g. MusicBrainz was down) are retried
     db.prepare("UPDATE songs SET lookup_status = 'pending' WHERE lookup_status = 'error'").run();
 
+    // 0. Find audio files in the music folder
+    const newFiles = musicPath ? await findNewFiles(db, musicPath, (found, folder) => {
+      scan.discovered = found;
+      scan.current = folder;
+    }) : [];
+
     // 1. Index new files
-    const newFiles = musicPath ? findNewFiles(db, musicPath) : [];
+    scan.phase = 'indexing';
+    scan.current = null;
     scan.indexTotal  = newFiles.length;
     scan.lookupTotal = isLookupEnabled() ? countPendingLookups(db) + newFiles.length : 0;
     // A scan without anything to do does not count as the first scan
@@ -545,7 +567,7 @@ async function scanLibrary() {
     }
 
     if (scan.initial) setConfig('initialScanDone', true);
-    scan.lastResult = { finishedAt: Date.now(), added, ...counts };
+    scan.lastResult = { finishedAt: Date.now(), added, found: scan.discovered, musicPath, ...counts };
     return { scanned: newFiles.length, added, musicPath, ...counts };
   } finally {
     Object.assign(scan, { running: false, phase: 'idle', current: null });
@@ -554,11 +576,12 @@ async function scanLibrary() {
 
 // Periodic check: finds new files and starts a background scan when there is
 // work. The first scan of a fresh installation waits until an admin starts it.
-function checkLibrary() {
+async function checkLibrary() {
   if (runningScan) return runningScan;
   const db = getDB();
   const musicPath = getExistingScanPath();
-  scan.newFiles = musicPath ? findNewFiles(db, musicPath).length : 0;
+  scan.newFiles = musicPath ? (await findNewFiles(db, musicPath)).length : 0;
+  if (runningScan) return runningScan; // a scan started while we were looking
   const pending = isLookupEnabled() ? countPendingLookups(db) : 0;
   if (!scan.newFiles && !pending) return Promise.resolve(null);
   if (isInitialMode(db) && getConfig().initialScanStarted !== true) return Promise.resolve(null);
@@ -593,6 +616,8 @@ function getScanStatus() {
     newFiles:   scan.newFiles,
     pending,
     lookupEnabled: lookupOn,
+    discovered: scan.discovered || 0,
+    musicPath:  scan.running && scan.musicPath ? scan.musicPath : getScanPath(),
     index:      { done: scan.indexDone, total: scan.indexTotal },
     lookup:     { done: scan.lookupDone, total: scan.lookupTotal },
     current:    scan.current,
@@ -714,9 +739,18 @@ router.get('/config', requireAdmin, (req, res) => {
   });
 });
 
-const { validateMusicPath } = require('../utils/pathValidator');
+const { validateMusicPath, inspectMusicPath } = require('../utils/pathValidator');
 
-router.put('/config', requireAdmin, (req, res) => {
+// Live check of a music folder for the settings page (nothing is changed)
+router.post('/music-path/check', requireAdmin, async (req, res) => {
+  try {
+    res.json(await inspectMusicPath(req.body?.path));
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: 'Prüfung fehlgeschlagen: ' + err.message });
+  }
+});
+
+router.put('/config', requireAdmin, async (req, res) => {
   const {
     musicPath, maxStorageGb, port, host, enablePodcasts,
     enablePublicPodcasts, podcastApiSource, podcastIndexKey,
@@ -725,11 +759,12 @@ router.put('/config', requireAdmin, (req, res) => {
   } = req.body;
 
   if (musicPath !== undefined) {
-    const pathCheck = validateMusicPath(musicPath);
+    const pathCheck = await validateMusicPath(musicPath);
     if (!pathCheck.ok) {
       return res.status(400).json({ error: pathCheck.error });
     }
     setConfig('musicPath', pathCheck.path);
+    setConfig('musicPathChosen', true);
   }
   if (maxStorageGb !== undefined) setConfig('maxStorageGb', maxStorageGb);
   if (port !== undefined) setConfig('port', port);
@@ -1054,6 +1089,7 @@ async function repairMergedAlbums() {
 
 router.runLibraryScan = runLibraryScan;
 router.checkLibrary  = checkLibrary;
+router.getScanPath   = getScanPath;
 router.repairMergedAlbums = repairMergedAlbums;
 router.dedupeLibrary = () => {
   const result = dedupeLibrary(getDB(), findSongFile);

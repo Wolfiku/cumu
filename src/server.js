@@ -137,7 +137,7 @@ async function checkAutoSetup() {
 }
 
 function startBackgroundScanner() {
-  const musicPath = process.env.MUSIC_PATH || getConfig().musicPath || path.join(process.cwd(), 'music');
+  const musicPath = adminRoutes.getScanPath();
   if (!fs.existsSync(musicPath)) {
     try { fs.mkdirSync(musicPath, { recursive: true }); } catch {}
   }

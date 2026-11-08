@@ -3,7 +3,7 @@
  * Service Worker for Cumu Web - App Shell & Offline Caching
  */
 
-const CACHE_NAME = 'cumu-app-shell-v5';
+const CACHE_NAME = 'cumu-app-shell-v7';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
@@ -17,6 +17,7 @@ const ASSETS_TO_CACHE = [
   '/js/settings.js',
   '/js/icons.js',
   '/js/scan-status.js',
+  '/js/path-check.js',
   '/js/admin.js',
   '/js/mobile.js',
 ];
