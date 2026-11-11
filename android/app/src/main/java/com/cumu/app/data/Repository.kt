@@ -69,7 +69,7 @@ class Repository(private val api: ApiClient, private val downloadedSongs: () -> 
     }
 
     /**
-     * Library tab: all playlists, but only the albums heard in the last
+     * Library tab: all playlists, but only the albums and artists heard in the last
      * 3 months. Falls back to the full lists on servers up to v0.5.1.
      */
     suspend fun libraryOverview(): LibraryOverview {

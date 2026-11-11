@@ -133,10 +133,15 @@ fun LibraryScreen() {
                     if (filter == LibFilter.All || filter == LibFilter.Playlists) {
                         items(playlists, key = { "p-" + it.id }) { p -> PlaylistEntry(p, "playlist:${p.id}" in pinned, Modifier.animateItem()) }
                     }
-                    if (filter == LibFilter.Albums && data.albums.isNotEmpty()) {
-                        item(key = "albums-hint") {
+                    val hint = when {
+                        filter == LibFilter.Albums && data.albums.isNotEmpty() -> "Alben, die du in den letzten 3 Monaten gehört hast"
+                        filter == LibFilter.Artists && data.artists.isNotEmpty() -> "Künstler, die du in den letzten 3 Monaten gehört hast"
+                        else -> null
+                    }
+                    if (hint != null) {
+                        item(key = "recent-hint") {
                             Text(
-                                "Alben, die du in den letzten 3 Monaten gehört hast",
+                                hint,
                                 Modifier.padding(horizontal = 20.dp, vertical = 4.dp).animateItem(),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -158,7 +163,11 @@ fun LibraryScreen() {
                     if (empty) item {
                         EmptyBox(
                             if (filter == LibFilter.Albums) Icons.Rounded.Album else Icons.AutoMirrored.Rounded.QueueMusic,
-                            if (filter == LibFilter.Albums) "In den letzten 3 Monaten noch kein Album gehört" else "Hier ist noch nichts",
+                            when (filter) {
+                                LibFilter.Albums -> "In den letzten 3 Monaten noch kein Album gehört"
+                                LibFilter.Artists -> "In den letzten 3 Monaten noch keinen Künstler gehört"
+                                else -> "Hier ist noch nichts"
+                            },
                         )
                     }
                 }

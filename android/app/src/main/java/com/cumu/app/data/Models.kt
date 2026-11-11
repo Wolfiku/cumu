@@ -46,6 +46,8 @@ data class Artist(
     val image: String? = null,
     @SerialName("song_count") val songCount: Int? = null,
     @SerialName("album_count") val albumCount: Int? = null,
+    /** Last time the user heard a song of it (library overview only). */
+    @SerialName("last_played") val lastPlayed: Long? = null,
     val albums: List<Album> = emptyList(),
     val songs: List<Song> = emptyList(),
 )
@@ -91,6 +93,7 @@ data class LibraryOverview(
     val playlists: List<Playlist> = emptyList(),
     /** Only albums heard in the last 3 months, most recent first. */
     val albums: List<Album> = emptyList(),
+    /** Only artists heard in the last 3 months, most recent first. */
     val artists: List<Artist> = emptyList(),
     /** Favourite song ids, shared with the web app. */
     val favorites: List<String> = emptyList(),

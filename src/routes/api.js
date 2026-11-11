@@ -602,8 +602,8 @@ router.post('/library/song', requireAuth, (req, res) => {
 
 // ── Library overview (app) ─────────────────────────────────────────────────
 // One light request for the app's library tab: every playlist (as summary),
-// only the albums heard in the last 3 months, the artists with songs, the
-// favourites and the items pinned in the web app.
+// only the albums and artists heard in the last 3 months, the favourites
+// and the items pinned in the web app.
 router.get('/library/overview', requireAuth, (req, res) => {
   const db = getDB();
   const userId = req.user.id;
@@ -624,14 +624,21 @@ router.get('/library/overview', requireAuth, (req, res) => {
     ORDER BY r.last_played DESC
   `).all(userId, since);
 
+  // Same rule as the albums: only artists heard in the last 3 months
   const artists = db.prepare(`
-    SELECT ar.*, c.song_count,
+    SELECT ar.*, r.last_played, r.plays,
+      (SELECT COUNT(*) FROM songs x WHERE x.artist_id = ar.id) as song_count,
       (SELECT COUNT(*) FROM albums al WHERE al.artist_id = ar.id) as album_count
-    FROM artists ar
-    JOIN (SELECT artist_id, COUNT(*) AS song_count FROM songs WHERE artist_id IS NOT NULL GROUP BY artist_id) c
-      ON c.artist_id = ar.id
-    ORDER BY ar.name COLLATE NOCASE
-  `).all();
+    FROM (
+      SELECT s.artist_id, MAX(ph.played_at) AS last_played, COUNT(*) AS plays
+      FROM play_history ph
+      JOIN songs s ON s.id = ph.song_id
+      WHERE ph.user_id = ? AND ph.played_at >= ? AND s.artist_id IS NOT NULL
+      GROUP BY s.artist_id
+    ) r
+    JOIN artists ar ON ar.id = r.artist_id
+    ORDER BY r.last_played DESC
+  `).all(userId, since);
 
   const extra = readExtraSettings(db, userId);
   const pinned = Array.isArray(extra.pinnedItems) ? extra.pinnedItems.filter(k => typeof k === 'string') : [];
