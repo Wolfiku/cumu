@@ -41,10 +41,12 @@ const CumuScan = (() => {
   const num = n => Number(n || 0).toLocaleString('de-DE');
 
   function phaseText(s) {
-    const steps = s.lookupEnabled ? 3 : 2;
-    if (s.phase === 'discovering') return `Schritt 1/${steps} · Ordner durchsuchen · ${num(s.discovered)} Audiodateien gefunden`;
-    if (s.phase === 'indexing') return `Schritt 2/${steps} · Dateien einlesen · ${num(s.index.done)} von ${num(s.index.total)}`;
-    if (s.phase === 'lookup') return `Schritt 3/${steps} · Lieder erkennen · ${num(s.lookup.done)} von ${num(s.lookup.total)}`;
+    const phases = ['discovering', 'indexing', ...(s.lookupEnabled ? ['lookup'] : []), ...(s.coversEnabled || s.phase === 'covers' ? ['covers'] : [])];
+    const step = `Schritt ${phases.indexOf(s.phase) + 1}/${phases.length}`;
+    if (s.phase === 'discovering') return `${step} · Ordner durchsuchen · ${num(s.discovered)} Audiodateien gefunden`;
+    if (s.phase === 'indexing') return `${step} · Dateien einlesen · ${num(s.index.done)} von ${num(s.index.total)}`;
+    if (s.phase === 'lookup') return `${step} · Lieder erkennen · ${num(s.lookup.done)} von ${num(s.lookup.total)}`;
+    if (s.phase === 'covers') return `${step} · Album-Cover laden · ${num(s.covers?.done)} von ${num(s.covers?.total)}`;
     return 'Wird vorbereitet…';
   }
 
@@ -54,6 +56,7 @@ const CumuScan = (() => {
     if (s.phase === 'discovering') return `Ordner: ${s.current}`;
     if (s.phase === 'indexing') return `Datei: ${s.current}`;
     if (s.phase === 'lookup') return `Lied: ${s.current}`;
+    if (s.phase === 'covers') return `Album: ${s.current}`;
     return s.current;
   }
 
@@ -91,7 +94,10 @@ const CumuScan = (() => {
     if (!r) return '';
     const where = r.musicPath ? ` in ${r.musicPath}` : '';
     if (!r.found && !r.added) return `Letzter Scan: keine Audiodateien${where} gefunden. Stimmt der Musik-Ordner in den Einstellungen?`;
-    return `Letzter Scan: ${num(r.found)} Audiodateien${where}, ${num(r.added)} neu hinzugefügt, ${num(r.matched)} erkannt, ${num(r.unmatched)} ohne Treffer${r.error ? `, ${num(r.error)} fehlgeschlagen` : ''}.`;
+    const c = r.covers || {};
+    const coverCount = (c.found || 0) + (c.embedded || 0);
+    const coverText = coverCount || c.none ? `, ${num(coverCount)} Album-Cover ergänzt` : '';
+    return `Letzter Scan: ${num(r.found)} Audiodateien${where}, ${num(r.added)} neu hinzugefügt, ${num(r.matched)} erkannt, ${num(r.unmatched)} ohne Treffer${r.error ? `, ${num(r.error)} fehlgeschlagen` : ''}${coverText}.`;
   }
 
   // ── Polling ────────────────────────────────────────────────────────────────

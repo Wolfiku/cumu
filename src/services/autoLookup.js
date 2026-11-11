@@ -8,7 +8,7 @@
 'use strict';
 
 const { getDB, getConfig, log, getOrCreateArtist } = require('../db');
-const { searchMusicBrainz } = require('./musicbrainz');
+const { searchMusicBrainz, sameName } = require('./musicbrainz');
 const { correctTrackInfo, fetchSpecificGenre } = require('./mistral');
 const { isGenreValid, normalizeGenre } = require('../utils/genresList');
 const { getOrCreateAlbum, cleanupOrphanedAlbums } = require('./albums');
@@ -51,6 +51,15 @@ function applyMetadataToSong(songId, meta, sourceName) {
   };
 
   const albumId = getOrCreateAlbum(db, finalAlbumTitle, artistId, albumMeta, song.album_id);
+
+  // Remember which MusicBrainz release the album is, so its cover can be
+  // fetched later. Only when the album really is that release (the file's own
+  // album tag wins over the lookup and may name a different album).
+  const release = meta.release;
+  if (albumId && release?.id && sameName(release.title, finalAlbumTitle)) {
+    db.prepare('UPDATE albums SET mb_release_id = ?, mb_release_group_id = COALESCE(?, mb_release_group_id) WHERE id = ? AND mb_release_id IS NULL')
+      .run(release.id, release.groupId || null, albumId);
+  }
 
   db.prepare(`
     UPDATE songs 

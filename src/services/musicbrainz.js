@@ -283,8 +283,43 @@ async function searchMusicBrainz(title, artist = '', album = '', duration = 0) {
     genre: genre,
     track_number: isNaN(trackNumber) ? null : trackNumber,
     score: rec.score || 0,
-    mbid: rec.id
+    mbid: rec.id,
+    // The release the album title came from; used to fetch the album cover
+    release: release ? { id: release.id, groupId: release['release-group']?.id || null, title: release.title } : null
   };
 }
 
-module.exports = { searchMusicBrainz };
+// Studio albums first, then EPs/singles, then everything else; oldest first
+function releaseGroupRank(rg) {
+  const primary = rg['primary-type'];
+  const secondary = (rg['secondary-types'] || []).length;
+  return [primary === 'Album' && !secondary ? 0 : primary === 'Album' ? 1 : primary === 'EP' ? 2 : 3,
+    rg['first-release-date'] || '9999'];
+}
+
+/**
+ * Finds the MusicBrainz release group (an album across all its editions) for
+ * an album title and artist. Used for album covers when no song lookup gave
+ * us a release. Title and artist must both match; without an artist nothing
+ * is returned, since the match could not be verified.
+ * @returns {Promise<{id: string, title: string}|null>}
+ */
+async function searchReleaseGroup(albumTitle, artist) {
+  const cleanTitle = cleanQueryTerm(albumTitle);
+  const cleanArtist = cleanQueryTerm(artist);
+  if (!cleanTitle || !cleanArtist) return null;
+
+  const findMatch = (data) => (data?.['release-groups'] || [])
+    .filter(rg => sameName(rg.title, albumTitle) && artistMatches(rg, artist))
+    .sort((a, b) => {
+      const ra = releaseGroupRank(a), rb = releaseGroupRank(b);
+      return ra[0] - rb[0] || ra[1].localeCompare(rb[1]);
+    })[0];
+
+  const url = q => `https://musicbrainz.org/ws/2/release-group?query=${encodeURIComponent(q)}&fmt=json&limit=25`;
+  let rg = findMatch(await fetchJson(url(`releasegroup:"${cleanTitle}" AND artist:"${cleanArtist}"`)));
+  if (!rg) rg = findMatch(await fetchJson(url(`releasegroup:(${cleanTitle}) AND artist:(${cleanArtist})`)));
+  return rg ? { id: rg.id, title: rg.title } : null;
+}
+
+module.exports = { searchMusicBrainz, searchReleaseGroup, sameName };

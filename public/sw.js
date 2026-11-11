@@ -3,7 +3,7 @@
  * Service Worker for Cumu Web - App Shell & Offline Caching
  */
 
-const CACHE_NAME = 'cumu-app-shell-v9';
+const CACHE_NAME = 'cumu-app-shell-v10';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
@@ -18,6 +18,7 @@ const ASSETS_TO_CACHE = [
   '/js/icons.js',
   '/js/scan-status.js',
   '/js/path-check.js',
+  '/js/covers.js',
   '/js/admin.js',
   '/js/mobile.js',
 ];
@@ -45,10 +46,12 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // Skip stream, socket, oauth, and api routes from service worker HTTP cache
+  // Skip stream, socket, oauth, api and admin routes from service worker HTTP cache
+  // (admin status answers must be fresh, e.g. the one-time cover notice)
   if (
     url.pathname.startsWith('/stream/') ||
     url.pathname.startsWith('/api/') ||
+    url.pathname.startsWith('/admin/') ||
     url.pathname.startsWith('/oauth/') ||
     url.pathname.startsWith('/ws')
   ) {

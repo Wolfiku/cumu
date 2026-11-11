@@ -14,6 +14,7 @@ const path    = require('path');
 const fs      = require('fs');
 const { getDB, getConfig } = require('../db');
 const { requireAuth }      = require('../middleware/auth');
+const { findCoverFile }    = require('../services/coverArt');
 
 const router = express.Router();
 
@@ -51,13 +52,12 @@ function getMimeType(song) {
 
 // ── GET /stream/cover/:filename ───────────────────────────────────────────────
 // Public (no auth required) so embedded <img> tags work without token headers
+// Covers are in the cover folder; older ones may still be in the music folder
 router.get('/cover/:filename', (req, res) => {
-  const musicPath = getMusicPath();
-  // Prevent path traversal
-  const safe = path.basename(req.params.filename);
-  const filePath = path.join(musicPath, safe);
-  if (!fs.existsSync(filePath)) return res.status(404).end();
-  res.sendFile(filePath);
+  const filePath = findCoverFile(req.params.filename); // basename only: no path traversal
+  if (!filePath) return res.status(404).end();
+  // File names are unique per image, so a cover never changes under its name
+  res.sendFile(filePath, { maxAge: '30d', immutable: true });
 });
 
 // ── GET /stream/:songId ───────────────────────────────────────────────────────

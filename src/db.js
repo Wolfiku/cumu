@@ -203,6 +203,15 @@ function initDB() {
   // NULL for songs that never went through a scan (uploads, older versions).
   if (!songCols.includes('lookup_status'))  db.exec("ALTER TABLE songs ADD COLUMN lookup_status TEXT");
 
+  // Album covers: MusicBrainz ids (for the Cover Art Archive) and how the cover
+  // was found. cover_status: 'user' | 'embedded' | 'found' (online) | 'none'
+  // (searched, nothing found) | 'error' (search failed, retried) | NULL (not
+  // searched yet)
+  const albumCols = db.prepare('PRAGMA table_info(albums)').all().map(c => c.name);
+  if (!albumCols.includes('mb_release_id'))       db.exec("ALTER TABLE albums ADD COLUMN mb_release_id TEXT");
+  if (!albumCols.includes('mb_release_group_id')) db.exec("ALTER TABLE albums ADD COLUMN mb_release_group_id TEXT");
+  if (!albumCols.includes('cover_status'))        db.exec("ALTER TABLE albums ADD COLUMN cover_status TEXT");
+
   const playlistCols = db.prepare('PRAGMA table_info(playlists)').all().map(c => c.name);
   if (!playlistCols.includes('is_generated')) db.exec("ALTER TABLE playlists ADD COLUMN is_generated INTEGER DEFAULT 0");
 
@@ -326,5 +335,9 @@ function log(level, category, message) {
   }
 }
 
-module.exports = { getDB, initDB, getConfig, setConfig, log, getOrCreateArtist, mergeDuplicateArtists, backupDatabase };
+function getDataDir() {
+  return path.dirname(DB_PATH);
+}
+
+module.exports = { getDataDir, getDB, initDB, getConfig, setConfig, log, getOrCreateArtist, mergeDuplicateArtists, backupDatabase };
 

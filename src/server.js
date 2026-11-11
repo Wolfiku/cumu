@@ -30,6 +30,7 @@ const dataDir = path.join(__dirname, '../data');
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
 initDB();
+require('./services/coverArt').initCoverSettings(getDB());
 initAdminCode();
 if (process.env.AUTO_LOGIN === 'true') {
   console.warn('[cumu] AUTO_LOGIN is no longer supported and is ignored: admins must log in with the admin login code.');

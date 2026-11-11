@@ -24,6 +24,7 @@ const { getOrCreateAlbum, cleanupOrphanedAlbums, resolveEditedSongAlbum } = requ
 const { dedupeLibrary, findDuplicateSong, getIgnoredFiles, ignoreFile, releaseIgnoredFiles } = require('../services/dedupe');
 const { testMistralKey } = require('../services/mistral');
 const { processSongLookup, triggerLibraryAutoLookup, queueSongForLookup } = require('../services/autoLookup');
+const covers = require('../services/coverArt');
 
 
 const router = express.Router();
@@ -216,11 +217,13 @@ async function processUpload(req, res) {
   try {
     const db        = getDB();
     const cfg       = getConfig();
-    const musicPath = getScanPath();
     const coverFile = req.files?.cover?.[0];
     const songFiles = (req.files?.files || []).filter(f => AUDIO_EXTS.includes(path.extname(f.originalname).toLowerCase()));
 
     if (!songFiles.length) return res.status(400).json({ error: 'No audio files uploaded' });
+
+    // A cover uploaded along with the songs goes to the cover folder
+    const uploadedCover = coverFile ? await covers.moveIntoCoverDir(coverFile.path) : null;
 
     const results = [];
     let skipped = 0;
@@ -259,15 +262,18 @@ async function processUpload(req, res) {
         continue;
       }
 
+      // One cover per album: the embedded artwork is only saved when the album
+      // has none yet (before, every song of an album wrote its own copy)
       let coverFilename = null;
-      if (coverFile) {
-        coverFilename = coverFile.filename;
-        if (albumId) db.prepare('UPDATE albums SET cover=? WHERE id=?').run(coverFilename, albumId);
+      const albumCover = albumId ? db.prepare('SELECT cover FROM albums WHERE id=?').get(albumId)?.cover : null;
+      if (uploadedCover) {
+        coverFilename = uploadedCover;
+        if (albumId) db.prepare("UPDATE albums SET cover=?, cover_status='user' WHERE id=?").run(coverFilename, albumId);
+      } else if (albumCover) {
+        coverFilename = albumCover;
       } else if (meta.picture) {
-        const artExt  = meta.picture.format?.split('/')?.[1] || 'jpg';
-        coverFilename = `${uuidv4()}.${artExt}`;
-        fs.writeFileSync(path.join(musicPath, coverFilename), meta.picture.data);
-        if (albumId) db.prepare('UPDATE albums SET cover=? WHERE id=?').run(coverFilename, albumId);
+        coverFilename = covers.saveCover(meta.picture.data, meta.picture.format);
+        if (albumId) db.prepare("UPDATE albums SET cover=?, cover_status='embedded' WHERE id=?").run(coverFilename, albumId);
       }
 
       const userProvided = !!(req.body.artist || req.body.album || req.body.title || req.body.genre);
@@ -346,6 +352,9 @@ function findAlbumInFolder(db, relativePath, albumTitle) {
 //   2. every indexed song goes through the metadata lookup (MusicBrainz ->
 //      Mistral). Songs waiting for it carry lookup_status = 'pending', so an
 //      interrupted scan continues after a restart.
+//   3. albums without cover get one (embedded artwork, then Cover Art
+//      Archive), when covers are switched on. Albums not searched yet have
+//      cover_status NULL, so this continues after a restart as well.
 // The first scan of a fresh installation is started by an admin and blocks the
 // web client until it is done. Later scans start on their own in the background.
 
@@ -353,22 +362,31 @@ const INITIAL_SCAN_THRESHOLD = 20;
 // Used for time estimates until the running scan has measured its own speed
 const DEFAULT_INDEX_MS  = 150;
 const DEFAULT_LOOKUP_MS = 2500;
+const DEFAULT_COVER_MS  = 2000;
+// After this many network failures in a row the cover step stops and pauses
+// (e.g. no internet), instead of failing album after album
+const COVER_FAILURE_LIMIT = 3;
+const COVER_BACKOFF_MS    = 30 * 60 * 1000;
 const TIMING_WINDOW     = 25;
 
 const scan = {
   running: false,
   initial: false,
-  phase: 'idle',        // 'discovering' | 'indexing' | 'lookup' | 'idle'
+  phase: 'idle',        // 'discovering' | 'indexing' | 'lookup' | 'covers' | 'idle'
   discovered: 0,        // audio files found so far while walking the folder
   musicPath: null,
   indexTotal: 0, indexDone: 0,
   lookupTotal: 0, lookupDone: 0,
+  coverTotal: 0, coverDone: 0,
   current: null,
   startedAt: null,
   newFiles: 0,          // unindexed files found by the last check
   indexTimes: [],
   lookupTimes: [],
+  coverTimes: [],
   lastResult: null,
+  coverBackoffUntil: 0,
+  coversRequested: false, // admin asked for covers once, even with automatic covers off
 };
 
 function average(times, fallback) {
@@ -385,6 +403,14 @@ function isLookupEnabled() {
 
 function countPendingLookups(db) {
   return db.prepare("SELECT COUNT(*) AS c FROM songs WHERE lookup_status = 'pending'").get().c;
+}
+
+function coversWanted() {
+  return (covers.isCoverAutoEnabled() || scan.coversRequested) && Date.now() >= scan.coverBackoffUntil;
+}
+
+function countPendingCovers(db) {
+  return db.prepare('SELECT COUNT(*) AS c FROM albums WHERE cover IS NULL AND cover_status IS NULL').get().c;
 }
 
 // A fresh installation stays in initial mode until its first scan finished.
@@ -505,6 +531,7 @@ async function scanLibrary() {
   Object.assign(scan, {
     running: true, initial: isInitialMode(db), phase: 'discovering',
     indexTotal: 0, indexDone: 0, lookupTotal: 0, lookupDone: 0,
+    coverTotal: 0, coverDone: 0,
     discovered: 0, musicPath,
     current: null, startedAt: Date.now(),
   });
@@ -512,6 +539,7 @@ async function scanLibrary() {
   try {
     // Lookups that failed last time (e.g. MusicBrainz was down) are retried
     db.prepare("UPDATE songs SET lookup_status = 'pending' WHERE lookup_status = 'error'").run();
+    if (coversWanted()) db.prepare("UPDATE albums SET cover_status = NULL WHERE cover IS NULL AND cover_status = 'error'").run();
 
     // 0. Find audio files in the music folder
     const newFiles = musicPath ? await findNewFiles(db, musicPath, (found, folder) => {
@@ -566,12 +594,58 @@ async function scanLibrary() {
       log('info', 'metadata', `Library scan lookup: ${counts.matched} matched, ${counts.unmatched} without match, ${counts.error} failed`);
     }
 
+    // The library is usable now: the first scan no longer locks the client
+    // while the covers are added
     if (scan.initial) setConfig('initialScanDone', true);
-    scan.lastResult = { finishedAt: Date.now(), added, found: scan.discovered, musicPath, ...counts };
-    return { scanned: newFiles.length, added, musicPath, ...counts };
+    scan.initial = false;
+
+    // 3. Covers for albums that have none
+    const coverCounts = await addMissingCovers(db);
+
+    scan.lastResult = { finishedAt: Date.now(), added, found: scan.discovered, musicPath, ...counts, covers: coverCounts };
+    return { scanned: newFiles.length, added, musicPath, ...counts, covers: coverCounts };
   } finally {
     Object.assign(scan, { running: false, phase: 'idle', current: null });
   }
+}
+
+async function addMissingCovers(db) {
+  const result = { found: 0, embedded: 0, none: 0, error: 0 };
+  if (!coversWanted()) return result;
+  scan.coversRequested = false;
+  scan.phase = 'covers';
+  scan.current = null;
+  const nextAlbum = db.prepare(`
+    SELECT a.*, ar.name AS artist_name FROM albums a LEFT JOIN artists ar ON ar.id = a.artist_id
+    WHERE a.cover IS NULL AND a.cover_status IS NULL ORDER BY a.created_at LIMIT 1
+  `);
+  let failuresInRow = 0;
+  for (;;) {
+    const album = nextAlbum.get();
+    if (!album) break;
+    scan.coverTotal = scan.coverDone + countPendingCovers(db);
+    scan.current = album.artist_name ? `${album.artist_name} – ${album.title}` : album.title;
+    const started = Date.now();
+    try {
+      const status = await covers.updateAlbumCover(db, album, { findSongFile });
+      if (result[status] !== undefined) result[status]++;
+      failuresInRow = 0;
+    } catch (err) {
+      result.error++;
+      console.error(`[cumu] Cover lookup failed for "${album.title}":`, err.message);
+      if (++failuresInRow >= COVER_FAILURE_LIMIT) {
+        scan.coverBackoffUntil = Date.now() + COVER_BACKOFF_MS;
+        log('warn', 'metadata', `Cover search paused for 30 minutes: ${err.message}`);
+        break;
+      }
+    }
+    recordTime(scan.coverTimes, Date.now() - started);
+    scan.coverDone++;
+  }
+  if (scan.coverDone > 0) {
+    log('info', 'metadata', `Covers: ${result.found} downloaded, ${result.embedded} from files, ${result.none} without cover${result.error ? `, ${result.error} failed` : ''}`);
+  }
+  return result;
 }
 
 // Periodic check: finds new files and starts a background scan when there is
@@ -583,7 +657,8 @@ async function checkLibrary() {
   scan.newFiles = musicPath ? (await findNewFiles(db, musicPath)).length : 0;
   if (runningScan) return runningScan; // a scan started while we were looking
   const pending = isLookupEnabled() ? countPendingLookups(db) : 0;
-  if (!scan.newFiles && !pending) return Promise.resolve(null);
+  const pendingCovers = coversWanted() ? countPendingCovers(db) : 0;
+  if (!scan.newFiles && !pending && !pendingCovers) return Promise.resolve(null);
   if (isInitialMode(db) && getConfig().initialScanStarted !== true) return Promise.resolve(null);
   return runLibraryScan();
 }
@@ -595,12 +670,19 @@ function getScanStatus() {
   const initial   = isInitialMode(db);
   const avgIndex  = average(scan.indexTimes, DEFAULT_INDEX_MS);
   const avgLookup = average(scan.lookupTimes, DEFAULT_LOOKUP_MS);
+  const avgCover  = average(scan.coverTimes, DEFAULT_COVER_MS);
+  const coversOn  = coversWanted();
+  const pendingCovers = coversOn ? countPendingCovers(db) : 0;
 
   let doneMs = 0, remainingMs;
   if (scan.running) {
-    doneMs = scan.indexDone * avgIndex + scan.lookupDone * avgLookup;
+    // Covers not counted yet: those of albums that exist now (new songs can
+    // add a few more)
+    const coverTotal = scan.phase === 'covers' ? scan.coverTotal : pendingCovers;
+    doneMs = scan.indexDone * avgIndex + scan.lookupDone * avgLookup + scan.coverDone * avgCover;
     remainingMs = (scan.indexTotal - scan.indexDone) * avgIndex
-      + Math.max(0, scan.lookupTotal - scan.lookupDone) * avgLookup;
+      + Math.max(0, scan.lookupTotal - scan.lookupDone) * avgLookup
+      + (coversOn || scan.phase === 'covers' ? Math.max(0, coverTotal - scan.coverDone) * avgCover : 0);
   } else {
     remainingMs = scan.newFiles * avgIndex + (lookupOn ? (scan.newFiles + pending) * avgLookup : 0);
   }
@@ -616,10 +698,13 @@ function getScanStatus() {
     newFiles:   scan.newFiles,
     pending,
     lookupEnabled: lookupOn,
+    coversEnabled: coversOn || scan.phase === 'covers',
+    pendingCovers,
     discovered: scan.discovered || 0,
     musicPath:  scan.running && scan.musicPath ? scan.musicPath : getScanPath(),
     index:      { done: scan.indexDone, total: scan.indexTotal },
     lookup:     { done: scan.lookupDone, total: scan.lookupTotal },
+    covers:     { done: scan.coverDone, total: scan.coverTotal },
     current:    scan.current,
     progress:   scan.running && doneMs + remainingMs > 0 ? doneMs / (doneMs + remainingMs) : 0,
     etaSeconds: Math.round(remainingMs / 1000),
@@ -675,6 +760,11 @@ router.put('/albums/:id', requireAdmin, (req, res) => {
     if (artist !== undefined) artistId = artist ? getOrCreateArtist(db, artist) : null;
     db.prepare('UPDATE albums SET title=COALESCE(?,title), artist_id=?, year=COALESCE(?,year), genre=COALESCE(?,genre) WHERE id=?')
       .run(title || null, artistId, year || null, genre || null, req.params.id);
+    // Renamed: the old MusicBrainz match no longer applies, and an album that
+    // had no cover is searched again under its new name
+    if ((title && title !== album.title) || artistId !== album.artist_id) {
+      db.prepare("UPDATE albums SET mb_release_id = NULL, mb_release_group_id = NULL, cover_status = CASE WHEN cover IS NULL THEN NULL ELSE cover_status END WHERE id = ?").run(req.params.id);
+    }
 
     if (is_audiobook != null) {
       db.prepare('UPDATE songs SET is_audiobook=? WHERE album_id=?').run(is_audiobook ? 1 : 0, req.params.id);
@@ -735,11 +825,41 @@ router.get('/config', requireAdmin, (req, res) => {
     autoLookupEnabled:      cfg.autoLookupEnabled !== false,
     mistralApiKey:          cfg.mistralApiKey || '',
     enableAiCorrection:     cfg.enableAiCorrection === true,
-    aiModel:                cfg.aiModel || 'mistral-small-latest'
+    aiModel:                cfg.aiModel || 'mistral-small-latest',
+    coverPath:              covers.getCoverPath(),
+    coverPathDefault:       covers.getDefaultCoverPath(),
+    coverAutoEnabled:       covers.isCoverAutoEnabled(),
+    coverOnlineEnabled:     covers.isCoverOnlineEnabled(),
   });
 });
 
-const { validateMusicPath, inspectMusicPath } = require('../utils/pathValidator');
+const { validateMusicPath, inspectMusicPath, inspectCoverPath, validateCoverPath } = require('../utils/pathValidator');
+
+const coverPathOpts = () => ({ musicPaths: [getStoragePath(), getScanPath()] });
+
+// Sets the cover folder and moves the existing covers there (in the background:
+// a large library can take a moment). Returns an error message or null.
+async function setCoverPath(rawPath) {
+  const target = String(rawPath || '').trim() || covers.getDefaultCoverPath();
+  const check = await validateCoverPath(target, coverPathOpts());
+  if (!check.ok) return check.error;
+  setConfig('coverPath', check.path);
+  covers.relocateCovers(getDB())
+    .then(r => { if (r.moved || r.failed) log(r.failed ? 'warn' : 'info', 'admin', `Covers moved to ${check.path}: ${r.moved} moved${r.failed ? `, ${r.failed} failed` : ''}`); })
+    .catch(err => log('error', 'admin', `Moving covers failed: ${err.message}`));
+  return null;
+}
+
+// Starts a scan that adds missing covers, even with automatic covers off
+function startCoverScan() {
+  scan.coversRequested = true;
+  scan.coverBackoffUntil = 0;
+  const run = runningScan
+    // A scan past its cover step would not pick the request up: run another
+    ? runningScan.then(() => scan.coversRequested && runLibraryScan())
+    : runLibraryScan();
+  run.catch(err => console.error('[cumu] Cover scan error:', err.message));
+}
 
 // Live check of a music folder for the settings page (nothing is changed)
 router.post('/music-path/check', requireAdmin, async (req, res) => {
@@ -755,8 +875,20 @@ router.put('/config', requireAdmin, async (req, res) => {
     musicPath, maxStorageGb, port, host, enablePodcasts,
     enablePublicPodcasts, podcastApiSource, podcastIndexKey,
     podcastIndexSecret, customPodcastFeeds,
-    autoLookupEnabled, mistralApiKey, enableAiCorrection, aiModel
+    autoLookupEnabled, mistralApiKey, enableAiCorrection, aiModel,
+    coverPath, coverAutoEnabled, coverOnlineEnabled
   } = req.body;
+
+  if (coverPath !== undefined) {
+    const current = covers.getCoverPath();
+    const wanted  = String(coverPath || '').trim() || covers.getDefaultCoverPath();
+    if (path.resolve(wanted) !== path.resolve(current)) {
+      const error = await setCoverPath(wanted);
+      if (error) return res.status(400).json({ error: 'Cover-Ordner: ' + error });
+    }
+  }
+  if (coverAutoEnabled !== undefined) setConfig('coverAutoEnabled', !!coverAutoEnabled);
+  if (coverOnlineEnabled !== undefined) setConfig('coverOnlineEnabled', !!coverOnlineEnabled);
 
   if (musicPath !== undefined) {
     const pathCheck = await validateMusicPath(musicPath);
@@ -783,6 +915,86 @@ router.put('/config', requireAdmin, async (req, res) => {
   if (aiModel !== undefined) setConfig('aiModel', aiModel);
 
   log('info', 'admin', 'Server config updated');
+  res.json({ ok: true });
+});
+
+// ── ALBUM COVERS ──────────────────────────────────────────────────────────────
+
+router.post('/cover-path/check', requireAdmin, async (req, res) => {
+  try {
+    res.json(await inspectCoverPath(req.body?.path, coverPathOpts()));
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: 'Prüfung fehlgeschlagen: ' + err.message });
+  }
+});
+
+function coverStatus() {
+  const cfg = getConfig();
+  return {
+    ...covers.coverCounts(getDB()),
+    coverPath:        covers.getCoverPath(),
+    coverPathDefault: covers.getDefaultCoverPath(),
+    autoEnabled:      covers.isCoverAutoEnabled(),
+    onlineEnabled:    covers.isCoverOnlineEnabled(),
+    announcement:     cfg.coverAnnouncement === 'pending',
+    pausedUntil:      scan.coverBackoffUntil > Date.now() ? scan.coverBackoffUntil : null,
+  };
+}
+
+router.get('/covers/status', requireAdmin, (req, res) => {
+  res.json(coverStatus());
+});
+
+// One-time notice: closed without changing anything
+router.post('/covers/announcement/dismiss', requireAdmin, (req, res) => {
+  setConfig('coverAnnouncement', 'done');
+  res.json(coverStatus());
+});
+
+// One-time notice: cover folder chosen, covers switched on, scan started
+router.post('/covers/setup', requireAdmin, async (req, res) => {
+  const error = await setCoverPath(req.body?.coverPath);
+  if (error) return res.status(400).json({ error });
+  setConfig('coverAutoEnabled', true);
+  if (req.body?.onlineEnabled !== undefined) setConfig('coverOnlineEnabled', !!req.body.onlineEnabled);
+  setConfig('coverAnnouncement', 'done');
+  log('info', 'admin', `Album covers switched on (folder ${covers.getCoverPath()})`);
+  startCoverScan();
+  res.json(coverStatus());
+});
+
+// Adds missing covers now. retry: also albums searched before without result
+router.post('/covers/scan', requireAdmin, (req, res) => {
+  if (req.body?.retry) {
+    getDB().prepare("UPDATE albums SET cover_status = NULL WHERE cover IS NULL AND cover_status IN ('none', 'error')").run();
+  }
+  startCoverScan();
+  res.json({ ...coverStatus(), scan: getScanStatus() });
+});
+
+// Searches the cover of one album right away (online even if switched off:
+// the admin asked for it)
+router.post('/albums/:id/cover/fetch', requireAdmin, async (req, res) => {
+  const db = getDB();
+  const album = covers.albumWithArtist(db, req.params.id);
+  if (!album) return res.status(404).json({ error: 'Album not found' });
+  if (album.cover) return res.json({ ok: true, status: 'kept', album });
+  try {
+    const status = await covers.updateAlbumCover(db, album, { findSongFile, online: true });
+    res.json({ ok: status !== 'none', status, album: covers.albumWithArtist(db, album.id) });
+  } catch (err) {
+    res.status(502).json({ ok: false, error: 'Cover-Suche fehlgeschlagen: ' + err.message });
+  }
+});
+
+// Removes a (wrong) cover. The album is not searched again automatically.
+router.delete('/albums/:id/cover', requireAdmin, (req, res) => {
+  const db = getDB();
+  const album = db.prepare('SELECT * FROM albums WHERE id = ?').get(req.params.id);
+  if (!album) return res.status(404).json({ error: 'Album not found' });
+  db.prepare("UPDATE albums SET cover = NULL, cover_status = 'none' WHERE id = ?").run(album.id);
+  db.prepare('UPDATE songs SET cover = NULL WHERE album_id = ? AND cover = ?').run(album.id, album.cover);
+  covers.deleteCoverIfUnused(db, album.cover);
   res.json({ ok: true });
 });
 
