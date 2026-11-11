@@ -1810,14 +1810,17 @@ function showToast(msg) {
     });
   }
 
-  function bindSongRows() {
+  // contextSongs: list the clicked row belongs to (e.g. album tracks), so the
+  // queue continues with the following songs of that list.
+  function bindSongRows(contextSongs) {
     main.querySelectorAll('.song-item').forEach(row => {
       row.addEventListener('click', async () => {
         const songId = row.dataset.songId;
-        if (window._currentPageSongs && window._currentPageSongs.length > 0) {
-          const findIdx = window._currentPageSongs.findIndex(s => s.id === songId);
+        const list = contextSongs || window._currentPageSongs;
+        if (list && list.length > 0) {
+          const findIdx = list.findIndex(s => String(s.id) === String(songId));
           if (findIdx !== -1) {
-            playQueue(window._currentPageSongs, findIdx);
+            playQueue([...list], findIdx);
             return;
           }
         }
@@ -3537,7 +3540,7 @@ function showToast(msg) {
       </div>`;
 
     window._currentAlbumSongs = album.songs || [];
-    bindSongRows();
+    bindSongRows(window._currentAlbumSongs);
   }
 
   async function renderEditAlbum(albumId) {
