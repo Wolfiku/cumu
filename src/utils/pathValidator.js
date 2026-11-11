@@ -169,4 +169,78 @@ async function validateMusicPath(targetPath) {
   return { ok: true, path: check.path, check };
 }
 
-module.exports = { validateMusicPath, inspectMusicPath, AUDIO_EXTS };
+/**
+ * Checks a folder for album covers. cumu must be able to write there.
+ * Nothing is created or changed.
+ * opts.musicPaths: music folders, to warn when covers would land in one
+ */
+async function inspectCoverPath(targetPath, opts = {}) {
+  const mounts = IN_DOCKER ? getDataMounts() : [];
+  const base = { inDocker: IN_DOCKER, suggestions: mounts.slice(0, 3) };
+  const raw = typeof targetPath === 'string' ? targetPath.trim() : '';
+  if (!raw) return { ...base, status: 'error', message: 'Bitte einen Ordner angeben.' };
+
+  const resolved = path.resolve(path.isAbsolute(raw) ? raw : '/' + raw.replace(/^\.?[\\/]+/, ''));
+
+  if (IN_DOCKER && !mounts.some(mp => isInside(resolved, mp))) {
+    return {
+      ...base, status: 'error', path: resolved,
+      message: 'Dieser Ordner ist für cumu nicht freigegeben.',
+      details: 'cumu läuft im Docker-Container; Cover in einem nicht freigegebenen Ordner gingen beim nächsten Update verloren.'
+        + (mounts.length ? ` Freigegeben: ${shortList(mounts)}.` : ''),
+    };
+  }
+
+  const inMusic = (opts.musicPaths || []).filter(Boolean).some(mp => isInside(resolved, path.resolve(mp)));
+  const musicNote = inMusic ? ' Achtung: Der Ordner liegt im Musikordner.' : '';
+
+  let stat = null;
+  try { stat = await fs.promises.stat(resolved); } catch {}
+
+  if (!stat) {
+    // The closest existing parent must be writable, or the folder can't be created
+    let parent = path.dirname(resolved);
+    while (parent !== path.dirname(parent) && !fs.existsSync(parent)) parent = path.dirname(parent);
+    try {
+      await fs.promises.access(parent, fs.constants.W_OK);
+    } catch {
+      return { ...base, status: 'error', path: resolved, exists: false, message: 'Ordner kann nicht angelegt werden: keine Schreibrechte.' };
+    }
+    return { ...base, status: 'warn', path: resolved, exists: false, message: 'Ordner existiert noch nicht – er wird beim Speichern angelegt.', details: musicNote.trim() };
+  }
+  if (!stat.isDirectory()) {
+    return { ...base, status: 'error', path: resolved, exists: true, message: 'Das ist eine Datei, kein Ordner.' };
+  }
+  try {
+    await fs.promises.access(resolved, fs.constants.R_OK | fs.constants.W_OK | fs.constants.X_OK);
+  } catch {
+    return {
+      ...base, status: 'error', path: resolved, exists: true,
+      message: 'cumu darf in diesen Ordner nicht schreiben.',
+      details: 'Prüfe die Ordnerberechtigungen auf dem Server/NAS.',
+    };
+  }
+  return {
+    ...base, status: inMusic ? 'warn' : 'ok', path: resolved, exists: true,
+    message: inMusic ? 'Ordner ist beschreibbar, liegt aber im Musikordner.' : 'Ordner ist beschreibbar.',
+    details: inMusic ? 'Besser ist ein eigener Ordner außerhalb der Musik, z. B. neben der Datenbank.' : '',
+  };
+}
+
+/** Used when saving: rejects errors and creates the folder if needed. */
+async function validateCoverPath(targetPath, opts = {}) {
+  const check = await inspectCoverPath(targetPath, opts);
+  if (check.status === 'error') {
+    return { ok: false, error: [check.message, check.details].filter(Boolean).join(' '), check };
+  }
+  if (check.exists === false) {
+    try {
+      fs.mkdirSync(check.path, { recursive: true });
+    } catch (err) {
+      return { ok: false, error: `Ordner '${check.path}' konnte nicht angelegt werden: ${err.message}`, check };
+    }
+  }
+  return { ok: true, path: check.path, check };
+}
+
+module.exports = { validateMusicPath, inspectMusicPath, inspectCoverPath, validateCoverPath, AUDIO_EXTS };

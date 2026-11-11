@@ -187,6 +187,19 @@ const CumuAdmin = (function() {
             <span id="scanResult" class="font-body-sm text-body-sm"></span>
           </div>
         </div>
+      </section>
+
+      <section class="flex flex-col gap-md mt-xl">
+        <h2 class="font-title-md text-title-md text-on-surface border-b border-border-subtle pb-sm">Album Covers</h2>
+        <div class="flex flex-col gap-sm p-md rounded-lg bg-surface-container-low">
+          <p class="font-body-sm text-body-sm text-text-muted">Albums without a cover get one from the artwork embedded in their files, or from MusicBrainz (Cover Art Archive). Each cover is downloaded once and stored on this server. Existing covers are never replaced. Folder and switches: <a href="#" class="underline" onclick="CumuAdmin.switchTab('stats'); return false;">Server Config &amp; Stats</a>.</p>
+          <div id="coverScanStatus" class="font-body-sm text-body-sm text-text-muted">Loading…</div>
+          <div class="flex flex-wrap items-center gap-md mt-sm">
+            <button id="btnCoverScan" class="px-md py-sm bg-text-muted text-on-primary font-body-sm text-body-sm rounded hover:scale-105 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:hover:scale-100">Load missing covers</button>
+            <button id="btnCoverRetry" class="px-md py-sm border border-border-subtle text-on-surface font-body-sm text-body-sm rounded hover:bg-surface-bright transition-all disabled:opacity-50">Retry albums without match</button>
+            <span id="coverScanResult" class="font-body-sm text-body-sm"></span>
+          </div>
+        </div>
       </section>`;
 
     const btn = document.getElementById('btnScanLibrary');
@@ -210,8 +223,48 @@ const CumuAdmin = (function() {
       }
     }
 
-    const unsubscribe = CumuScan.onChange(renderStatus);
+    const num = n => Number(n || 0).toLocaleString('de-DE');
+    let lastCoverRefresh = 0;
+    async function renderCoverStatus(force) {
+      const el = document.getElementById('coverScanStatus');
+      if (!el) return;
+      if (!force && Date.now() - lastCoverRefresh < 5000) return;
+      lastCoverRefresh = Date.now();
+      let c;
+      try { c = await CumuApi.get('/admin/covers/status'); } catch { return; }
+      if (!c || c.error) return;
+      const missing = c.total - c.withCover;
+      const mode = !c.autoEnabled ? 'Automatic covers are <strong>off</strong> (only when you start it here).'
+        : c.onlineEnabled ? 'Automatic covers are on (files + online).' : 'Automatic covers are on (only from files, online search off).';
+      el.innerHTML = `
+        <div>${num(c.withCover)} of ${num(c.total)} albums have a cover${missing ? ` · ${num(c.pending)} not searched yet · ${num(c.noMatch)} without match${c.failed ? ` · ${num(c.failed)} failed` : ''}` : ''}.</div>
+        <div>${mode}${c.pausedUntil ? ` Online search paused after network errors until ${new Date(c.pausedUntil).toLocaleTimeString()}.` : ''}</div>
+        <div>Cover folder: <code>${esc(c.coverPath)}</code></div>`;
+      const retryBtn = document.getElementById('btnCoverRetry');
+      if (retryBtn) retryBtn.disabled = !(c.noMatch || c.failed);
+    }
+
+    async function startCoverScan(retry) {
+      const resEl = document.getElementById('coverScanResult');
+      resEl.textContent = '';
+      resEl.className = 'font-body-sm text-body-sm';
+      try {
+        const res = await CumuApi.post('/admin/covers/scan', { retry });
+        if (!res || res.error) throw new Error(res?.error || 'Could not start');
+        resEl.textContent = 'Cover scan started.';
+        renderCoverStatus(true);
+        CumuScan.poll();
+      } catch (err) {
+        resEl.textContent = err.message || 'Could not start';
+        resEl.className = 'font-body-sm text-body-sm text-danger';
+      }
+    }
+    document.getElementById('btnCoverScan').addEventListener('click', () => startCoverScan(false));
+    document.getElementById('btnCoverRetry').addEventListener('click', () => startCoverScan(true));
+
+    const unsubscribe = CumuScan.onChange(s => { renderStatus(s); renderCoverStatus(false); });
     if (CumuScan.status) renderStatus(CumuScan.status);
+    renderCoverStatus(true);
     CumuScan.poll();
 
     btn.addEventListener('click', async () => {
@@ -314,6 +367,9 @@ const CumuAdmin = (function() {
                   <td class="p-sm text-text-muted">${a.year || '—'}</td>
                   <td class="p-sm text-text-muted">${a.song_count || 0}</td>
                   <td class="p-sm">
+                    ${a.cover
+                      ? `<button class="text-text-muted hover:text-on-surface transition-colors mr-sm" onclick="CumuAdmin.removeAlbumCover('${a.id}')" title="Remove a wrong cover; the album is not searched again automatically">Remove cover</button>`
+                      : `<button class="text-primary hover:underline transition-colors mr-sm" onclick="CumuAdmin.fetchAlbumCover('${a.id}', this)" title="Search the cover now (files, then MusicBrainz / Cover Art Archive)">Find cover</button>`}
                     <button class="text-text-muted hover:text-on-surface transition-colors mr-sm" onclick="navigate('album','edit:${a.id}')">Edit</button>
                     <button class="text-red-400 hover:text-red-300 transition-colors" onclick="CumuAdmin.deleteAlbum('${a.id}')">Delete</button>
                   </td>
@@ -323,6 +379,25 @@ const CumuAdmin = (function() {
           </table>
         </div>
       </section>`;
+  }
+
+  async function fetchAlbumCover(albumId, btn) {
+    if (btn) { btn.disabled = true; btn.textContent = 'Searching…'; }
+    try {
+      const res = await CumuApi.post(`/admin/albums/${albumId}/cover/fetch`, {});
+      if (res.error) throw new Error(res.error);
+      if (!res.ok) alert('No cover found for this album.');
+      switchTab('albums');
+    } catch (err) {
+      alert(err.message || 'Cover search failed');
+      if (btn) { btn.disabled = false; btn.textContent = 'Find cover'; }
+    }
+  }
+
+  async function removeAlbumCover(albumId) {
+    if (!confirm('Remove this cover? The album will not get a cover automatically again (use "Find cover" or "Retry albums without match").')) return;
+    await CumuApi.del(`/admin/albums/${albumId}/cover`);
+    switchTab('albums');
   }
 
   async function deleteAlbum(albumId) {
@@ -666,6 +741,34 @@ const CumuAdmin = (function() {
             </div>
           </div>
 
+          <div class="flex flex-col md:flex-row md:justify-between md:items-start gap-sm p-md rounded-lg hover:bg-surface-bright transition-colors">
+            <div class="flex flex-col gap-xs md:max-w-sm">
+              <span class="font-body-lg text-body-lg text-on-surface">Cover Folder</span>
+              <span class="font-body-sm text-body-sm text-text-muted">Where album covers are stored, separate from the music. Default: <code>${esc(config.coverPathDefault || '')}</code>. Existing covers are moved when this changes.</span>
+            </div>
+            <div class="flex flex-col md:items-end md:text-right gap-xs w-full md:w-80 md:flex-shrink-0">
+              <div id="cfgCoverPathRow" class="flex items-center gap-sm w-full md:w-auto">
+                <input type="text" id="cfgCoverPath" name="coverPath" value="${esc(config.coverPath || '')}" spellcheck="false" autocomplete="off" class="font-body-lg text-body-lg text-on-surface bg-transparent border-0 border-b border-border-subtle focus:border-text-muted focus:ring-0 p-0 md:text-right w-full md:w-72" />
+              </div>
+            </div>
+          </div>
+
+          <label class="flex justify-between items-center gap-md p-md rounded-lg hover:bg-surface-bright transition-colors cursor-pointer">
+            <div class="flex flex-col gap-xs">
+              <span class="font-body-lg text-body-lg text-on-surface">Automatic Album Covers</span>
+              <span class="font-body-sm text-body-sm text-text-muted">Scans and uploads add missing covers (artwork from the files first). Existing covers are never replaced.</span>
+            </div>
+            <input type="checkbox" id="cfgCoverAuto" ${config.coverAutoEnabled ? 'checked' : ''} class="w-5 h-5 rounded border-border-subtle flex-shrink-0" />
+          </label>
+
+          <label class="flex justify-between items-center gap-md p-md rounded-lg hover:bg-surface-bright transition-colors cursor-pointer">
+            <div class="flex flex-col gap-xs">
+              <span class="font-body-lg text-body-lg text-on-surface">Search Covers Online</span>
+              <span class="font-body-sm text-body-sm text-text-muted">Look up covers that are not in the files on MusicBrainz (Cover Art Archive). Off: only artwork from the files is used.</span>
+            </div>
+            <input type="checkbox" id="cfgCoverOnline" ${config.coverOnlineEnabled ? 'checked' : ''} class="w-5 h-5 rounded border-border-subtle flex-shrink-0" />
+          </label>
+
           <div class="flex justify-between items-center p-md rounded-lg hover:bg-surface-bright transition-colors">
             <div class="flex flex-col gap-xs">
               <span class="font-body-lg text-body-lg text-on-surface">Max Storage Limit</span>
@@ -735,14 +838,24 @@ const CumuAdmin = (function() {
       }
     });
 
+    const coverPathCheck = CumuCovers.attachPathCheck(document.getElementById('cfgCoverPath'), document.getElementById('cfgCoverPathRow'));
+
     document.getElementById('adminConfigForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       const body = Object.fromEntries(new FormData(e.target));
       body.maxStorageGb = parseInt(body.maxStorageGb, 10);
+      body.coverAutoEnabled = document.getElementById('cfgCoverAuto').checked;
+      body.coverOnlineEnabled = document.getElementById('cfgCoverOnline').checked;
       const pathResult = await musicPathCheck.run();
       if (pathResult && pathResult.status === 'error') {
         alert('Music folder: ' + pathResult.message + (pathResult.details ? '\n\n' + pathResult.details : ''));
         document.getElementById('cfgMusicPath').focus();
+        return;
+      }
+      const coverResult = await coverPathCheck.run();
+      if (coverResult && coverResult.status === 'error') {
+        alert('Cover folder: ' + coverResult.message + (coverResult.details ? '\n\n' + coverResult.details : ''));
+        document.getElementById('cfgCoverPath').focus();
         return;
       }
       try {
@@ -994,6 +1107,8 @@ const CumuAdmin = (function() {
     switchTab,
     deleteSong,
     deleteAlbum,
+    fetchAlbumCover,
+    removeAlbumCover,
     toggleUserBlock,
     deleteUser,
     deactivateClient,

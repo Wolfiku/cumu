@@ -43,6 +43,7 @@ curl -fsSL https://raw.githubusercontent.com/Wolfiku/cumu/main/scripts/install.s
 [+] Login Brute-Force Protection — failed logins are rate-limited per account and IP
 [+] Multi-Format Audio           — MP3, FLAC, M4A, AAC, WAV, OGG, OPUS, ALAC support
 [+] Embedded Artwork Extraction  — auto-extracts ID3 album covers or upload custom JPG/PNG
+[+] Automatic Album Covers       — missing covers from MusicBrainz / Cover Art Archive, stored once in their own folder
 [+] Audio Seeking & Range Stream — HTTP Range requests for instant scrubbing
 [+] Playlists & Library          — manage playlists, favorite songs, albums, and artists
 [+] Modern Theme Engine          — clean, minimalist Studio Environment design system

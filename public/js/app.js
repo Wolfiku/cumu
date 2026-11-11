@@ -430,6 +430,7 @@ function showToast(msg) {
     CumuApi.connectWs();
     CumuApi.onWsMessage(handleWsMessage);
     CumuScan.start(currentUser);
+    window.CumuCovers?.maybeAnnounce(currentUser);
 
     await syncRestore();
     await loadPlaylists();
