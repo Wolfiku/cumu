@@ -1810,14 +1810,19 @@ function showToast(msg) {
     });
   }
 
-  function bindSongRows() {
+  // contextSongs: list the clicked row belongs to (e.g. album tracks), so the
+  // queue continues with the following songs of that list. May also be a
+  // function (row) => list for pages with several song lists.
+  function bindSongRows(contextSongs) {
     main.querySelectorAll('.song-item').forEach(row => {
       row.addEventListener('click', async () => {
         const songId = row.dataset.songId;
-        if (window._currentPageSongs && window._currentPageSongs.length > 0) {
-          const findIdx = window._currentPageSongs.findIndex(s => s.id === songId);
+        const ctx = typeof contextSongs === 'function' ? contextSongs(row) : contextSongs;
+        const list = ctx || window._currentPageSongs;
+        if (list && list.length > 0) {
+          const findIdx = list.findIndex(s => String(s.id) === String(songId));
           if (findIdx !== -1) {
-            playQueue(window._currentPageSongs, findIdx);
+            playQueue([...list], findIdx);
             return;
           }
         }
@@ -2927,7 +2932,7 @@ function showToast(msg) {
             <h2 class="text-title-md font-title-md font-bold text-text-high-contrast mb-md flex items-center gap-xs">
               <span class="material-symbols-outlined text-primary">trending_up</span> Top songs in ${esc(data.genre || genreName)}
             </h2>
-            <div class="flex flex-col gap-xs rounded-xl border border-border-subtle bg-surface-bright/50 p-sm">
+            <div class="flex flex-col gap-xs rounded-xl border border-border-subtle bg-surface-bright/50 p-sm" data-song-list="top">
               ${topSongs.map((s, idx) => renderSongRow(s, idx + 1)).join('')}
             </div>
           </section>
@@ -3103,7 +3108,7 @@ function showToast(msg) {
       </div>`;
 
       main.innerHTML = html;
-      bindSongRows();
+      bindSongRows(row => row.closest('[data-song-list="top"]') ? topSongs : songs);
     } catch (err) {
       console.error(err);
       renderHome();
@@ -3338,7 +3343,7 @@ function showToast(msg) {
       `;
 
       main.innerHTML = html;
-      bindSongRows();
+      bindSongRows(plSongs);
     } catch (err) {
       console.error(err);
       renderHome();
@@ -3537,7 +3542,7 @@ function showToast(msg) {
       </div>`;
 
     window._currentAlbumSongs = album.songs || [];
-    bindSongRows();
+    bindSongRows(window._currentAlbumSongs);
   }
 
   async function renderEditAlbum(albumId) {
@@ -3656,7 +3661,7 @@ function showToast(msg) {
           </div>
         </div>
       </div>`;
-    bindSongRows();
+    bindSongRows(artist.songs || []);
   }
 
   async function renderPlaylist(playlistId) {
@@ -3793,7 +3798,7 @@ function showToast(msg) {
             </div>`
         }
       </div>`;
-    bindSongRows();
+    bindSongRows(songs);
 
     const trackFilter = document.getElementById('playlistTrackFilterInput');
     if (trackFilter) {
