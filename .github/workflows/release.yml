@@ -249,8 +249,10 @@ jobs:
             cumu_docker_image.tar.gz
             cumu_*.apk
           generate_release_notes: true
-          # Tags like v0.4.0-alpha are marked as pre-release
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          # Alpha tags (v0.x.y-alpha) are published as the latest release too,
+          # so installers and "latest" links pick them up right away
+          prerelease: false
+          make_latest: true
           body_path: release_body.md
           body: |
             ## 🚀 Installation Methods
