@@ -336,6 +336,21 @@ router.get('/search', requireAuth, async (req, res) => {
   res.json({ success: true, podcasts });
 });
 
+// Extract podcast-level info (description, author) from the <channel> part of an RSS feed
+function parseChannelInfo(xml) {
+  const firstItem = xml.search(/<item[\s>]/);
+  const channel = firstItem === -1 ? xml : xml.slice(0, firstItem);
+  const pick = (tag) => {
+    const re = new RegExp('<' + tag + '(?:\\s[^>]*)?>\\s*(?:<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>|([\\s\\S]*?))\\s*</' + tag + '>');
+    const m = channel.match(re);
+    return m ? (m[1] ?? m[2] ?? '').trim() : '';
+  };
+  return {
+    description: pick('description') || pick('itunes:summary'),
+    author: pick('itunes:author')
+  };
+}
+
 router.post('/episodes', requireAuth, async (req, res) => {
   const { feedUrl, id } = req.body;
   if (!feedUrl && !id) return res.status(400).json({ error: 'Missing feedUrl or id' });
@@ -347,9 +362,16 @@ router.post('/episodes', requireAuth, async (req, res) => {
     try {
       const piId = id.replace('pi:', '');
       const url = 'https://api.podcastindex.org/api/1.0/episodes/bypodcastid?id=' + piId + '&max=50';
-      const response = await fetch(url, {
-        headers: getPodcastIndexHeaders(cfg.podcastIndexKey, cfg.podcastIndexSecret)
-      });
+      const infoUrl = 'https://api.podcastindex.org/api/1.0/podcasts/byfeedid?id=' + piId;
+      const [response, infoResponse] = await Promise.all([
+        fetch(url, { headers: getPodcastIndexHeaders(cfg.podcastIndexKey, cfg.podcastIndexSecret) }),
+        fetch(infoUrl, { headers: getPodcastIndexHeaders(cfg.podcastIndexKey, cfg.podcastIndexSecret) }).catch(() => null)
+      ]);
+      let podcast = { description: '', author: '' };
+      if (infoResponse && infoResponse.ok) {
+        const info = await infoResponse.json().catch(() => ({}));
+        if (info.feed) podcast = { description: info.feed.description || '', author: info.feed.author || '' };
+      }
       if (response.ok) {
         const data = await response.json();
         const eps = (data.items || []).map(item => ({
@@ -360,7 +382,7 @@ router.post('/episodes', requireAuth, async (req, res) => {
           duration: item.duration,
           publishedAt: item.datePublished
         }));
-        return res.json({ success: true, episodes: eps });
+        return res.json({ success: true, episodes: eps, podcast });
       }
     } catch (err) {
       console.error('[cumu] PI Episode fetch error:', err);
@@ -400,7 +422,7 @@ router.post('/episodes', requireAuth, async (req, res) => {
       }
     }
     
-    return res.json({ success: true, episodes });
+    return res.json({ success: true, episodes, podcast: parseChannelInfo(xml) });
   } catch (err) {
     console.error('[cumu] RSS parse error:', err);
     return res.status(500).json({ error: 'Failed to fetch or parse RSS feed' });

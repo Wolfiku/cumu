@@ -2702,7 +2702,7 @@ function showToast(msg) {
           </div>
           <div class="flex flex-col gap-xs">
             <h1 class="text-headline-lg-mobile md:text-headline-lg font-headline-lg-mobile md:font-headline-lg text-text-high-contrast font-bold">${esc(title)}</h1>
-            <p class="text-body-lg font-body-lg text-text-muted">Loading podcast...</p>
+            <p id="podcastDescription" class="text-body-lg font-body-lg text-text-muted line-clamp-4">Loading podcast...</p>
           </div>
         </header>
         <section>
@@ -2716,6 +2716,15 @@ function showToast(msg) {
     try {
       const res = await CumuApi.post('/api/podcasts/episodes', { id, feedUrl });
       const container = document.getElementById('podcastEpisodes');
+      const descEl = document.getElementById('podcastDescription');
+      if (descEl) {
+        const info = (res && res.podcast) || {};
+        const desc = stripHtml(info.description || '').trim();
+        const author = (info.author || '').trim();
+        const text = [author, desc].filter(Boolean).join(' · ');
+        if (text) descEl.textContent = text;
+        else descEl.remove();
+      }
       if (res && res.success && res.episodes && res.episodes.length > 0) {
         window.currentPodcastEpisodes = res.episodes.map(ep => ({
           ...ep,
@@ -2746,6 +2755,7 @@ function showToast(msg) {
       }
     } catch (e) {
       console.error(e);
+      document.getElementById('podcastDescription')?.remove();
       document.getElementById('podcastEpisodes').innerHTML = '<div class="text-center text-red-400 py-xl">Error loading episodes.</div>';
     }
   };
