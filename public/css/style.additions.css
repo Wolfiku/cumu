@@ -1202,3 +1202,67 @@ html body span.material-symbols-outlined,
     overflow-wrap: anywhere;
   }
 }
+
+/* ── Horizontal carousel (genre page: artists / albums) ─────────── */
+.h-carousel-wrap { position: relative; }
+.h-carousel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.h-carousel-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.h-carousel-arrow {
+  width: 32px; height: 32px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 9999px;
+  border: 1px solid var(--color-border, var(--hairline, #ddd));
+  background: var(--color-surface, var(--surface-soft, #f0f0f0));
+  color: inherit;
+  cursor: pointer;
+}
+.h-carousel-toggle {
+  font-size: 13px; font-weight: 700;
+  padding: 6px 14px;
+  border-radius: 9999px;
+  border: 0;
+  background: var(--color-surface, var(--surface-soft, #f0f0f0));
+  color: var(--color-primary, inherit);
+  cursor: pointer;
+}
+.h-carousel {
+  display: flex;
+  gap: 16px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  padding-bottom: 4px;
+}
+.h-carousel::-webkit-scrollbar { display: none; }
+.h-carousel.is-auto { scroll-snap-type: none; }
+.h-carousel-item {
+  flex: 0 0 calc((100% - 4 * 16px) / 5);
+  min-width: 0;
+  scroll-snap-align: start;
+}
+@media (max-width: 767px) {
+  .h-carousel-item { flex-basis: calc((100% - 16px) / 2.3); }
+}
+.h-carousel-wrap.is-expanded .h-carousel {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  overflow: visible;
+}
+@media (max-width: 767px) {
+  .h-carousel-wrap.is-expanded .h-carousel { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.h-carousel-wrap.is-expanded [data-clone],
+.h-carousel-wrap.is-expanded [data-carousel-prev],
+.h-carousel-wrap.is-expanded [data-carousel-next] { display: none; }

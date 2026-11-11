@@ -55,27 +55,9 @@
   --ink-deep:             #0d1117;
 }
 
-/* Dark mode variant */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --ink:                #E6EDF3;
-    --ink-muted:          #8B949E;
-    --canvas:             #0d1117;
-    --surface-1:          #161B22;
-    --surface-2:          #21262D;
-    --border:             #30363D;
-    --code-bg:            #161B22;
-
-    --body:               #E6EDF3;
-    --mute:               #8B949E;
-    --hairline:           rgba(48,54,61,0.6);
-    --hairline-strong:    #30363D;
-    --surface-soft:       #161B22;
-    --surface-card:       #21262D;
-    --surface-dark:       #0d1117;
-    --surface-dark-elevated: #161B22;
-  }
-}
+/* Cumu is always shown in light mode: opt out of the browser's dark styling
+   for form controls/scrollbars and of forced/auto dark modes. */
+:root { color-scheme: light only; }
 
 /* ── Base Reset ────────────────────────────────────────── */
 body {
