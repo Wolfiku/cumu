@@ -304,6 +304,22 @@ class ApiClient(private val context: Context, private val sessions: SessionStore
 
     suspend inline fun <reified T> get(path: String): T = json.decodeFromString(getText(path))
 
+    /** The answer saved from the last visit, without asking the server. */
+    suspend fun cachedText(path: String): String? = withContext(Dispatchers.IO) {
+        cacheFile(path)?.takeIf { it.exists() }?.let { runCatching { it.readText() }.getOrNull() }
+    }
+
+    /** Age of the saved answer in ms, or null when nothing is saved. */
+    fun cacheAge(path: String): Long? =
+        cacheFile(path)?.takeIf { it.exists() }?.let { System.currentTimeMillis() - it.lastModified() }
+
+    suspend inline fun <reified T> cached(path: String): T? =
+        cachedText(path)?.let { runCatching { json.decodeFromString<T>(it) }.getOrNull() }
+
+    suspend fun put(path: String, body: JsonObject = JsonObject(emptyMap())): String = withContext(Dispatchers.IO) {
+        online { execute(Request.Builder().url(url(path)).put(body.toString().toRequestBody(jsonType)).build()) }
+    }
+
     suspend fun post(path: String, body: JsonObject = JsonObject(emptyMap())): String = withContext(Dispatchers.IO) {
         online { execute(postJson(url(path), body)) }
     }

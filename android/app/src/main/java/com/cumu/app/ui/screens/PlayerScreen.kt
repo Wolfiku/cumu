@@ -39,6 +39,8 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -60,6 +62,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -159,6 +162,7 @@ fun PlayerScreen() {
                         maxLines = 1, overflow = TextOverflow.Ellipsis,
                     )
                 }
+                FavoriteButton(song.id)
             }
             }
             s.error?.let { Text(it, Modifier.fillMaxWidth().padding(top = 8.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
@@ -223,6 +227,34 @@ fun PlayerScreen() {
 
     if (showQueue) ModalBottomSheet(onDismissRequest = { showQueue = false }) {
         QueueList()
+    }
+}
+
+/** Heart next to the title: favourite songs, shared with the web app. */
+@Composable
+private fun FavoriteButton(songId: String) {
+    val app = CumuApplication.instance
+    val snackbar = com.cumu.app.ui.LocalSnackbar.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val favorites by app.repo.favorites.collectAsState()
+    val favorite = songId in favorites
+    val scale by animateFloatAsState(
+        if (favorite) 1.15f else 1f,
+        spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+        label = "heart",
+    )
+    IconButton(onClick = {
+        scope.launch {
+            try { app.repo.setFavorite(songId, !favorite) }
+            catch (e: Exception) { snackbar(com.cumu.app.ui.components.errorText(e)) }
+        }
+    }) {
+        Icon(
+            if (favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+            if (favorite) "Aus Lieblingssongs entfernen" else "Zu Lieblingssongs",
+            Modifier.size(28.dp).graphicsLayer { scaleX = scale; scaleY = scale },
+            tint = if (favorite) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

@@ -206,6 +206,24 @@ function initDB() {
   const playlistCols = db.prepare('PRAGMA table_info(playlists)').all().map(c => c.name);
   if (!playlistCols.includes('is_generated')) db.exec("ALTER TABLE playlists ADD COLUMN is_generated INTEGER DEFAULT 0");
 
+  // ── Indexes ────────────────────────────────────────────────────────────────
+  // Without these every album/artist count and every history lookup scans the
+  // whole songs / play_history table, which makes home and library slow on
+  // large collections.
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_songs_album      ON songs(album_id);
+    CREATE INDEX IF NOT EXISTS idx_songs_artist     ON songs(artist_id);
+    CREATE INDEX IF NOT EXISTS idx_songs_created    ON songs(created_at);
+    CREATE INDEX IF NOT EXISTS idx_songs_play_count ON songs(play_count);
+    CREATE INDEX IF NOT EXISTS idx_albums_artist    ON albums(artist_id);
+    CREATE INDEX IF NOT EXISTS idx_albums_created   ON albums(created_at);
+    CREATE INDEX IF NOT EXISTS idx_history_user     ON play_history(user_id, played_at);
+    CREATE INDEX IF NOT EXISTS idx_history_song     ON play_history(song_id);
+    CREATE INDEX IF NOT EXISTS idx_playlists_user   ON playlists(user_id);
+    CREATE INDEX IF NOT EXISTS idx_playlist_songs   ON playlist_songs(playlist_id, position);
+    CREATE INDEX IF NOT EXISTS idx_library_user     ON library(user_id);
+  `);
+
   // ── Seed built-in web client ───────────────────────────────────────────────
 
   const existing = db.prepare("SELECT id FROM oauth_clients WHERE client_id = 'cumu-web'").get();

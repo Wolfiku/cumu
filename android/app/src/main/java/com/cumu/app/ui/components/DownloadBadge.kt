@@ -50,6 +50,19 @@ fun rememberDownloadState(songs: List<Song>): DownloadState {
     )
 }
 
+/** Download state of a list known only by its song ids (playlist summaries). */
+@Composable
+fun rememberDownloadStateOfIds(ids: List<String>): DownloadState {
+    val app = CumuApplication.instance
+    val downloaded by app.downloads.songs.collectAsState()
+    val running by app.downloads.progress.collectAsState()
+    return DownloadState(
+        done = ids.count { downloaded.containsKey(it) },
+        total = ids.size,
+        running = ids.count { running.containsKey(it) },
+    )
+}
+
 /** Download state of an album, from its song count (the list endpoint has no song ids). */
 @Composable
 fun rememberAlbumDownloadState(albumId: String, songCount: Int): DownloadState {

@@ -28,6 +28,8 @@ import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.DownloadDone
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Shuffle
@@ -77,16 +79,13 @@ import com.cumu.app.ui.components.SongRow
 import com.cumu.app.ui.components.errorText
 import com.cumu.app.ui.components.formatBytes
 import com.cumu.app.ui.components.rememberAlbumDownloadState
-import com.cumu.app.ui.components.rememberDownloadState
+import com.cumu.app.ui.components.rememberDownloadStateOfIds
 import com.cumu.app.ui.components.rememberLoad
 import com.cumu.app.ui.theme.LocalAccents
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
 private enum class LibFilter(val label: String) { All("Alle"), Playlists("Playlists"), Albums("Alben"), Artists("Künstler") }
 
-private data class LibraryData(val playlists: List<Playlist>, val albums: List<Album>, val artists: List<Artist>)
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
@@ -97,14 +96,8 @@ fun LibraryScreen() {
     val scope = rememberCoroutineScope()
     var filter by rememberSaveable { mutableStateOf(LibFilter.All) }
     var create by remember { mutableStateOf(false) }
-    val loader = rememberLoad {
-        coroutineScope {
-            val p = async { app.repo.playlists() }
-            val a = async { app.repo.albums() }
-            val ar = async { app.repo.artists() }
-            LibraryData(p.await(), a.await(), ar.await().filter { (it.songCount ?: 0) > 0 }.sortedBy { it.name.lowercase() })
-        }
-    }
+    // One light request; the list of the last visit shows while it loads
+    val loader = rememberLoad(cached = { app.repo.cachedLibraryOverview() }) { app.repo.libraryOverview() }
 
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
         Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -119,7 +112,15 @@ fun LibraryScreen() {
 
         PullToRefreshBox(loader.refreshing, loader.reload, Modifier.fillMaxSize()) {
             LoadContent(loader) { data ->
+                val pinned = data.pinned.toSet()
+                // Playlists pinned in the web app come first, like there
+                val playlists = remember(data) { data.playlists.sortedBy { "playlist:${it.id}" !in pinned } }
                 LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+                    if (filter == LibFilter.All || filter == LibFilter.Playlists) {
+                        if (data.showFavorites || data.favorites.isNotEmpty()) {
+                            item(key = "pin-favorites") { FavoritesEntry(Modifier.animateItem()) }
+                        }
+                    }
                     if (filter == LibFilter.All) {
                         item(key = "pin-downloads") { DownloadsEntry(Modifier.animateItem()) }
                         item(key = "pin-songs") {
@@ -130,7 +131,17 @@ fun LibraryScreen() {
                         }
                     }
                     if (filter == LibFilter.All || filter == LibFilter.Playlists) {
-                        items(data.playlists, key = { "p-" + it.id }) { p -> PlaylistEntry(p, Modifier.animateItem()) }
+                        items(playlists, key = { "p-" + it.id }) { p -> PlaylistEntry(p, "playlist:${p.id}" in pinned, Modifier.animateItem()) }
+                    }
+                    if (filter == LibFilter.Albums && data.albums.isNotEmpty()) {
+                        item(key = "albums-hint") {
+                            Text(
+                                "Alben, die du in den letzten 3 Monaten gehört hast",
+                                Modifier.padding(horizontal = 20.dp, vertical = 4.dp).animateItem(),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                     if (filter == LibFilter.All || filter == LibFilter.Albums) {
                         items(data.albums, key = { "a-" + it.id }) { a -> AlbumEntry(a, Modifier.animateItem()) }
@@ -144,7 +155,12 @@ fun LibraryScreen() {
                         LibFilter.Artists -> data.artists.isEmpty()
                         LibFilter.All -> false
                     }
-                    if (empty) item { EmptyBox(Icons.AutoMirrored.Rounded.QueueMusic, "Hier ist noch nichts") }
+                    if (empty) item {
+                        EmptyBox(
+                            if (filter == LibFilter.Albums) Icons.Rounded.Album else Icons.AutoMirrored.Rounded.QueueMusic,
+                            if (filter == LibFilter.Albums) "In den letzten 3 Monaten noch kein Album gehört" else "Hier ist noch nichts",
+                        )
+                    }
                 }
             }
         }
@@ -214,17 +230,32 @@ private fun DownloadsEntry(modifier: Modifier) {
 }
 
 @Composable
-private fun PlaylistEntry(p: Playlist, modifier: Modifier) {
+private fun FavoritesEntry(modifier: Modifier) {
     val app = CumuApplication.instance
     val nav = LocalNav.current
-    val state = rememberDownloadState(p.songs)
+    val favorites by app.repo.favorites.collectAsState()
+    PinnedEntry(
+        "Lieblingssongs",
+        if (favorites.size == 1) "1 Titel" else "${favorites.size} Titel",
+        Icons.Rounded.Favorite, LocalAccents.current.gradients[3], modifier,
+    ) { nav.favorites() }
+}
+
+@Composable
+private fun PlaylistEntry(p: Playlist, pinned: Boolean, modifier: Modifier) {
+    val app = CumuApplication.instance
+    val nav = LocalNav.current
+    val snackbar = LocalSnackbar.current
+    val scope = rememberCoroutineScope()
+    val state = rememberDownloadStateOfIds(p.ids)
     LibraryRow(
         p.name,
-        (if (p.readOnly) "Von cumu · " else "Playlist · ") + if (p.songs.size == 1) "1 Titel" else "${p.songs.size} Titel",
+        (if (pinned) "Angeheftet · " else "") +
+            (if (p.readOnly) "Von cumu · " else "Playlist · ") + if (p.size == 1) "1 Titel" else "${p.size} Titel",
         modifier,
         leading = {
             Box {
-                Cover(p.songs.firstOrNull { it.cover != null }?.cover, 60.dp, corner = 10.dp, seed = p.name, icon = Icons.AutoMirrored.Rounded.QueueMusic)
+                Cover(p.coverOrFirst, 60.dp, corner = 10.dp, seed = p.name, icon = Icons.AutoMirrored.Rounded.QueueMusic)
                 if (p.readOnly) Icon(
                     Icons.Rounded.AutoAwesome, null,
                     Modifier.align(Alignment.BottomEnd).padding(3.dp).size(16.dp).clip(CircleShape)
@@ -233,7 +264,15 @@ private fun PlaylistEntry(p: Playlist, modifier: Modifier) {
                 )
             }
         },
-        trailing = { DownloadBadge(state, onDownload = if (p.songs.isEmpty()) null else ({ app.downloads.download(p.songs) })) },
+        trailing = {
+            DownloadBadge(state, onDownload = if (p.size == 0) null else ({
+                scope.launch {
+                    // Summaries carry only the song ids: load the songs first
+                    try { app.downloads.download(p.songs.ifEmpty { app.repo.playlist(p.id).songs }) }
+                    catch (e: Exception) { snackbar(errorText(e)) }
+                }
+            }))
+        },
         onClick = { nav.playlist(p.id) },
     )
 }
@@ -294,6 +333,38 @@ private fun NewPlaylistDialog(onDismiss: () -> Unit, onCreate: (String) -> Unit)
         confirmButton = { TextButton(enabled = name.isNotBlank(), onClick = { onCreate(name.trim()) }) { Text("Erstellen") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Abbrechen") } },
     )
+}
+
+/** Favourite songs, the same list as in the web app. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun FavoritesScreen() {
+    val app = CumuApplication.instance
+    val snackbar = LocalSnackbar.current
+    val scope = rememberCoroutineScope()
+    val loader = rememberLoad(cached = { app.repo.cachedFavoriteSongs() }) { app.repo.favoriteSongs() }
+    // Hearts removed here disappear from the list at once
+    var removed by remember { mutableStateOf(setOf<String>()) }
+    Scaffold(topBar = { TopAppBar(title = { Text("Lieblingssongs") }, navigationIcon = { BackButton() }) }) { padding ->
+        PullToRefreshBox(loader.refreshing, loader.reload, Modifier.fillMaxSize().padding(padding)) {
+            LoadContent(loader) { all ->
+                // Newest favourites first
+                val songs = all.filter { it.id !in removed }.asReversed()
+                if (songs.isEmpty()) EmptyBox(Icons.Rounded.FavoriteBorder, "Noch keine Lieblingssongs. Tippe im Player auf das Herz.")
+                else LazyColumn(Modifier.fillMaxSize()) {
+                    item { PlayShuffleRow(songs, Modifier.padding(horizontal = 20.dp, vertical = 12.dp)) }
+                    itemsIndexed(songs, key = { _, s -> s.id }) { i, s ->
+                        SongRow(s, songs, i, onRemove = {
+                            scope.launch {
+                                try { app.repo.setFavorite(s.id, false); removed = removed + s.id }
+                                catch (e: Exception) { snackbar(errorText(e)) }
+                            }
+                        }, removeLabel = "Aus Lieblingssongs entfernen")
+                    }
+                }
+            }
+        }
+    }
 }
 
 /** All songs of the server, A–Z. */

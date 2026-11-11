@@ -47,14 +47,23 @@ sealed interface Load<out T> {
 /** [refreshing]: reloading while the previous content stays visible. */
 class Loader<T>(val state: Load<T>, val refreshing: Boolean, val reload: () -> Unit)
 
-/** Loads [block] when shown and again on [Loader.reload]. */
+/**
+ * Loads [block] when shown and again on [Loader.reload].
+ *
+ * With [cached], the answer saved on the last visit is shown right away and
+ * replaced as soon as the server answered, so screens open without waiting.
+ */
 @Composable
-fun <T> rememberLoad(vararg keys: Any?, block: suspend () -> T): Loader<T> {
+fun <T> rememberLoad(vararg keys: Any?, cached: (suspend () -> T?)? = null, block: suspend () -> T): Loader<T> {
     var attempt by remember { mutableIntStateOf(0) }
     var state by remember(*keys) { mutableStateOf<Load<T>>(Load.Loading) }
     var refreshing by remember { mutableStateOf(false) }
     LaunchedEffect(*keys, attempt) {
-        if (state is Load.Ok) refreshing = true else state = Load.Loading
+        var quiet = false // updating saved content: no spinner over it
+        if (state !is Load.Ok && cached != null) {
+            runCatching { cached() }.getOrNull()?.let { state = Load.Ok(it); quiet = true }
+        }
+        if (state is Load.Ok) refreshing = !quiet else state = Load.Loading
         try {
             state = Load.Ok(block())
         } catch (e: kotlinx.coroutines.CancellationException) {
