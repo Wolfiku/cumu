@@ -111,3 +111,72 @@ const GENRE_DESCRIPTIONS = {
   "Krautrock": "Krautrock is an experimental rock movement that pioneered entirely new sonic landscapes during the late sixties and seventies. It heavily utilized early electronic synthesizers, hypnotic repetitive rhythms, and extensive avant-garde studio manipulation. The genre famously discarded traditional blues-based song structures in favor of long, atmospheric, and deeply psychedelic improvisations. Its innovative approaches to sound design laid the crucial groundwork for modern electronic, ambient, and post-rock music worldwide.",
   "Hamburger Schule": "Hamburger Schule is an influential indie rock movement known for its highly intellectual and discursive approach to songwriting. The genre typically combines slightly dissonant, guitar-driven alternative rock with sophisticated, often cynical lyrical observations. Themes frequently explore urban alienation, left-wing political theory, and critical reflections on modern pop culture itself. It fundamentally redefined German alternative music by proving that complex, native-language lyrics could perfectly match a modern indie aesthetic."
 };
+
+/**
+ * One distinct colour per genre for the genre tiles and genre headers.
+ * Genres missing here (custom tags) get a stable colour derived from their name,
+ * so no genre ever falls back to plain grey.
+ */
+const GENRE_COLORS = {
+  // Mainstream
+  "Pop": "#FF4F9A", "Hip-Hop/Rap": "#F2A33A", "R&B": "#8E44AD", "Rock": "#C0392B",
+  "EDM (Electronic Dance Music)": "#00B8D9", "Latin/Reggaeton": "#FF6B35", "Country": "#B7793F",
+  "K-Pop": "#FF7EB6", "Indie Pop": "#F7B2C4", "Trap": "#5B2C83", "House": "#1E88E5",
+  "Afrobeats": "#2EAD5B", "Soul": "#A0522D", "Funk": "#E67E22", "Disco": "#D946EF",
+  "Alternative Rock": "#9A3412", "Pop Rock": "#E8505B", "Dance-Pop": "#EC4899", "Techno": "#0E7490",
+  "Reggae": "#16A34A",
+  // Etabliert
+  "Jazz": "#1F4E79", "Blues": "#2563EB", "Classical/Klassik": "#C9A227", "Metal": "#9F1239",
+  "Heavy Metal": "#B91C1C", "Punk": "#E11D48", "Punk Rock": "#BE123C", "Folk": "#8D6E4A",
+  "Singer-Songwriter": "#D4A373", "Indie Rock": "#B45309", "Grunge": "#6B7F3A", "Ska": "#0D9488",
+  "Gospel": "#F5C542", "Dancehall": "#22C55E", "Drum and Bass": "#0EA5E9", "Dubstep": "#7C3AED",
+  "Trance": "#6366F1", "Synthpop": "#C026D3", "New Wave": "#06B6D4", "Emo": "#7E22CE",
+  // Subgenres
+  "Progressive Rock": "#9D174D", "Progressive Metal": "#4C1D95", "Death Metal": "#7F1D1D",
+  "Black Metal": "#3730A3", "Thrash Metal": "#7C2D12", "Hardcore Punk": "#9F1239",
+  "Hard Rock": "#991B1B", "Soft Rock": "#FDBA74", "Lo-fi": "#A78BFA", "Chillout/Ambient": "#5EEAD4",
+  "Downtempo": "#0F766E", "Deep House": "#1E3A8A", "Tech House": "#0369A1", "Future Bass": "#F472B6",
+  "Hardstyle": "#DC2626", "Garage/UK Garage": "#65A30D", "Grime": "#3F6212",
+  "Afrobeat (klassisch, Fela Kuti)": "#CA8A04", "Bossa Nova": "#14B8A6", "Samba": "#FACC15",
+  // Traditionell
+  "Salsa": "#EF4444", "Cumbia": "#F97316", "Bachata": "#DB2777", "Merengue": "#F59E0B",
+  "Flamenco": "#B91C1C", "Tango": "#881337", "Bluegrass": "#4D7C0F", "Americana": "#9A3412",
+  "Cajun/Zydeco": "#A16207", "Klezmer": "#7E22CE", "Celtic Music": "#15803D", "Fado": "#312E81",
+  "Bollywood/Filmi": "#E11D74", "Bhangra": "#EAB308", "Qawwali": "#0D9488", "Highlife": "#84CC16",
+  "Soca": "#FB923C", "Calypso": "#22D3EE", "Bolero": "#BE185D", "World Music": "#059669",
+  // Nische
+  "Industrial": "#A16207", "Noise": "#BE185D", "Experimental": "#8B5CF6", "Post-Rock": "#2563EB",
+  "Math Rock": "#0891B2", "Shoegaze": "#C4B5FD", "Vaporwave": "#F0ABFC", "Chiptune/8-Bit": "#10B981",
+  "IDM (Intelligent Dance Music)": "#4F46E5", "Musical/Soundtrack": "#B8860B",
+  // Deutsche Musikgenres
+  "Deutschpop": "#F43F5E", "Deutschrap": "#D97706", "Schlager": "#FF5DA2", "Volksmusik": "#2F855A",
+  "Neue Deutsche Welle (NDW)": "#00A3C4", "Neue Deutsche Härte": "#C2410C", "Liedermacher": "#92400E",
+  "Deutschpunk": "#B4232A", "Krautrock": "#6D28D9", "Hamburger Schule": "#1D4ED8"
+};
+
+// Stable colour for any genre name: the curated colour, otherwise a hue
+// derived from the name (same name → same colour on every device).
+function genreColor(name) {
+  const raw = String(name || '').trim();
+  if (!raw) return '#5A5B6B';
+  if (GENRE_COLORS[raw]) return GENRE_COLORS[raw];
+  const lower = raw.toLowerCase();
+  for (const [k, v] of Object.entries(GENRE_COLORS)) {
+    if (k.toLowerCase() === lower) return v;
+  }
+  for (const [k, v] of Object.entries(GENRE_COLORS)) {
+    const kl = k.toLowerCase();
+    if (lower.length > 2 && (kl.split(/[\/ ()]+/).includes(lower) || lower.split(/[\/ ()]+/).includes(kl))) return v;
+  }
+  let h = 0;
+  for (let i = 0; i < lower.length; i++) h = (h * 31 + lower.charCodeAt(i)) >>> 0;
+  const hue = h % 360;
+  const sat = 55 + (h >> 9) % 25;   // 55–79 %
+  const light = 38 + (h >> 17) % 14; // 38–51 %
+  // HSL → hex
+  const s = sat / 100, l = light / 100;
+  const k = n => (n + hue / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  const f = n => Math.round(255 * (l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)))));
+  return '#' + [f(0), f(8), f(4)].map(x => x.toString(16).padStart(2, '0')).join('');
+}

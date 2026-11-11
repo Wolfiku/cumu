@@ -1761,7 +1761,7 @@ function showToast(msg) {
   function renderPodcastCard(p) {
     const cover = p.cover || '';
     return `
-      <div class="podcast-card group cursor-pointer flex flex-col gap-xs transition-transform duration-300 hover:scale-[1.02] active:scale-95"
+      <div class="podcast-card group cursor-pointer flex flex-col gap-xs min-w-0 transition-transform duration-300 hover:scale-[1.02] active:scale-95"
            data-podcast-id="${esc(p.id)}"
            data-podcast-feed="${esc(p.feedUrl || '')}"
            data-podcast-title="${esc(p.title)}"
@@ -1772,27 +1772,6 @@ function showToast(msg) {
         </div>
         <h3 class="text-body-lg font-body-lg text-text-high-contrast font-bold truncate mt-xs">${esc(p.title)}</h3>
         <p class="text-body-sm font-body-sm text-text-muted truncate">${esc(p.artist || '')}</p>
-      </div>
-    `;
-  }
-
-  function renderPodcastRow(p) {
-    const cover = p.cover || '';
-    return `
-      <div class="podcast-card group cursor-pointer flex items-center justify-between p-sm md:p-md bg-surface-bright border border-border-subtle rounded-xl hover:bg-surface-container-low transition-all active:scale-[0.99]"
-           data-podcast-id="${esc(p.id)}"
-           data-podcast-feed="${esc(p.feedUrl || '')}"
-           data-podcast-title="${esc(p.title)}"
-           data-podcast-cover="${esc(cover)}">
-        <div class="flex items-center gap-md min-w-0 flex-1 pr-md">
-          <div class="w-14 h-14 rounded-lg overflow-hidden bg-surface-container-low flex-shrink-0 shadow-sm relative">
-            ${cover ? `<img src="${cover}" class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105" loading="lazy" />` : `<div class="w-full h-full flex items-center justify-center text-text-muted"><span class="material-symbols-outlined text-[28px]">podcasts</span></div>`}
-          </div>
-          <div class="flex flex-col min-w-0 flex-1">
-        <div class="flex items-center gap-xs text-text-muted group-hover:text-text-high-contrast flex-shrink-0">
-          <span class="text-label-caps font-label-caps uppercase bg-surface-container-low px-xs py-xxs rounded text-[11px] font-bold">Podcast</span>
-          <span class="material-symbols-outlined text-[20px]">chevron_right</span>
-        </div>
       </div>
     `;
   }
@@ -1856,56 +1835,13 @@ function showToast(msg) {
           return;
         }
         const res = await CumuApi.get(`/api/search?q=${encodeURIComponent(q)}`);
-        let html = '';
-        if (res.songs?.length) {
-          html += `<h2 class="text-title-md font-title-md font-bold mb-md">Songs</h2><div class="flex flex-col gap-xs mb-xl">${res.songs.map((s, i) => renderSongRow(s, i+1)).join('')}</div>`;
-        }
-        if (res.albums?.length) {
-          html += `<h2 class="text-title-md font-title-md font-bold mb-md">Albums</h2><div class="grid grid-cols-2 md:grid-cols-4 gap-md mb-xl">${res.albums.map(renderAlbumCard).join('')}</div>`;
-        }
-        if (res.artists?.length) {
-          html += `
-            <h2 class="text-title-md font-title-md font-bold mb-md">Artists</h2>
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-md mb-xl">
-              ${res.artists.map(a => `
-                <div class="group cursor-pointer flex flex-col items-center gap-xs p-md rounded-xl bg-surface-container-low hover:bg-surface-bright transition-all" onclick="navigate('artist', '${esc(a.id)}')">
-                  <div class="w-24 h-24 rounded-full overflow-hidden bg-surface-container shadow-sm">
-                    ${a.image ? `<img src="${a.image}" class="w-full h-full object-cover" />` : `<div class="w-full h-full flex items-center justify-center text-text-muted"><span class="material-symbols-outlined text-[36px]">person</span></div>`}
-                  </div>
-                  <span class="text-body-lg font-bold text-text-high-contrast truncate mt-xs">${esc(a.name)}</span>
-                </div>
-              `).join('')}
-            </div>
-          `;
-        }
-        if (res.playlists?.length) {
-          html += `
-            <h2 class="text-title-md font-title-md font-bold mb-md">Playlists</h2>
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-md mb-xl">
-              ${res.playlists.map(pl => `
-                <div class="group cursor-pointer flex flex-col gap-xs p-md rounded-xl bg-surface-container-low hover:bg-surface-bright transition-all" onclick="navigate('playlist', '${esc(pl.id)}')">
-                  <div class="w-full aspect-square rounded-xl overflow-hidden bg-surface-container shadow-sm flex items-center justify-center text-text-muted relative">
-                    ${getPlaylistCoverHtml(pl, 'medium')}
-                  </div>
-                  <span class="text-body-lg font-bold text-text-high-contrast truncate mt-xs">${esc(pl.name)}</span>
-                </div>
-              `).join('')}
-            </div>
-          `;
-        }
-        if (res.podcasts?.length) {
-          html += `
-            <h2 class="text-title-md font-title-md font-bold mb-md">Podcasts</h2>
-            <div class="flex flex-col gap-xs mb-xl">
-              ${res.podcasts.map(renderPodcastRow).join('')}
-            </div>
-          `;
-        }
-        if (!html) html = `<p class="text-body-lg text-text-muted py-xl text-center">No results for "${esc(q)}"</p>`;
-        container.innerHTML = html;
-        bindSongRows();
-        bindPodcastCards(container);
-      }, 300);
+        // A newer query was typed while this one was loading
+        if (document.getElementById('searchInput')?.value !== q) return;
+        window._searchResults = res;
+        window._searchShowAllSongs = false;
+        container.innerHTML = renderSearchResults(res, q);
+        bindSearchResults(container);
+      }, 250);
     });
 
     // Scroll listener: show border on search header only when sticky (scrolled away from top)
@@ -1925,6 +1861,168 @@ function showToast(msg) {
     renderBrowseGrid();
   }
 
+  // ── Search results ────────────────────────────────────────────────────────
+  function renderSearchArtistCard(a) {
+    return `
+      <div class="group cursor-pointer flex flex-col items-center gap-xs p-md rounded-xl bg-surface-container-low hover:bg-surface-bright transition-all min-w-0" onclick="navigate('artist', '${esc(a.id)}')">
+        <div class="w-24 h-24 rounded-full overflow-hidden bg-surface-container shadow-sm flex-shrink-0">
+          ${a.image ? `<img src="${a.image}" class="w-full h-full object-cover" />` : `<div class="w-full h-full flex items-center justify-center text-text-muted"><span class="material-symbols-outlined text-[36px]">person</span></div>`}
+        </div>
+        <span class="w-full text-center text-body-lg font-bold text-text-high-contrast truncate mt-xs">${esc(a.name)}</span>
+        <span class="text-body-sm text-text-muted">Artist</span>
+      </div>`;
+  }
+
+  function renderSearchPlaylistCard(pl) {
+    return `
+      <div class="group cursor-pointer flex flex-col gap-xs p-md rounded-xl bg-surface-container-low hover:bg-surface-bright transition-all min-w-0" onclick="navigate('playlist', '${esc(pl.id)}')">
+        <div class="w-full aspect-square rounded-xl overflow-hidden bg-surface-container shadow-sm flex items-center justify-center text-text-muted relative">
+          ${getPlaylistCoverHtml(pl, 'medium')}
+        </div>
+        <span class="text-body-lg font-bold text-text-high-contrast truncate mt-xs">${esc(pl.name)}</span>
+      </div>`;
+  }
+
+  function renderTopResult(top) {
+    const it = top.item;
+    let cover, title, subtitle, onclick, label, round = false;
+    if (top.type === 'artist') {
+      cover = it.image || null; title = it.name; subtitle = 'Artist'; label = 'Artist'; round = true;
+      onclick = `navigate('artist','${esc(it.id)}')`;
+    } else if (top.type === 'album') {
+      cover = it.cover ? `/stream/cover/${it.cover}` : null; title = it.title;
+      subtitle = it.artist_name || 'Unknown Artist'; label = 'Album';
+      onclick = `navigate('album','${esc(it.id)}')`;
+    } else if (top.type === 'playlist') {
+      cover = null; title = it.name; subtitle = 'Your playlist'; label = 'Playlist';
+      onclick = `navigate('playlist','${esc(it.id)}')`;
+    } else {
+      cover = it.cover ? `/stream/cover/${it.cover}` : null; title = it.title;
+      subtitle = it.artist_name || 'Unknown Artist'; label = 'Song';
+      onclick = '';
+    }
+    const icon = { artist: 'person', album: 'album', playlist: 'queue_music', song: 'music_note' }[top.type];
+    const songAttr = top.type === 'song' ? `song-item" data-song-id="${esc(it.id)}` : '';
+    return `
+      <div class="search-top-result group cursor-pointer relative flex flex-col gap-md p-lg rounded-2xl bg-surface-container-low hover:bg-surface-bright border border-border-subtle transition-all min-w-0 ${songAttr}" ${onclick ? `onclick="${onclick}"` : ''}>
+        <div class="w-28 h-28 md:w-32 md:h-32 ${round ? 'rounded-full' : 'rounded-xl'} overflow-hidden bg-surface-container shadow-lg flex-shrink-0">
+          ${cover ? `<img src="${cover}" class="w-full h-full object-cover" alt="">`
+                  : (top.type === 'playlist' ? getPlaylistCoverHtml(it, 'medium') : `<div class="w-full h-full flex items-center justify-center text-text-muted"><span class="material-symbols-outlined text-[48px]">${icon}</span></div>`)}
+        </div>
+        <div class="min-w-0">
+          <h3 class="text-headline-md font-headline-md font-black text-text-high-contrast truncate">${esc(title)}</h3>
+          <div class="flex items-center gap-sm mt-xs min-w-0">
+            ${top.type !== 'artist' ? `<span class="text-body-md text-text-muted truncate">${esc(subtitle)}</span>` : ''}
+            <span class="flex-shrink-0 text-[11px] font-bold uppercase tracking-wider bg-surface-container px-sm py-[2px] rounded-full text-text-high-contrast">${label}</span>
+          </div>
+        </div>
+        <div class="absolute bottom-lg right-lg w-12 h-12 rounded-full bg-primary text-on-primary flex items-center justify-center shadow-lg opacity-0 group-hover:opacity-100 translate-y-2 group-hover:translate-y-0 transition-all">
+          <span class="material-symbols-outlined text-[28px]" style="font-variation-settings: 'FILL' 1;">${top.type === 'song' ? 'play_arrow' : 'arrow_forward'}</span>
+        </div>
+      </div>`;
+  }
+
+  function renderSearchResults(res, q) {
+    const top = res.topResult;
+    const sections = [];
+    const best = arr => (arr && arr.length ? (arr[0]._score || 0) : -1);
+
+    // Songs: when an artist/album is the best match, its songs come with the top
+    // result and the song list stays short instead of flooding the page.
+    const allSongs = res.songs || [];
+    const songsCollapsed = top && top.type !== 'song' && !window._searchShowAllSongs;
+    const songLimit = songsCollapsed ? 5 : (window._searchShowAllSongs ? allSongs.length : 10);
+
+    let topHtml = '';
+    if (top) {
+      const sideSongs = (top.type === 'artist' && top.songs && top.songs.length) ? top.songs : allSongs.slice(0, 4);
+      window._searchTopSongs = sideSongs;
+      topHtml = `
+        <section class="mb-xl">
+          <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-lg">
+            <div class="min-w-0">
+              <h2 class="text-title-md font-title-md font-bold mb-md">Top result</h2>
+              ${renderTopResult(top)}
+            </div>
+            ${sideSongs.length ? `
+              <div class="min-w-0">
+                <h2 class="text-title-md font-title-md font-bold mb-md">${top.type === 'artist' ? 'Popular songs' : 'Songs'}</h2>
+                <div class="flex flex-col gap-xs search-top-songs">${sideSongs.map(s => renderSongRow(s)).join('')}</div>
+              </div>` : ''}
+          </div>
+        </section>`;
+    }
+
+    const shownTopSongIds = new Set((window._searchTopSongs || []).map(s => s.id));
+    const listSongs = allSongs.filter(s => !shownTopSongIds.has(s.id) && !(top && top.type === 'song' && top.item.id === s.id));
+    if (listSongs.length) {
+      const shown = listSongs.slice(0, songLimit);
+      const more = listSongs.length > shown.length || window._searchShowAllSongs;
+      sections.push({ score: best(listSongs) - (songsCollapsed ? 0.05 : 0), html: `
+        <section class="mb-xl">
+          <div class="flex items-center justify-between mb-md">
+            <h2 class="text-title-md font-title-md font-bold">Songs</h2>
+            ${more ? `<button type="button" class="search-toggle-songs text-body-sm font-bold text-primary bg-surface-container-low/60 hover:bg-surface-container-low px-md py-xs rounded-full">
+              ${window._searchShowAllSongs ? 'Show less' : `Show all (${listSongs.length})`}</button>` : ''}
+          </div>
+          <div class="flex flex-col gap-xs search-song-list">${shown.map((s, i) => renderSongRow(s, i + 1)).join('')}</div>
+        </section>` });
+    }
+    const artists = (res.artists || []).filter(a => !(top && top.type === 'artist' && top.item.id === a.id));
+    if (artists.length) {
+      sections.push({ score: best(artists), html: `
+        <section class="mb-xl"><h2 class="text-title-md font-title-md font-bold mb-md">Artists</h2>
+          <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-md">${artists.map(renderSearchArtistCard).join('')}</div></section>` });
+    }
+    const albums = (res.albums || []).filter(a => !(top && top.type === 'album' && top.item.id === a.id));
+    if (albums.length) {
+      sections.push({ score: best(albums), html: `
+        <section class="mb-xl"><h2 class="text-title-md font-title-md font-bold mb-md">Albums</h2>
+          <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-md">${albums.map(renderAlbumCard).join('')}</div></section>` });
+    }
+    const playlists = (res.playlists || []).filter(p => !(top && top.type === 'playlist' && top.item.id === p.id));
+    if (playlists.length) {
+      sections.push({ score: best(playlists), html: `
+        <section class="mb-xl"><h2 class="text-title-md font-title-md font-bold mb-md">Playlists</h2>
+          <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-md">${playlists.map(renderSearchPlaylistCard).join('')}</div></section>` });
+    }
+    sections.sort((a, b) => b.score - a.score);
+
+    // Podcasts come from an external directory and always go last
+    if (res.podcasts?.length) {
+      sections.push({ html: `
+        <section class="mb-xl"><h2 class="text-title-md font-title-md font-bold mb-md">Podcasts</h2>
+          <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-md">${res.podcasts.slice(0, 10).map(renderPodcastCard).join('')}</div></section>` });
+    }
+
+    const html = topHtml + sections.map(x => x.html).join('');
+    return html || `<p class="text-body-lg text-text-muted py-xl text-center">No results for "${esc(q)}"</p>`;
+  }
+
+  function bindSearchResults(container) {
+    const res = window._searchResults || {};
+    const topSongs = window._searchTopSongs || [];
+    // Clicking a song plays it within the list it is shown in
+    const bindList = (sel, list) => container.querySelectorAll(`${sel} .song-item`).forEach(row => {
+      row.addEventListener('click', () => {
+        const idx = list.findIndex(s => s.id === row.dataset.songId);
+        if (idx !== -1) playQueue(list, idx);
+      });
+    });
+    bindList('.search-top-songs', topSongs);
+    const listSongs = (res.songs || []).filter(s => !topSongs.some(t => t.id === s.id) && !(res.topResult?.type === 'song' && res.topResult.item.id === s.id));
+    bindList('.search-song-list', listSongs);
+    const topSongCard = container.querySelector('.search-top-result.song-item');
+    if (topSongCard) topSongCard.addEventListener('click', () => playSong(res.topResult.item));
+    container.querySelector('.search-toggle-songs')?.addEventListener('click', () => {
+      window._searchShowAllSongs = !window._searchShowAllSongs;
+      const q = document.getElementById('searchInput')?.value || '';
+      container.innerHTML = renderSearchResults(res, q);
+      bindSearchResults(container);
+    });
+    bindPodcastCards(container);
+  }
+
   function getGenreStyle(genreName) {
     const normName = (genreName || '').toLowerCase().trim();
     const config = window._genreConfig || {};
@@ -1941,7 +2039,7 @@ function showToast(msg) {
       }
     }
 
-    const hex = info?.color || '#5A5B6B';
+    const hex = info?.color || (typeof genreColor === 'function' ? genreColor(genreName) : '#5A5B6B');
     let isLight = false;
     try {
       const cleanHex = hex.replace('#', '');
@@ -1968,6 +2066,7 @@ function showToast(msg) {
     if (!window._discoverSectionState) window._discoverSectionState = { showAllNew: false, showAllRecent: false };
     if (section === 'newSongs') window._discoverSectionState.showAllNew = !window._discoverSectionState.showAllNew;
     if (section === 'recentlyPlayed') window._discoverSectionState.showAllRecent = !window._discoverSectionState.showAllRecent;
+    if (section === 'topAlbums') window._discoverSectionState.showAllAlbums = !window._discoverSectionState.showAllAlbums;
     renderBrowseGrid();
   };
 
@@ -2047,9 +2146,37 @@ function showToast(msg) {
       `;
     }
 
+    // 3. Meistgehörte Alben (letzte 3 Monate) – bei zu wenig Hörverlauf neue Alben
+    if (homeData.topAlbums && homeData.topAlbums.length > 0) {
+      const isTop = homeData.topAlbumsMode === 'mostPlayed';
+      const showAll = discoverState.showAllAlbums;
+      const displayAlbums = showAll ? homeData.topAlbums : homeData.topAlbums.slice(0, 5);
+      const hasMore = homeData.topAlbums.length > 5;
+      html += `
+        <section class="mb-xl">
+          <div class="flex items-center justify-between mb-md gap-md">
+            <div class="min-w-0">
+              <h2 class="text-headline-lg-mobile md:text-headline-lg font-headline-lg font-bold text-text-high-contrast flex items-center gap-xs">
+                <span class="material-symbols-outlined text-primary text-[28px]">${isTop ? 'trending_up' : 'new_releases'}</span> ${isTop ? 'Most Played Albums' : 'Recently Added Albums'}
+              </h2>
+              <p class="text-body-sm text-text-muted mt-xs">${isTop ? 'Your favourite albums of the last 3 months' : 'Listen to more music to see your most played albums here'}</p>
+            </div>
+            ${hasMore ? `
+              <button onclick="toggleDiscoverSection('topAlbums')" class="flex-shrink-0 text-body-sm font-bold text-primary hover:text-interactive-hover flex items-center gap-xs cursor-pointer transition-colors bg-surface-container-low/60 hover:bg-surface-container-low px-md py-xs rounded-full">
+                ${showAll ? 'Show less <span class="material-symbols-outlined text-[18px]">expand_less</span>' : 'Show more <span class="material-symbols-outlined text-[18px]">expand_more</span>'}
+              </button>
+            ` : ''}
+          </div>
+          <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-md">
+            ${displayAlbums.map(renderAlbumCard).join('')}
+          </div>
+        </section>
+      `;
+    }
+
     window._currentPageSongs = allPageSongs;
 
-    // 3. Genres & Stöbern (Exakte 100 Hex-Farben & Universaldesign OHNE Icons)
+    // 4. Genres & Stöbern (Exakte 100 Hex-Farben & Universaldesign OHNE Icons)
     if (stats && stats.topGenres && stats.topGenres.length > 0) {
       html += `
         <section class="mb-xl">
@@ -2136,7 +2263,7 @@ function showToast(msg) {
   function renderSongCard(s) {
     const coverSrc = s.cover ? `/stream/cover/${s.cover}` : null;
     return `
-      <div class="group relative w-full bg-surface-bright border border-border-subtle p-md rounded-xl cursor-pointer hover:bg-surface-container-low transition-all duration-200 shadow-sm hover:shadow-md song-item" data-song-id="${s.id}">
+      <div class="group relative w-full min-w-0 bg-surface-bright border border-border-subtle p-md rounded-xl cursor-pointer hover:bg-surface-container-low transition-all duration-200 shadow-sm hover:shadow-md song-item" data-song-id="${s.id}">
         <div class="w-full aspect-square bg-surface-container rounded-lg overflow-hidden mb-md flex items-center justify-center relative">
           ${coverSrc
             ? `<img src="${coverSrc}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" alt="${esc(s.title)}">`
@@ -2162,7 +2289,7 @@ function showToast(msg) {
   function renderAlbumCard(a) {
     const coverSrc = a.cover ? `/stream/cover/${a.cover}` : null;
     return `
-      <div class="bg-surface-bright border border-border-subtle p-md rounded-lg cursor-pointer hover:bg-surface-container-low transition-all" onclick="navigate('album','${a.id}')">
+      <div class="bg-surface-bright border border-border-subtle p-md rounded-xl cursor-pointer hover:bg-surface-container-low transition-all min-w-0 shadow-sm hover:shadow-md" onclick="navigate('album','${a.id}')">
         <div class="w-full aspect-square bg-surface-container rounded-lg overflow-hidden mb-md flex items-center justify-center">
           ${coverSrc
             ? `<img src="${coverSrc}" class="w-full h-full object-cover" alt="${esc(a.title)}">`

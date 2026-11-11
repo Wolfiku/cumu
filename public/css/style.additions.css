@@ -1181,3 +1181,24 @@ html body span.material-symbols-outlined,
   padding-left: 44px !important;
 }
 
+
+/* ── Tile text: never wider than its tile ───────────────────────────────────
+   Grid items default to min-width:auto, so one long title stretched the whole
+   column and pushed text past the tile. Titles, artist names and other tile
+   texts end with "…" on one line; on phones they get two lines first. */
+#mainContent .grid > * { min-width: 0; }
+#mainContent .grid > * .truncate { max-width: 100%; }
+.tile-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+
+@media (max-width: 767px) {
+  #mainContent .grid > * .truncate:not(.flex),
+  .tile-text {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    white-space: normal;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+  }
+}

@@ -14,6 +14,7 @@ const { cleanupOrphanedAlbums, resolveEditedSongAlbum } = require('../services/a
 const { resolveSongAlias } = require('../services/dedupe');
 const { requireAuth } = require('../middleware/auth');
 const { fetchPodcastSearchResults } = require('./podcasts');
+const { searchLibrary } = require('../services/search');
 
 const router = express.Router();
 
@@ -64,7 +65,35 @@ router.get('/home', requireAuth, (req, res) => {
     ORDER BY s.created_at DESC LIMIT 10
   `).all();
 
-  res.json({ recentlyPlayed, mostPlayed, newSongs });
+  // Albums this user listened to most in the last 3 months. With too little
+  // listening history the section shows the newest albums instead.
+  const since = Math.floor(Date.now() / 1000) - 90 * 24 * 3600;
+  let topAlbums = db.prepare(`
+    SELECT al.*, ar.name as artist_name, COUNT(*) as plays
+    FROM play_history ph
+    JOIN songs s ON s.id = ph.song_id
+    JOIN albums al ON al.id = s.album_id
+    LEFT JOIN artists ar ON ar.id = al.artist_id
+    WHERE ph.user_id = ? AND ph.played_at >= ?
+    GROUP BY al.id
+    HAVING plays >= 3
+    ORDER BY plays DESC, MAX(ph.played_at) DESC
+    LIMIT 10
+  `).all(userId, since);
+  let topAlbumsMode = 'mostPlayed';
+  if (topAlbums.length < 3) {
+    topAlbumsMode = 'new';
+    topAlbums = db.prepare(`
+      SELECT al.*, ar.name as artist_name
+      FROM albums al
+      LEFT JOIN artists ar ON ar.id = al.artist_id
+      WHERE EXISTS (SELECT 1 FROM songs s WHERE s.album_id = al.id)
+      ORDER BY al.created_at DESC
+      LIMIT 10
+    `).all();
+  }
+
+  res.json({ recentlyPlayed, mostPlayed, newSongs, topAlbums, topAlbumsMode });
 });
 // ── Genre Stats ────────────────────────────────────────────────────────────
 router.get('/genres/stats', requireAuth, (req, res) => {
@@ -159,14 +188,10 @@ router.get('/search', requireAuth, async (req, res) => {
   const { q } = req.query;
   if (!q) return res.json({ songs: [], albums: [], artists: [], playlists: [], podcasts: [] });
   const db = getDB();
-  const like = `%${q}%`;
   const userId = req.user.id;
 
-  const songs     = db.prepare(`SELECT s.*, al.title as album_title, al.cover, ar.name as artist_name FROM songs s LEFT JOIN albums al ON al.id=s.album_id LEFT JOIN artists ar ON ar.id=s.artist_id WHERE s.title LIKE ? OR ar.name LIKE ? OR al.title LIKE ? LIMIT 20`).all(like, like, like);
-  const albums    = db.prepare(`SELECT al.*, ar.name as artist_name FROM albums al LEFT JOIN artists ar ON ar.id=al.artist_id WHERE al.title LIKE ? OR ar.name LIKE ? LIMIT 10`).all(like, like);
-  const artists   = db.prepare(`SELECT * FROM artists WHERE name LIKE ? LIMIT 10`).all(like);
-  const rawPlaylists = db.prepare(`SELECT * FROM playlists WHERE user_id=? AND name LIKE ? LIMIT 10`).all(userId, like);
-  const playlists = rawPlaylists.map(pl => {
+  const { topResult, songs, albums, artists, playlists: rankedPlaylists } = searchLibrary(db, q, userId);
+  const playlists = rankedPlaylists.map(pl => {
     const pSongs = db.prepare(`
       SELECT s.*, al.title as album_title, al.cover, ar.name as artist_name
       FROM playlist_songs ps
@@ -179,6 +204,9 @@ router.get('/search', requireAuth, async (req, res) => {
     const is_generated = (pl.is_generated === 1 || (pl.description && pl.description.includes('[dynamic:'))) ? 1 : 0;
     return { ...pl, is_generated, songs: pSongs };
   });
+  if (topResult && topResult.type === 'playlist') {
+    topResult.item = playlists.find(p => p.id === topResult.item.id) || topResult.item;
+  }
 
   let podcasts = [];
   const userState = db.prepare('SELECT extra_settings FROM user_state WHERE user_id = ?').get(userId);
@@ -196,7 +224,7 @@ router.get('/search', requireAuth, async (req, res) => {
     podcasts = await fetchPodcastSearchResults(q);
   }
 
-  res.json({ songs, albums, artists, playlists, podcasts });
+  res.json({ topResult, songs, albums, artists, playlists, podcasts });
 });
 
 // ── Songs ──────────────────────────────────────────────────────────────────
