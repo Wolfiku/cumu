@@ -84,6 +84,7 @@ class Nav(private val c: NavHostController) {
     fun settings() = c.navigate("settings") { launchSingleTop = true }
     fun downloads() = c.navigate("downloads") { launchSingleTop = true }
     fun songs() = c.navigate("songs") { launchSingleTop = true }
+    fun favorites() = c.navigate("favorites") { launchSingleTop = true }
     fun search() = c.navigate("search") {
         popUpTo(c.graph.findStartDestination().id) { saveState = true }
         launchSingleTop = true
@@ -225,6 +226,7 @@ fun CumuAppUi() {
                     composable("library") { LibraryScreen() }
                     composable("downloads") { DownloadsScreen() }
                     composable("songs") { AllSongsScreen() }
+                    composable("favorites") { com.cumu.app.ui.screens.FavoritesScreen() }
                     composable("settings") { SettingsScreen() }
                     composable("player") { PlayerScreen() }
                     composable("album/{id}") { AlbumScreen(it.arguments?.getString("id")!!) }

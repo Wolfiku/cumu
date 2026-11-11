@@ -58,9 +58,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.cumu.app.CumuApplication
 import com.cumu.app.data.Album
-import com.cumu.app.data.GenreStats
-import com.cumu.app.data.HomeData
-import com.cumu.app.data.Playlist
 import com.cumu.app.data.Song
 import com.cumu.app.ui.LocalNav
 import com.cumu.app.ui.LocalSnackbar
@@ -80,19 +77,10 @@ import com.cumu.app.ui.components.bounceClick
 import com.cumu.app.ui.components.errorText
 import com.cumu.app.ui.components.rememberLoad
 import com.cumu.app.ui.theme.LocalAccents
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import java.util.Calendar
 
-/** Everything the home screen shows, loaded in parallel. */
-private data class HomeFeed(
-    val home: HomeData,
-    val albums: List<Album>,
-    val playlists: List<Playlist>,
-    val genres: GenreStats,
-    val artists: List<com.cumu.app.data.Artist>,
-)
+import com.cumu.app.data.HomeFeed
 
 private fun greeting(): String = when (Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) {
     in 5..10 -> "Guten Morgen"
@@ -105,17 +93,8 @@ private fun greeting(): String = when (Calendar.getInstance().get(Calendar.HOUR_
 @Composable
 fun HomeScreen() {
     val app = CumuApplication.instance
-    val loader = rememberLoad {
-        coroutineScope {
-            val home = async { app.repo.home() }
-            // Extras are optional: an older server or an error only hides their section
-            val albums = async { runCatching { app.repo.albums() }.getOrDefault(emptyList()) }
-            val playlists = async { runCatching { app.repo.playlists() }.getOrDefault(emptyList()) }
-            val genres = async { runCatching { app.repo.genreStats() }.getOrDefault(GenreStats()) }
-            val artists = async { runCatching { app.repo.artists() }.getOrDefault(emptyList()).filter { (it.songCount ?: 0) > 0 } }
-            HomeFeed(home.await(), albums.await(), playlists.await(), genres.await(), artists.await())
-        }
-    }
+    // Shows the start page of the last visit at once, then updates it
+    val loader = rememberLoad(cached = { app.repo.cachedHomeFeed() }) { app.repo.homeFeed() }
 
     PullToRefreshBox(loader.refreshing, loader.reload, Modifier.fillMaxSize()) {
         when (val s = loader.state) {
@@ -181,7 +160,8 @@ private fun HomeContent(feed: HomeFeed) {
     // "Recommended new songs": new on the server and not heard yet
     val freshSongs = home.newSongs.filter { it.id !in recentIds }.ifEmpty { home.newSongs }
     val newestAlbum = feed.albums.firstOrNull()
-    val cumuLists = feed.playlists.filter { it.readOnly && it.songs.isNotEmpty() }
+    val cumuLists = feed.playlists.filter { it.readOnly && it.size > 0 }
+    val topAlbums = home.topAlbums.takeIf { home.topAlbumsMode == "mostPlayed" }.orEmpty()
 
     fun playMix(load: suspend () -> List<Song>, empty: String) {
         scope.launch {
@@ -261,6 +241,11 @@ private fun HomeContent(feed: HomeFeed) {
             }
         }
 
+        if (topAlbums.isNotEmpty()) {
+            item { Reveal(shown, 4) { SectionTitle("Deine Top-Alben", subtitle = "Am meisten gehört · 3 Monate") } }
+            item { Reveal(shown, 4) { AlbumCarousel(topAlbums) { nav.album(it.id) } } }
+        }
+
         if (feed.artists.isNotEmpty()) {
             // Artists with pictures first, then the ones with the most songs
             val artists = feed.artists.sortedWith(compareBy({ it.image == null }, { -(it.songCount ?: 0) })).take(12)
@@ -279,7 +264,7 @@ private fun HomeContent(feed: HomeFeed) {
                 Reveal(shown, 5) {
                     LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                         items(cumuLists, key = { it.id }) { p ->
-                            CoverCard(p.name, "${p.songs.size} Titel", p.songs.firstOrNull { it.cover != null }?.cover, onClick = { nav.playlist(p.id) })
+                            CoverCard(p.name, "${p.size} Titel", p.coverOrFirst, onClick = { nav.playlist(p.id) })
                         }
                     }
                 }
@@ -305,8 +290,8 @@ private fun HomeContent(feed: HomeFeed) {
 private fun Reveal(shown: Boolean, order: Int, content: @Composable () -> Unit) {
     AnimatedVisibility(
         visible = shown,
-        enter = fadeIn(tween(400, delayMillis = order * 70)) +
-            slideInVertically(tween(450, delayMillis = order * 70)) { it / 5 },
+        enter = fadeIn(tween(250, delayMillis = order * 35)) +
+            slideInVertically(tween(300, delayMillis = order * 35)) { it / 6 },
     ) { content() }
 }
 

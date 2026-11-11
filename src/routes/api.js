@@ -40,13 +40,15 @@ router.get('/home', requireAuth, (req, res) => {
 
   const recentlyPlayed = db.prepare(`
     SELECT s.*, al.title as album_title, al.cover, ar.name as artist_name
-    FROM play_history ph
-    JOIN songs s ON s.id = ph.song_id
+    FROM (
+      SELECT song_id, MAX(played_at) AS last_played
+      FROM play_history WHERE user_id = ?
+      GROUP BY song_id ORDER BY last_played DESC LIMIT 10
+    ) r
+    JOIN songs s ON s.id = r.song_id
     LEFT JOIN albums al ON al.id = s.album_id
     LEFT JOIN artists ar ON ar.id = s.artist_id
-    WHERE ph.user_id = ?
-    GROUP BY s.id
-    ORDER BY MAX(ph.played_at) DESC LIMIT 10
+    ORDER BY r.last_played DESC
   `).all(userId);
 
   const mostPlayed = db.prepare(`
@@ -93,13 +95,109 @@ router.get('/home', requireAuth, (req, res) => {
     `).all();
   }
 
-  res.json({ recentlyPlayed, mostPlayed, newSongs, topAlbums, topAlbumsMode });
-});
-// ── Genre Stats ────────────────────────────────────────────────────────────
-router.get('/genres/stats', requireAuth, (req, res) => {
-  const db = getDB();
-  const userId = req.user.id;
+  // Everything the app's start page needs in one request (older app
+  // versions ignore these fields and fetch the full lists themselves)
+  const newAlbums = db.prepare(`
+    SELECT al.*, ar.name as artist_name,
+      (SELECT COUNT(*) FROM songs s WHERE s.album_id = al.id) as song_count
+    FROM albums al
+    LEFT JOIN artists ar ON ar.id = al.artist_id
+    WHERE EXISTS (SELECT 1 FROM songs s WHERE s.album_id = al.id)
+    ORDER BY al.created_at DESC
+    LIMIT 13
+  `).all();
 
+  // Artists with a picture first, then the ones with the most songs
+  const artists = db.prepare(`
+    SELECT ar.*, c.song_count,
+      (SELECT COUNT(*) FROM albums al WHERE al.artist_id = ar.id) as album_count
+    FROM artists ar
+    JOIN (SELECT artist_id, COUNT(*) AS song_count FROM songs WHERE artist_id IS NOT NULL GROUP BY artist_id) c
+      ON c.artist_id = ar.id
+    ORDER BY (ar.image IS NULL OR ar.image = '') ASC, c.song_count DESC
+    LIMIT 12
+  `).all();
+
+  const cumuPlaylists = playlistSummaries(db, userId).filter(p => p.is_generated === 1 && p.song_count > 0);
+
+  res.json({
+    recentlyPlayed, mostPlayed, newSongs, topAlbums, topAlbumsMode,
+    newAlbums, artists, cumuPlaylists, genres: genreStats(db, userId),
+  });
+});
+
+// ── Shared helpers ─────────────────────────────────────────────────────────
+
+function isGeneratedPlaylist(pl) {
+  return (pl.is_generated === 1 || (pl.description && pl.description.includes('[dynamic:'))) ? 1 : 0;
+}
+
+/**
+ * The user's playlists without the full song rows: count, cover and the song
+ * ids (enough for lists and download badges). Two queries in total.
+ */
+function playlistSummaries(db, userId) {
+  const rows = db.prepare('SELECT * FROM playlists WHERE user_id = ? ORDER BY created_at DESC').all(userId);
+  if (!rows.length) return [];
+  const entries = db.prepare(`
+    SELECT ps.playlist_id, ps.song_id, COALESCE(s.cover, al.cover) AS cover
+    FROM playlists p
+    JOIN playlist_songs ps ON ps.playlist_id = p.id
+    JOIN songs s ON s.id = ps.song_id
+    LEFT JOIN albums al ON al.id = s.album_id
+    WHERE p.user_id = ?
+    ORDER BY ps.playlist_id, ps.position ASC
+  `).all(userId);
+  const byList = new Map();
+  for (const e of entries) {
+    let l = byList.get(e.playlist_id);
+    if (!l) byList.set(e.playlist_id, l = { ids: [], cover: null });
+    l.ids.push(e.song_id);
+    if (!l.cover && e.cover) l.cover = e.cover;
+  }
+  return rows.map(pl => {
+    const l = byList.get(pl.id) || { ids: [], cover: null };
+    return {
+      ...pl,
+      is_generated: isGeneratedPlaylist(pl),
+      song_count: l.ids.length,
+      song_ids: l.ids,
+      cover: pl.cover || l.cover,
+    };
+  });
+}
+
+function readExtraSettings(db, userId) {
+  const row = db.prepare('SELECT extra_settings FROM user_state WHERE user_id = ?').get(userId);
+  try { return JSON.parse(row?.extra_settings || '{}') || {}; } catch { return {}; }
+}
+
+/** Favourite song ids, shared with the web app through the synced settings. */
+function readFavorites(db, userId) {
+  const fav = readExtraSettings(db, userId).favorites;
+  return Array.isArray(fav) ? fav.filter(id => typeof id === 'string') : [];
+}
+
+function writeFavorites(db, userId, ids) {
+  const exists = db.prepare('SELECT 1 FROM user_state WHERE user_id = ?').get(userId);
+  if (!exists) {
+    db.prepare(`INSERT INTO user_state (user_id, volume, last_song_id, last_position, theme, extra_settings, version, updated_at)
+      VALUES (?, 1.0, NULL, 0, 'standard', '{}', 0, unixepoch())`).run(userId);
+  }
+  const extra = { ...readExtraSettings(db, userId), favorites: ids };
+  db.prepare('UPDATE user_state SET extra_settings = ?, version = version + 1, updated_at = unixepoch() WHERE user_id = ?')
+    .run(JSON.stringify(extra), userId);
+  const st = db.prepare('SELECT * FROM user_state WHERE user_id = ?').get(userId);
+  // Tell the open web tabs, so their favourites update right away
+  try {
+    require('../websocket').pushStateUpdate(userId, {
+      volume: st.volume, lastSongId: st.last_song_id, lastPosition: st.last_position,
+      theme: 'standard', extraSettings: extra, version: st.version,
+    });
+  } catch (_) {}
+}
+
+function genreStats(db, userId) {
   const topGenresRaw = db.prepare(`
     SELECT genre, COUNT(*) as count 
     FROM songs 
@@ -110,16 +208,17 @@ router.get('/genres/stats', requireAuth, (req, res) => {
   `).all();
 
   // Enrich each genre with the top artist name
+  const topArtistStmt = db.prepare(`
+    SELECT ar.name, COUNT(*) as cnt
+    FROM songs s
+    LEFT JOIN artists ar ON ar.id = s.artist_id
+    WHERE LOWER(TRIM(s.genre)) = LOWER(?) AND ar.name IS NOT NULL AND ar.name != ''
+    GROUP BY ar.name
+    ORDER BY cnt DESC
+    LIMIT 1
+  `);
   const topGenres = topGenresRaw.map(g => {
-    const topArtistRow = db.prepare(`
-      SELECT ar.name, COUNT(*) as cnt
-      FROM songs s
-      LEFT JOIN artists ar ON ar.id = s.artist_id
-      WHERE LOWER(TRIM(s.genre)) = LOWER(?) AND ar.name IS NOT NULL AND ar.name != ''
-      GROUP BY ar.name
-      ORDER BY cnt DESC
-      LIMIT 1
-    `).get(g.genre);
+    const topArtistRow = topArtistStmt.get(g.genre);
     return { ...g, topArtist: topArtistRow ? topArtistRow.name : null };
   });
 
@@ -133,7 +232,11 @@ router.get('/genres/stats', requireAuth, (req, res) => {
     LIMIT 1
   `).get(userId);
 
-  res.json({ topGenres, mostPlayedGenre: mostPlayed ? mostPlayed.genre : null });
+  return { topGenres, mostPlayedGenre: mostPlayed ? mostPlayed.genre : null };
+}
+// ── Genre Stats ────────────────────────────────────────────────────────────
+router.get('/genres/stats', requireAuth, (req, res) => {
+  res.json(genreStats(getDB(), req.user.id));
 });
 
 // ── Genre Details ───────────────────────────────────────────────────────────
@@ -351,7 +454,7 @@ router.put('/albums/:id', requireAuth, (req, res) => {
 // ── Artists ────────────────────────────────────────────────────────────────
 router.get('/artists', requireAuth, (req, res) => {
   const db = getDB();
-  const artists = db.prepare(`SELECT ar.*, COUNT(DISTINCT s.id) as song_count, COUNT(DISTINCT al.id) as album_count FROM artists ar LEFT JOIN songs s ON s.artist_id=ar.id LEFT JOIN albums al ON al.artist_id=ar.id GROUP BY ar.id ORDER BY ar.name`).all();
+  const artists = db.prepare(`SELECT ar.*, (SELECT COUNT(*) FROM songs s WHERE s.artist_id=ar.id) as song_count, (SELECT COUNT(*) FROM albums al WHERE al.artist_id=ar.id) as album_count FROM artists ar ORDER BY ar.name`).all();
   res.json(artists);
 });
 
@@ -495,6 +598,99 @@ router.post('/library/song', requireAuth, (req, res) => {
     db.prepare('INSERT OR IGNORE INTO library (user_id, song_id) VALUES (?, ?)').run(req.user.id, songId);
     res.json({ success: true });
   } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// ── Library overview (app) ─────────────────────────────────────────────────
+// One light request for the app's library tab: every playlist (as summary),
+// only the albums heard in the last 3 months, the artists with songs, the
+// favourites and the items pinned in the web app.
+router.get('/library/overview', requireAuth, (req, res) => {
+  const db = getDB();
+  const userId = req.user.id;
+  const since = Math.floor(Date.now() / 1000) - 90 * 24 * 3600;
+
+  const albums = db.prepare(`
+    SELECT al.*, ar.name as artist_name, r.last_played, r.plays,
+      (SELECT COUNT(*) FROM songs x WHERE x.album_id = al.id) as song_count
+    FROM (
+      SELECT s.album_id, MAX(ph.played_at) AS last_played, COUNT(*) AS plays
+      FROM play_history ph
+      JOIN songs s ON s.id = ph.song_id
+      WHERE ph.user_id = ? AND ph.played_at >= ? AND s.album_id IS NOT NULL
+      GROUP BY s.album_id
+    ) r
+    JOIN albums al ON al.id = r.album_id
+    LEFT JOIN artists ar ON ar.id = al.artist_id
+    ORDER BY r.last_played DESC
+  `).all(userId, since);
+
+  const artists = db.prepare(`
+    SELECT ar.*, c.song_count,
+      (SELECT COUNT(*) FROM albums al WHERE al.artist_id = ar.id) as album_count
+    FROM artists ar
+    JOIN (SELECT artist_id, COUNT(*) AS song_count FROM songs WHERE artist_id IS NOT NULL GROUP BY artist_id) c
+      ON c.artist_id = ar.id
+    ORDER BY ar.name COLLATE NOCASE
+  `).all();
+
+  const extra = readExtraSettings(db, userId);
+  const pinned = Array.isArray(extra.pinnedItems) ? extra.pinnedItems.filter(k => typeof k === 'string') : [];
+  res.json({
+    playlists: playlistSummaries(db, userId),
+    albums,
+    artists,
+    favorites: readFavorites(db, userId),
+    showFavorites: extra.showFavorites !== false,
+    pinned,
+  });
+});
+
+// ── Favourites ─────────────────────────────────────────────────────────────
+// Stored in the synced user settings (extra_settings.favorites), the same
+// place the web app keeps them, so both show the same list.
+function favoriteSongs(db, ids) {
+  const stmt = db.prepare(`SELECT s.*, al.title as album_title, al.cover, ar.name as artist_name FROM songs s LEFT JOIN albums al ON al.id=s.album_id LEFT JOIN artists ar ON ar.id=s.artist_id WHERE s.id=?`);
+  const seen = new Set();
+  const songs = [];
+  for (const id of ids) {
+    let song = stmt.get(id);
+    if (!song) {
+      const alias = resolveSongAlias(db, id);
+      if (alias) song = stmt.get(alias);
+    }
+    if (song && !seen.has(song.id)) { seen.add(song.id); songs.push(song); }
+  }
+  return songs;
+}
+
+router.get('/favorites', requireAuth, (req, res) => {
+  const db = getDB();
+  let ids = readFavorites(db, req.user.id);
+  const songs = favoriteSongs(db, ids);
+  // Merged duplicates: store the id of the kept song. Ids that are no song
+  // (e.g. podcast episodes favourited in the web app) stay untouched.
+  const exists = db.prepare('SELECT 1 FROM songs WHERE id = ?');
+  const current = [...new Set(ids.map(id => (exists.get(id) ? id : resolveSongAlias(db, id) || id)))];
+  if (current.length !== ids.length || current.some((id, i) => id !== ids[i])) {
+    writeFavorites(db, req.user.id, current);
+    ids = current;
+  }
+  res.json({ ids, songs });
+});
+
+router.put('/favorites/:songId', requireAuth, (req, res) => {
+  const db = getDB();
+  const ids = readFavorites(db, req.user.id).filter(id => id !== req.params.songId);
+  ids.push(req.params.songId);
+  writeFavorites(db, req.user.id, ids);
+  res.json({ success: true, ids });
+});
+
+router.delete('/favorites/:songId', requireAuth, (req, res) => {
+  const db = getDB();
+  const ids = readFavorites(db, req.user.id).filter(id => id !== req.params.songId);
+  writeFavorites(db, req.user.id, ids);
+  res.json({ success: true, ids });
 });
 
 // ── Upload Endpoint ─────────────────────────────────────────────────────────

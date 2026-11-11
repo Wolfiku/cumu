@@ -519,6 +519,13 @@ function showToast(msg) {
           if (state.extraSettings.showPodcasts !== undefined) {
             localStorage.setItem('cumu_show_podcasts', state.extraSettings.showPodcasts ? 'true' : 'false');
           }
+          // Favourites live on the server (shared with the Android app). Older
+          // browsers only had them locally: upload those once.
+          if (Array.isArray(state.extraSettings.favorites)) {
+            applyServerFavorites(state.extraSettings.favorites);
+          } else if (favorites.size > 0) {
+            syncPush();
+          }
           updateNavigation();
           updateLeftNavPinned();
         }
@@ -538,6 +545,7 @@ function showToast(msg) {
           crossfadeDuration,
           gaplessEnabled,
           pinnedItems: getPinnedKeys(),
+          favorites: Array.from(favorites),
           showFavorites: getShowFavorites(),
           showPodcasts: getShowPodcasts(),
         },
@@ -546,6 +554,9 @@ function showToast(msg) {
 
       if (res.conflict) {
         serverVersion = res.serverState.version;
+        // Another client (e.g. the app) changed the favourites meanwhile: keep theirs
+        const srvFav = res.serverState.extraSettings && res.serverState.extraSettings.favorites;
+        if (Array.isArray(srvFav)) applyServerFavorites(srvFav);
         if (res.serverState.theme) applyTheme(res.serverState.theme);
         if (!isRetry) {
           await syncPush(updates, true);
@@ -571,8 +582,16 @@ function showToast(msg) {
           localStorage.setItem('cumu_pinned_items', JSON.stringify(s.extraSettings.pinnedItems));
           updateLeftNavPinned();
         }
+        if (Array.isArray(s.extraSettings.favorites)) applyServerFavorites(s.extraSettings.favorites);
       }
+      if (typeof s.version === 'number' && s.version > serverVersion) serverVersion = s.version;
     }
+  }
+
+  function applyServerFavorites(ids) {
+    favorites = new Set(ids.filter(id => typeof id === 'string'));
+    localStorage.setItem('cumu_favorites', JSON.stringify(Array.from(favorites)));
+    if (typeof updatePlayerUI === 'function') updatePlayerUI();
   }
 
   // ── Navigation Router ──────────────────────────────────────────────────────
@@ -1267,6 +1286,7 @@ function showToast(msg) {
     }
     localStorage.setItem('cumu_favorites', JSON.stringify(Array.from(favorites)));
     updatePlayerUI();
+    syncPush();
   }
 
   function updatePlayerUI() {
@@ -2839,7 +2859,10 @@ function showToast(msg) {
         if (!songs.some(x => x.id === s.id)) songs.push(s);
       } catch (_) {}
     }
-    if (favoritesChanged) localStorage.setItem('cumu_favorites', JSON.stringify(Array.from(favorites)));
+    if (favoritesChanged) {
+      localStorage.setItem('cumu_favorites', JSON.stringify(Array.from(favorites)));
+      syncPush();
+    }
     main.innerHTML = `
       <div class="p-md md:p-margin-desktop max-w-[1280px] mx-auto w-full">
         <div class="flex items-center justify-between mb-lg">

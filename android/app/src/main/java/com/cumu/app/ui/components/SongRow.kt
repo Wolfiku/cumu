@@ -22,6 +22,8 @@ import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlaylistPlay
@@ -153,6 +155,8 @@ fun SongMenu(song: Song, onRemove: (() -> Unit)? = null, removeLabel: String = "
     val nav = LocalNav.current
     val snackbar = LocalSnackbar.current
     val downloaded by app.downloads.songs.collectAsState()
+    val favorites by app.repo.favorites.collectAsState()
+    val scope = rememberCoroutineScope()
     var open by remember { mutableStateOf(false) }
     var pickPlaylist by remember { mutableStateOf(false) }
 
@@ -168,6 +172,20 @@ fun SongMenu(song: Song, onRemove: (() -> Unit)? = null, removeLabel: String = "
                 text = { Text("Zur Warteschlange") },
                 leadingIcon = { Icon(Icons.AutoMirrored.Rounded.QueueMusic, null) },
                 onClick = { open = false; app.player.enqueue(listOf(song)); snackbar("Zur Warteschlange hinzugefügt") },
+            )
+            val favorite = song.id in favorites
+            DropdownMenuItem(
+                text = { Text(if (favorite) "Aus Lieblingssongs entfernen" else "Zu Lieblingssongs") },
+                leadingIcon = { Icon(if (favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, null) },
+                onClick = {
+                    open = false
+                    scope.launch {
+                        try {
+                            app.repo.setFavorite(song.id, !favorite)
+                            snackbar(if (favorite) "Aus Lieblingssongs entfernt" else "Zu Lieblingssongs hinzugefügt")
+                        } catch (e: Exception) { snackbar(errorText(e)) }
+                    }
+                },
             )
             DropdownMenuItem(
                 text = { Text("Zu Playlist hinzufügen") },
