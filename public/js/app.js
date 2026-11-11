@@ -2312,6 +2312,93 @@ function showToast(msg) {
 
 
 
+  // ── Horizontal carousel (5 visible, arrows, "Alle ansehen") ────────────────
+  // itemsHtml: array of card HTML strings. autoScroll: endless left→right scroll.
+  function renderCarousel(itemsHtml, { autoScroll = false, title = '' } = {}) {
+    const hasMore = itemsHtml.length > 5;
+    const clones = autoScroll
+      ? itemsHtml.map(h => `<div class="h-carousel-item" data-clone aria-hidden="true">${h}</div>`).join('')
+      : '';
+    return `
+      <div class="h-carousel-wrap" data-carousel ${autoScroll ? 'data-autoscroll' : ''}>
+        <div class="h-carousel-header">
+          ${title}
+          ${hasMore ? `
+          <div class="h-carousel-controls">
+            <button type="button" class="h-carousel-arrow" data-carousel-prev title="Zurück"><span class="material-symbols-outlined">chevron_left</span></button>
+            <button type="button" class="h-carousel-arrow" data-carousel-next title="Weiter"><span class="material-symbols-outlined">chevron_right</span></button>
+            <button type="button" class="h-carousel-toggle" data-carousel-toggle>Alle ansehen</button>
+          </div>` : ''}
+        </div>
+        <div class="h-carousel ${autoScroll ? 'is-auto' : ''}">
+          ${itemsHtml.map(h => `<div class="h-carousel-item">${h}</div>`).join('')}
+          ${clones}
+        </div>
+      </div>`;
+  }
+
+  function initCarousels(root = main) {
+    const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    root.querySelectorAll('[data-carousel]').forEach(wrap => {
+      const track = wrap.querySelector('.h-carousel');
+      if (!track) return;
+      const step = () => Math.max(track.clientWidth * 0.8, 200);
+      let paused = false;
+      let resumeTimer = null;
+      const pauseFor = (ms) => {
+        paused = true;
+        clearTimeout(resumeTimer);
+        if (ms) resumeTimer = setTimeout(() => { paused = false; }, ms);
+      };
+
+      wrap.querySelector('[data-carousel-prev]')?.addEventListener('click', () => {
+        pauseFor(3000);
+        track.scrollBy({ left: -step(), behavior: 'smooth' });
+      });
+      wrap.querySelector('[data-carousel-next]')?.addEventListener('click', () => {
+        pauseFor(3000);
+        track.scrollBy({ left: step(), behavior: 'smooth' });
+      });
+      const toggle = wrap.querySelector('[data-carousel-toggle]');
+      toggle?.addEventListener('click', () => {
+        const expanded = wrap.classList.toggle('is-expanded');
+        toggle.textContent = expanded ? 'Weniger anzeigen' : 'Alle ansehen';
+        if (!expanded) track.scrollLeft = 0;
+      });
+
+      if (!wrap.hasAttribute('data-autoscroll') || reduceMotion) return;
+
+      // Endless auto-scroll: the item list is rendered twice; once the first
+      // copy has scrolled out, jump back by its width (invisible to the user).
+      track.addEventListener('mouseenter', () => pauseFor(0));
+      track.addEventListener('mouseleave', () => pauseFor(800));
+      track.addEventListener('touchstart', () => pauseFor(0), { passive: true });
+      track.addEventListener('touchend', () => pauseFor(2500), { passive: true });
+      track.addEventListener('wheel', () => pauseFor(2500), { passive: true });
+
+      const speed = 30; // px per second
+      let pos = 0;
+      let last = performance.now();
+      const frame = (now) => {
+        if (!wrap.isConnected) return; // page changed → stop
+        const dt = Math.min(now - last, 100) / 1000;
+        last = now;
+        if (!paused && !wrap.classList.contains('is-expanded')) {
+          const firstClone = track.querySelector('[data-clone]');
+          const loopWidth = firstClone ? firstClone.offsetLeft - track.firstElementChild.offsetLeft : 0;
+          if (Math.abs(track.scrollLeft - pos) > 2) pos = track.scrollLeft; // user scrolled
+          pos += speed * dt;
+          if (loopWidth > 0 && pos >= loopWidth) pos -= loopWidth;
+          track.scrollLeft = pos;
+        } else {
+          pos = track.scrollLeft;
+        }
+        requestAnimationFrame(frame);
+      };
+      requestAnimationFrame(frame);
+    });
+  }
+
   function renderAlbumCard(a) {
     const coverSrc = a.cover ? `/stream/cover/${a.cover}` : null;
     return `
@@ -2953,19 +3040,19 @@ function showToast(msg) {
       if (featuredArtists.length > 0) {
         html += `
           <section>
-            <h2 class="text-title-md font-title-md font-bold text-text-high-contrast mb-md flex items-center gap-xs">
-              <span class="material-symbols-outlined text-secondary">person</span> Featured artists
-            </h2>
-            <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-md">
-              ${featuredArtists.map(a => `
-                <div class="group cursor-pointer flex flex-col items-center gap-xs p-md rounded-xl bg-surface-container-low hover:bg-surface-bright transition-all" onclick="navigate('artist', '${esc(a.id)}')">
-                  <div class="w-20 h-20 rounded-full overflow-hidden bg-surface-container shadow-sm">
+            ${renderCarousel(featuredArtists.map(a => `
+                <div class="group cursor-pointer flex flex-col items-center gap-xs p-md rounded-xl bg-surface-container-low hover:bg-surface-bright transition-all h-full" onclick="navigate('artist', '${esc(a.id)}')">
+                  <div class="w-20 h-20 rounded-full overflow-hidden bg-surface-container shadow-sm flex-shrink-0">
                     ${a.image ? `<img src="${a.image}" class="w-full h-full object-cover" />` : `<div class="w-full h-full flex items-center justify-center text-text-muted"><span class="material-symbols-outlined text-[32px]">person</span></div>`}
                   </div>
-                  <span class="text-body-md font-bold text-text-high-contrast truncate mt-xs text-center">${esc(a.name)}</span>
+                  <span class="text-body-md font-bold text-text-high-contrast truncate mt-xs text-center max-w-full">${esc(a.name)}</span>
                 </div>
-              `).join('')}
-            </div>
+              `), {
+                autoScroll: featuredArtists.length >= 10,
+                title: `<h2 class="text-title-md font-title-md font-bold text-text-high-contrast flex items-center gap-xs m-0">
+                  <span class="material-symbols-outlined text-secondary">person</span> Featured artists
+                </h2>`
+              })}
           </section>
         `;
       }
@@ -2974,12 +3061,11 @@ function showToast(msg) {
       if (albums.length > 0) {
         html += `
           <section>
-            <h2 class="text-title-md font-title-md font-bold text-text-high-contrast mb-md flex items-center gap-xs">
-              <span class="material-symbols-outlined text-tertiary">album</span> Alben in diesem Genre
-            </h2>
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-md">
-              ${albums.map(renderAlbumCard).join('')}
-            </div>
+            ${renderCarousel(albums.map(renderAlbumCard), {
+              title: `<h2 class="text-title-md font-title-md font-bold text-text-high-contrast flex items-center gap-xs m-0">
+                <span class="material-symbols-outlined text-tertiary">album</span> Alben in diesem Genre
+              </h2>`
+            })}
           </section>
         `;
       }
@@ -3119,6 +3205,7 @@ function showToast(msg) {
 
       main.innerHTML = html;
       bindSongRows(row => row.closest('[data-song-list="top"]') ? topSongs : songs);
+      initCarousels();
     } catch (err) {
       console.error(err);
       renderHome();
