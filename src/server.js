@@ -156,6 +156,8 @@ function startBackgroundScanner() {
   // Periodic checks start only after the startup work is done.
   prepareLibrary()
     .then(() => {
+      // Automatic correction once a day (only once the safety backup exists)
+      if (getConfig().libraryCleanupBackup) adminRoutes.scheduleLibraryCorrection();
       setInterval(() => {
         try {
           adminRoutes.checkLibrary().catch(err => console.error('[cumu] Library scan error:', err.message));
@@ -175,7 +177,8 @@ function startBackgroundScanner() {
     });
 }
 
-// Automatic library cleanup on startup (merged album repair + duplicate merge).
+// Automatic library cleanup on startup (merged album repair + automatic
+// correction, which then also runs once a day).
 // The database is backed up once before the first cleanup; if that backup
 // fails, the cleanup is skipped and retried on the next start.
 async function prepareLibrary() {
@@ -203,12 +206,12 @@ async function prepareLibrary() {
   }
 
   try {
-    const res = adminRoutes.dedupeLibrary();
+    const res = adminRoutes.runLibraryCorrection('start');
     if (res.albums || res.songs) {
-      console.log(`[cumu] Merged ${res.albums} duplicate album(s) and ${res.songs} duplicate song(s).`);
+      console.log(`[cumu] Automatic correction: merged ${res.albums} duplicate album(s) and ${res.songs} duplicate song(s).`);
     }
   } catch (err) {
-    console.error('[cumu] Duplicate cleanup error:', err.message);
+    console.error('[cumu] Automatic correction error:', err.message);
   }
 }
 
