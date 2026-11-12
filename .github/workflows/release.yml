@@ -1,21 +1,62 @@
 name: Release
 
+# A new version is only published when you ask for it, never on a plain push:
+#   - GitHub -> Actions -> Release -> "Run workflow", version e.g. v0.6.1-alpha
+#   - or push a tag:  git tag v0.6.1-alpha && git push origin v0.6.1-alpha
+# The version must match "version" in package.json (bump it first).
+# Servers follow releases only: Docker "latest" (Watchtower) and cumu-update.
 on:
   push:
-    branches:
-      - main
     tags:
       - 'v*'
-      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version, z. B. v0.6.1-alpha (muss zu "version" in package.json passen)'
+        required: true
+        type: string
 
 permissions:
   contents: write
   packages: write
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || github.ref_name }}
+
 jobs:
+  # ── Check the version before anything is built or published ────────────────
+  check:
+    name: Check version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Version matches package.json and is new
+        run: |
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::'$TAG' ist keine gültige Version (Beispiel: v0.6.1-alpha)."
+            exit 1
+          fi
+          PKG_VERSION="v$(node -p "require('./package.json').version")"
+          if [[ "$TAG" != "$PKG_VERSION" ]]; then
+            echo "::error::Version '$TAG' passt nicht zu package.json ($PKG_VERSION). Erst package.json anpassen und pushen."
+            exit 1
+          fi
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]] && git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "::error::Die Version $TAG gibt es schon. Bitte eine neue Version wählen."
+            exit 1
+          fi
+
   # ── Build & Publish Docker image (GHCR + Docker Image Tarball) ───────────────
   docker:
     name: Build & Push Docker image
+    needs: check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -39,8 +80,8 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{version}},value=${{ env.TAG }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.TAG }}
             type=raw,value=latest
 
       - name: Build and push Docker image (Multi-Arch amd64 & arm64)
@@ -69,6 +110,7 @@ jobs:
   # ── Build the Android app (APK) ─────────────────────────────────────────────
   android:
     name: Build Android APK
+    needs: check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -103,7 +145,7 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon
-          VERSION=${GITHUB_REF_NAME#v}
+          VERSION=${TAG#v}
           cp app/build/outputs/apk/release/app-release.apk "../cumu_${VERSION}.apk"
 
       - name: Upload APK artifact
@@ -140,8 +182,7 @@ jobs:
 
       - name: Build .deb package
         run: |
-          VERSION=${GITHUB_REF_NAME#v}
-          [[ "$VERSION" == "main" ]] && VERSION="1.0.0"
+          VERSION=${TAG#v}
           PKG="cumu_${VERSION}_all"
           mkdir -p "${PKG}/DEBIAN"
           mkdir -p "${PKG}/opt/cumu"
@@ -238,12 +279,16 @@ jobs:
       # installation text in `body`.
       - name: Prepare release notes
         run: |
-          NOTES="docs/release-notes/RELEASE_NOTES_${GITHUB_REF_NAME}.md"
+          NOTES="docs/release-notes/RELEASE_NOTES_${TAG}.md"
           if [[ -f "$NOTES" ]]; then cp "$NOTES" release_body.md; fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          # Run from "Run workflow": the tag is created on the commit that was built
+          tag_name: ${{ env.TAG }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ env.TAG }}
           files: |
             cumu_*.deb
             cumu_docker_image.tar.gz

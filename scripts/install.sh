@@ -22,7 +22,6 @@ MUSIC_DIR="/var/lib/cumu/music"
 SERVICE_USER="cumu"
 PORT="3000"
 REPO="https://github.com/Wolfiku/cumu"
-ARCHIVE_URL="${REPO}/archive/refs/heads/main.tar.gz"
 
 log()   { echo -e "${GREEN}[cumu]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[warn]${NC} $*"; }
@@ -424,7 +423,14 @@ if ! id "$SERVICE_USER" &>/dev/null; then
 fi
 
 # ── Download cumu ─────────────────────────────────────────────────────────────
-log "Downloading cumu from GitHub..."
+# The latest published release (github.com/<repo>/releases/latest redirects to its tag)
+LATEST_URL=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "${REPO}/releases/latest" || true)
+RELEASE_TAG="${LATEST_URL##*/tag/}"
+if [[ -z "$LATEST_URL" || "$RELEASE_TAG" == "$LATEST_URL" || -z "$RELEASE_TAG" ]]; then
+  error "Keine cumu-Release gefunden (GitHub nicht erreichbar?)."
+fi
+ARCHIVE_URL="${REPO}/archive/refs/tags/${RELEASE_TAG}.tar.gz"
+log "Downloading cumu ${RELEASE_TAG} from GitHub..."
 mkdir -p "$INSTALL_DIR" "$DATA_DIR" "$MUSIC_DIR"
 
 TMP_DIR=$(mktemp -d)

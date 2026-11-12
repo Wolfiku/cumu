@@ -853,7 +853,8 @@ const CumuAdmin = (function() {
         <div class="flex justify-between items-center p-md rounded-lg bg-surface-container-low flex-wrap gap-md">
           <div class="flex flex-col gap-xs">
             <span class="font-body-lg text-body-lg text-on-surface">Version: <strong class="font-bold">v${esc(stats.version || '?')}</strong></span>
-            <span class="font-body-sm text-body-sm text-text-muted" id="adminUpdateStatusText">Automatic updates are enabled.</span>
+            <span class="font-body-sm text-body-sm text-text-muted" id="adminUpdateStatusText">Automatic updates are enabled. Updates install published releases only, not every change on GitHub.</span>
+            ${stats.updaterOutdated ? `<span class="font-body-sm text-body-sm text-red-500">Das Update-Programm auf diesem Server ist veraltet und installiert noch jeden Stand von GitHub statt nur Releases. Einmal auf dem Server ausführen: <code>sudo cp /opt/cumu/scripts/update.sh /usr/local/bin/cumu-update</code></span>` : ''}
           </div>
           <button id="btnTriggerAdminUpdate" class="px-md py-sm bg-text-muted text-on-primary font-body-sm text-body-sm rounded hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer">
             Check for updates & update now
