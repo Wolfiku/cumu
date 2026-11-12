@@ -51,6 +51,20 @@ function mainArtistKey(name) {
   return parts.length ? parts[parts.length - 1].key : '';
 }
 
+/** Every artist a credit names: "Alan Walker, K-391 & Corsak" -> 3 names */
+function creditParticipants(name) {
+  return String(name || '').normalize('NFKC').split(COLLAB_SEPARATOR)
+    .map(part => ({ key: normArtist(part), display: part.trim() }))
+    .filter(part => part.key);
+}
+
+/** An artist all credits name somewhere ("K-391 & Alan Walker", "Alan Walker x Y"), or null */
+function sharedParticipant(names) {
+  const lists = names.map(creditParticipants);
+  if (!lists.length || lists.some(l => !l.length)) return null;
+  return lists[0].find(p => lists.every(l => l.some(q => q.key === p.key))) || null;
+}
+
 /** The longest leading part all credits share, or null */
 function commonCredit(names) {
   const lists = names.map(creditPrefixes);
@@ -238,4 +252,4 @@ function resolveEditedSongAlbum(db, song, title, artistId, meta = {}) {
   return getOrCreateAlbum(db, title, artistId, meta);
 }
 
-module.exports = { getOrCreateAlbum, cleanupOrphanedAlbums, resolveEditedSongAlbum, mainArtistKey, commonCredit, creditAlbumTo, pickAlbumToKeep };
+module.exports = { getOrCreateAlbum, cleanupOrphanedAlbums, resolveEditedSongAlbum, mainArtistKey, commonCredit, sharedParticipant, creditAlbumTo, pickAlbumToKeep };
