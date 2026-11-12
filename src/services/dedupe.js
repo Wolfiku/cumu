@@ -15,7 +15,7 @@
 
 'use strict';
 
-const { cleanupOrphanedAlbums, collabBaseNames, normArtist } = require('./albums');
+const { cleanupOrphanedAlbums, mainArtistKey, commonCredit, creditAlbumTo, pickAlbumToKeep } = require('./albums');
 
 const norm = (s) => (s || '').trim().toLowerCase();
 
@@ -84,48 +84,37 @@ function mergeAlbumInto(db, keep, dupe) {
 }
 
 /**
- * Albums that only exist because a collaboration credit named them, e.g.
- * "Vom selben Stern" by "Ich + Ich x Annette Humpe" next to "Vom selben Stern"
- * by "Ich + Ich": merged into the main artist's album. Only where that album
- * exists (same title, artist = the credit before "x", "feat.", "&", ...).
- * The songs keep their own artist.
+ * Albums split up by collaboration credits, e.g. "Different World" by
+ * "Alan Walker, K-391 & Corsak" and by "Alan Walker x Sofia Carson", or
+ * "Vom selben Stern" by "Ich + Ich" and "Ich + Ich x Annette Humpe": same
+ * title and same main artist (the first one named), however many others are
+ * credited. Merged into one album credited to the part all credits share
+ * ("Alan Walker", "Ich + Ich"). The songs keep their own artist.
  */
 function mergeCollaborationAlbums(db) {
   const albums = db.prepare(`
     SELECT a.*, ar.name AS artist_name FROM albums a JOIN artists ar ON ar.id = a.artist_id
     ORDER BY a.created_at ASC
   `).all();
-  const byTitle = new Map();
+  const groups = new Map();
   for (const album of albums) {
-    const key = norm(album.title);
-    if (!key) continue;
-    if (!byTitle.has(key)) byTitle.set(key, []);
-    byTitle.get(key).push(album);
+    const title = norm(album.title);
+    const main = mainArtistKey(album.artist_name);
+    if (!title || !main) continue;
+    const key = `${title}\u0000${main}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(album);
   }
 
   let merged = 0;
-  for (const group of byTitle.values()) {
+  for (const group of groups.values()) {
     if (group.length < 2) continue;
-    const byArtist = new Map(group.map(a => [normArtist(a.artist_name), a]));
-    // Target of each album: the album of the longest main artist name
-    const target = new Map();
+    const credit = commonCredit(group.map(a => a.artist_name));
+    const keep = pickAlbumToKeep(db, group, credit);
+    creditAlbumTo(db, keep, credit);
     for (const album of group) {
-      for (const base of collabBaseNames(album.artist_name)) {
-        const hit = byArtist.get(base);
-        if (hit && hit.id !== album.id) { target.set(album.id, hit); break; }
-      }
-    }
-    const root = (album) => {
-      const seen = new Set();
-      while (target.has(album.id) && !seen.has(album.id)) { seen.add(album.id); album = target.get(album.id); }
-      return album;
-    };
-    for (const album of group) {
-      if (!target.has(album.id)) continue;
-      const keep = db.prepare('SELECT * FROM albums WHERE id = ?').get(root(album).id);
-      const dupe = db.prepare('SELECT * FROM albums WHERE id = ?').get(album.id);
-      if (!keep || !dupe || keep.id === dupe.id) continue;
-      mergeAlbumInto(db, keep, dupe);
+      if (album.id === keep.id) continue;
+      mergeAlbumInto(db, db.prepare('SELECT * FROM albums WHERE id = ?').get(keep.id), db.prepare('SELECT * FROM albums WHERE id = ?').get(album.id));
       merged++;
     }
   }

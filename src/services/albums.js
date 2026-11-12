@@ -15,27 +15,64 @@ function sameTitle(a, b) {
 }
 
 // ── Collaborations ───────────────────────────────────────────────────────────
-// Without an album artist tag a song's own artist names its album, so a track
-// by "Alan Walker x Ava Max" would start an album of its own next to the
-// "Alan Walker" one. These helpers find the main artist of such a credit.
-// A credit is only cut where an album with the same title by the shorter name
-// exists, so band names like "Ich + Ich" or "Simon & Garfunkel" stay intact.
+// Without an album artist tag a song's own artist names its album, so tracks
+// by "Alan Walker x Ava Max" and "Alan Walker, K-391 & Corsak" would each
+// start an album of their own. Albums with the same title whose credits name
+// the same main artist (the first one named) are one album. It is credited to
+// the part all credits share: "Alan Walker" for the two above, "Ich + Ich" for
+// "Ich + Ich" and "Ich + Ich x Annette Humpe". The songs keep their own artist.
 
-const COLLAB_SEPARATOR = /\s*[,;&+×]\s*|\s+(?:feat\.?|ft\.?|featuring|x|vs\.?|with|mit)\s+/giu;
+const COLLAB_SEPARATOR = /\s*[,;&+×]\s*|\s+[\(\[]?(?:feat\.?|ft\.?|featuring|x|vs\.?|with|mit)\s+/giu;
 
 function normArtist(name) {
   return String(name || '').normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
-/** "Ich + Ich x Annette Humpe" -> ["ich + ich", "ich"] (longest first) */
-function collabBaseNames(name) {
-  const full = String(name || '').normalize('NFKC');
-  const bases = [];
+/**
+ * Every leading part of a credit, longest first:
+ * "Alan Walker, K-391 & Corsak" -> the full credit, "Alan Walker, K-391", "Alan Walker"
+ * @returns {{key: string, display: string}[]}
+ */
+function creditPrefixes(name) {
+  const full = String(name || '').normalize('NFKC').trim();
+  if (!full) return [];
+  const parts = [{ key: normArtist(full), display: full }];
   for (const m of full.matchAll(COLLAB_SEPARATOR)) {
-    const base = normArtist(full.slice(0, m.index));
-    if (base) bases.push(base);
+    const display = full.slice(0, m.index).trim();
+    if (display) parts.push({ key: normArtist(display), display });
   }
-  return [...new Set(bases)].reverse();
+  const seen = new Set();
+  return parts.filter(p => !seen.has(p.key) && seen.add(p.key)).sort((a, b) => b.key.length - a.key.length);
+}
+
+/** The first artist a credit names ("alan walker" for "Alan Walker x Ava Max") */
+function mainArtistKey(name) {
+  const parts = creditPrefixes(name);
+  return parts.length ? parts[parts.length - 1].key : '';
+}
+
+/** The longest leading part all credits share, or null */
+function commonCredit(names) {
+  const lists = names.map(creditPrefixes);
+  if (!lists.length || lists.some(l => !l.length)) return null;
+  return lists[0].find(p => lists.every(l => l.some(q => q.key === p.key))) || null;
+}
+
+function artistIdForName(db, name) {
+  const row = db.prepare('SELECT id FROM artists WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))').get(name);
+  if (row) return row.id;
+  const id = uuidv4();
+  db.prepare('INSERT INTO artists (id, name) VALUES (?, ?)').run(id, name.trim());
+  return id;
+}
+
+/** Credits an album to `credit` ({key, display}) unless it already is. */
+function creditAlbumTo(db, album, credit) {
+  if (!credit || normArtist(album.artist_name) === credit.key) return;
+  const artistId = artistIdForName(db, credit.display);
+  db.prepare('UPDATE albums SET artist_id = ? WHERE id = ?').run(artistId, album.id);
+  album.artist_id = artistId;
+  album.artist_name = credit.display;
 }
 
 function albumsWithTitle(db, title) {
@@ -45,31 +82,33 @@ function albumsWithTitle(db, title) {
   `).all(title);
 }
 
+// Among albums that are one: the one already credited to the shared part,
+// then one with a cover, then the one with most songs, then the oldest
+function pickAlbumToKeep(db, albums, credit) {
+  const songCount = db.prepare('SELECT COUNT(*) AS c FROM songs WHERE album_id = ?');
+  return [...albums].sort((a, b) =>
+    ((normArtist(b.artist_name) === credit?.key) - (normArtist(a.artist_name) === credit?.key))
+    || (!!b.cover - !!a.cover)
+    || (songCount.get(b.id).c - songCount.get(a.id).c)
+    || ((a.created_at || 0) - (b.created_at || 0)))[0];
+}
+
 /**
- * Album `title` that belongs to the same main artist as `artistId`: either
- * by the main artist of a collaboration credit, or (the other way round) an
- * album that was started by a collaboration track of this artist. The latter
- * is handed over to this artist.
+ * Album `title` of the same main artist as `artistId` under another credit
+ * ("Alan Walker x Ava Max" finds the album of "Alan Walker & K-391"). The
+ * album is credited to the part both share. Returns its id or null.
  */
 function findCollaborationAlbum(db, title, artistId) {
   const artist = artistId ? db.prepare('SELECT name FROM artists WHERE id = ?').get(artistId) : null;
   if (!artist) return null;
-  const own = normArtist(artist.name);
-  const candidates = albumsWithTitle(db, title).filter(a => a.artist_id && a.artist_id !== artistId);
+  const main = mainArtistKey(artist.name);
+  const candidates = albumsWithTitle(db, title)
+    .filter(a => a.artist_id && a.artist_id !== artistId && mainArtistKey(a.artist_name) === main);
   if (!candidates.length) return null;
-
-  // 1. this credit is a collaboration of an artist who has the album
-  for (const base of collabBaseNames(artist.name)) {
-    const hit = candidates.find(a => normArtist(a.artist_name) === base);
-    if (hit) return hit.id;
-  }
-  // 2. the album was started by a collaboration of this artist
-  const started = candidates.find(a => collabBaseNames(a.artist_name).includes(own));
-  if (started) {
-    db.prepare('UPDATE albums SET artist_id = ? WHERE id = ?').run(artistId, started.id);
-    return started.id;
-  }
-  return null;
+  const credit = commonCredit([artist.name, ...candidates.map(a => a.artist_name)]);
+  const album = pickAlbumToKeep(db, candidates, credit);
+  creditAlbumTo(db, album, credit);
+  return album.id;
 }
 
 /**
@@ -199,4 +238,4 @@ function resolveEditedSongAlbum(db, song, title, artistId, meta = {}) {
   return getOrCreateAlbum(db, title, artistId, meta);
 }
 
-module.exports = { getOrCreateAlbum, cleanupOrphanedAlbums, resolveEditedSongAlbum, collabBaseNames, normArtist };
+module.exports = { getOrCreateAlbum, cleanupOrphanedAlbums, resolveEditedSongAlbum, mainArtistKey, commonCredit, creditAlbumTo, pickAlbumToKeep };
