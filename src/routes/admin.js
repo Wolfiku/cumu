@@ -992,7 +992,7 @@ router.delete('/albums/:id/cover', requireAdmin, (req, res) => {
   const db = getDB();
   const album = db.prepare('SELECT * FROM albums WHERE id = ?').get(req.params.id);
   if (!album) return res.status(404).json({ error: 'Album not found' });
-  db.prepare("UPDATE albums SET cover = NULL, cover_status = 'none' WHERE id = ?").run(album.id);
+  db.prepare("UPDATE albums SET cover = NULL, cover_status = 'removed' WHERE id = ?").run(album.id);
   db.prepare('UPDATE songs SET cover = NULL WHERE album_id = ? AND cover = ?').run(album.id, album.cover);
   covers.deleteCoverIfUnused(db, album.cover);
   res.json({ ok: true });

@@ -71,6 +71,9 @@ function mergeAlbumInto(db, keep, dupe) {
   db.prepare('UPDATE library SET album_id = ? WHERE album_id = ?').run(keep.id, dupe.id);
   if (!keep.cover && dupe.cover) {
     db.prepare('UPDATE albums SET cover = ?, cover_status = ? WHERE id = ?').run(dupe.cover, dupe.cover_status || null, keep.id);
+  } else if (!keep.cover && keep.cover_status !== 'removed' && dupe.cover_status !== 'removed') {
+    // Neither had a cover: search again, now with the songs of both
+    db.prepare('UPDATE albums SET cover_status = NULL WHERE id = ?').run(keep.id);
   }
   db.prepare(`
     UPDATE albums SET year = COALESCE(year, ?), genre = COALESCE(genre, ?),

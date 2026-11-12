@@ -395,7 +395,7 @@ const CumuAdmin = (function() {
   }
 
   async function removeAlbumCover(albumId) {
-    if (!confirm('Remove this cover? The album will not get a cover automatically again (use "Find cover" or "Retry albums without match").')) return;
+    if (!confirm('Remove this cover? The album will not get a cover automatically again (use "Find cover" for a new search).')) return;
     await CumuApi.del(`/admin/albums/${albumId}/cover`);
     switchTab('albums');
   }
