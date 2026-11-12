@@ -15,7 +15,8 @@
 
 'use strict';
 
-const { cleanupOrphanedAlbums, collabBaseNames, normArtist } = require('./albums');
+const path = require('path');
+const { cleanupOrphanedAlbums, commonMainArtist, sharedParticipant, knownArtists, creditAlbumTo, pickAlbumToKeep } = require('./albums');
 
 const norm = (s) => (s || '').trim().toLowerCase();
 
@@ -81,52 +82,101 @@ function mergeAlbumInto(db, keep, dupe) {
     WHERE id = ?
   `).run(dupe.year, dupe.genre, dupe.mb_release_id || null, dupe.mb_release_group_id || null, keep.id);
   db.prepare('DELETE FROM albums WHERE id = ?').run(dupe.id);
+  if (dupe.cover && dupe.cover !== keep.cover) {
+    try { require('./coverArt').deleteCoverIfUnused(db, dupe.cover); } catch {}
+  }
 }
 
 /**
- * Albums that only exist because a collaboration credit named them, e.g.
- * "Vom selben Stern" by "Ich + Ich x Annette Humpe" next to "Vom selben Stern"
- * by "Ich + Ich": merged into the main artist's album. Only where that album
- * exists (same title, artist = the credit before "x", "feat.", "&", ...).
- * The songs keep their own artist.
+ * Albums that are really one album split into several, e.g. "Different World"
+ * by "Alan Walker, K-391 & Corsak" and by "Alan Walker x Sofia Carson".
+ * Two albums are merged only when the title is the same AND one of these
+ * holds, each of which only the same album can have:
+ *   - same main artist: both credits start with the same artist of the
+ *     library ("Alan Walker, K-391 & ..." / "Alan Walker x ...", "Ich + Ich"
+ *     / "Ich + Ich x ..."). Only names that are artists with songs of their
+ *     own count, so "Crosby, Stills & Nash" and "Crosby, Stills, Nash &
+ *     Young" are not taken for one artist "Crosby, Stills".
+ *   - same MusicBrainz release or release group (found by the song lookup)
+ *   - same album folder: songs of both lie in one folder (not the music
+ *     root) that holds only songs of this album title, AND both credits
+ *     name a common artist (or one album has no artist). A mixed
+ *     "Downloads" folder never counts, nor a "Singles" folder whose songs
+ *     of different artists are all tagged album "Single".
+ * Different albums that just share a title ("Greatest Hits" by Queen and by
+ * ABBA) have none of these. The merged album keeps the cover and is credited
+ * to the part all credits share ("Alan Walker"); the songs keep their artist.
  */
-function mergeCollaborationAlbums(db) {
+function mergeSplitAlbums(db) {
   const albums = db.prepare(`
-    SELECT a.*, ar.name AS artist_name FROM albums a JOIN artists ar ON ar.id = a.artist_id
+    SELECT a.*, ar.name AS artist_name FROM albums a LEFT JOIN artists ar ON ar.id = a.artist_id
     ORDER BY a.created_at ASC
   `).all();
   const byTitle = new Map();
   for (const album of albums) {
-    const key = norm(album.title);
-    if (!key) continue;
-    if (!byTitle.has(key)) byTitle.set(key, []);
-    byTitle.get(key).push(album);
+    const title = norm(album.title);
+    if (!title) continue;
+    if (!byTitle.has(title)) byTitle.set(title, []);
+    byTitle.get(title).push(album);
   }
+  const groups = [...byTitle.values()].filter(g => g.length > 1);
+  if (!groups.length) return 0;
+
+  // Folders and the album titles of the songs in them
+  const folderTitles = new Map();
+  const albumFolders = new Map();
+  const rows = db.prepare('SELECT s.filename, s.album_id, al.title FROM songs s LEFT JOIN albums al ON al.id = s.album_id').all();
+  for (const row of rows) {
+    const dir = path.posix.dirname(String(row.filename || '').replace(/\\/g, '/'));
+    if (!dir || dir === '.') continue; // the music root holds unrelated uploads side by side
+    if (!folderTitles.has(dir)) folderTitles.set(dir, new Set());
+    folderTitles.get(dir).add(norm(row.title));
+    if (row.album_id) {
+      if (!albumFolders.has(row.album_id)) albumFolders.set(row.album_id, new Set());
+      albumFolders.get(row.album_id).add(dir);
+    }
+  }
+  const sameAlbumFolder = (a, b) => {
+    const dirsA = albumFolders.get(a.id), dirsB = albumFolders.get(b.id);
+    if (!dirsA || !dirsB) return false;
+    for (const dir of dirsA) if (dirsB.has(dir) && folderTitles.get(dir).size === 1) return true;
+    return false;
+  };
+  const known = knownArtists(db);
+  const sameRelease = (a, b) => (a.mb_release_group_id && a.mb_release_group_id === b.mb_release_group_id)
+    || (a.mb_release_id && a.mb_release_id === b.mb_release_id);
+  const sameMainArtist = (a, b) => !!(a.artist_name && b.artist_name && commonMainArtist([a.artist_name, b.artist_name], known));
+  const relatedArtists = (a, b) => !a.artist_name || !b.artist_name || !!sharedParticipant([a.artist_name, b.artist_name]);
+  const belongTogether = (a, b) => sameMainArtist(a, b) || sameRelease(a, b) || (sameAlbumFolder(a, b) && relatedArtists(a, b));
 
   let merged = 0;
-  for (const group of byTitle.values()) {
-    if (group.length < 2) continue;
-    const byArtist = new Map(group.map(a => [normArtist(a.artist_name), a]));
-    // Target of each album: the album of the longest main artist name
-    const target = new Map();
-    for (const album of group) {
-      for (const base of collabBaseNames(album.artist_name)) {
-        const hit = byArtist.get(base);
-        if (hit && hit.id !== album.id) { target.set(album.id, hit); break; }
+  for (const group of groups) {
+    // Albums linked directly or through each other form one album
+    const parent = new Map(group.map(a => [a.id, a.id]));
+    const find = id => { while (parent.get(id) !== id) id = parent.get(id); return id; };
+    for (let i = 0; i < group.length; i++) {
+      for (let j = i + 1; j < group.length; j++) {
+        if (belongTogether(group[i], group[j])) parent.set(find(group[j].id), find(group[i].id));
       }
     }
-    const root = (album) => {
-      const seen = new Set();
-      while (target.has(album.id) && !seen.has(album.id)) { seen.add(album.id); album = target.get(album.id); }
-      return album;
-    };
+    const sets = new Map();
     for (const album of group) {
-      if (!target.has(album.id)) continue;
-      const keep = db.prepare('SELECT * FROM albums WHERE id = ?').get(root(album).id);
-      const dupe = db.prepare('SELECT * FROM albums WHERE id = ?').get(album.id);
-      if (!keep || !dupe || keep.id === dupe.id) continue;
-      mergeAlbumInto(db, keep, dupe);
-      merged++;
+      const root = find(album.id);
+      if (!sets.has(root)) sets.set(root, []);
+      sets.get(root).push(album);
+    }
+
+    for (const set of sets.values()) {
+      if (set.length < 2) continue;
+      const names = set.map(a => a.artist_name).filter(Boolean);
+      const credit = names.length === set.length ? (commonMainArtist(names, known) || sharedParticipant(names, known)) : null;
+      const keep = pickAlbumToKeep(db, set, credit);
+      if (keep.artist_name) creditAlbumTo(db, keep, credit);
+      for (const album of set) {
+        if (album.id === keep.id) continue;
+        mergeAlbumInto(db, db.prepare('SELECT * FROM albums WHERE id = ?').get(keep.id), db.prepare('SELECT * FROM albums WHERE id = ?').get(album.id));
+        merged++;
+      }
     }
   }
   return merged;
@@ -223,11 +273,12 @@ function mergeDuplicateSongs(db, findSongFile) {
 /**
  * Merges all duplicate albums and songs in one transaction. Idempotent.
  * `findSongFile(filename)` returns the file's path if it exists on disk.
+ * `splitAlbums: false` skips merging albums split up by collaborations.
  */
-function dedupeLibrary(db, findSongFile) {
+function dedupeLibrary(db, findSongFile, { splitAlbums = true } = {}) {
   ensureTables(db);
   const result = db.transaction(() => {
-    const albums = mergeDuplicateAlbums(db) + mergeCollaborationAlbums(db);
+    const albums = mergeDuplicateAlbums(db) + (splitAlbums ? mergeSplitAlbums(db) : 0);
     const songs = mergeDuplicateSongs(db, findSongFile);
     cleanupOrphanedAlbums(db);
     return { albums, songs };

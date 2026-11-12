@@ -328,6 +328,7 @@ async function processUpload(req, res) {
     // Anything not inserted is left to the regular scan
     for (const name of uploadedNames) pendingUploads.delete(name);
     activeUploads--;
+    try { runLibraryCorrection('upload'); } catch (err) { console.error('[cumu] Automatic correction error:', err.message); }
   }
 }
 
@@ -526,7 +527,13 @@ async function lookupScannedSong(db, song) {
 // (Two scans in parallel would both see the same new files and add them twice.)
 let runningScan = null;
 function runLibraryScan() {
-  if (!runningScan) runningScan = scanLibrary().finally(() => { runningScan = null; });
+  if (!runningScan) {
+    runningScan = scanLibrary().finally(() => {
+      runningScan = null;
+      // The lookup may have moved songs between albums: tidy up right away
+      try { runLibraryCorrection('scan'); } catch (err) { console.error('[cumu] Automatic correction error:', err.message); }
+    });
+  }
   return runningScan;
 }
 
@@ -1018,7 +1025,9 @@ let nextCorrectionAt = null;
 
 function runLibraryCorrection(trigger = 'daily') {
   if (runningScan || activeUploads > 0) return { postponed: true };
-  const result = dedupeLibrary(getDB(), findSongFile);
+  // Albums split by collaborations are only merged once the database was
+  // backed up before the first run of these rules (see server.js)
+  const result = dedupeLibrary(getDB(), findSongFile, { splitAlbums: getConfig().albumMergeBackup === 2 });
   const entry = { at: Date.now(), trigger, albums: result.albums, songs: result.songs };
   setConfig('lastLibraryCorrection', entry);
   if (result.albums || result.songs) {
