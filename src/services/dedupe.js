@@ -15,7 +15,7 @@
 
 'use strict';
 
-const { cleanupOrphanedAlbums } = require('./albums');
+const { cleanupOrphanedAlbums, collabBaseNames, normArtist } = require('./albums');
 
 const norm = (s) => (s || '').trim().toLowerCase();
 
@@ -57,14 +57,72 @@ function mergeDuplicateAlbums(db) {
     const [keep, ...dupes] = group;
 
     for (const dupe of dupes) {
-      db.prepare('UPDATE songs SET album_id = ? WHERE album_id = ?').run(keep.id, dupe.id);
-      db.prepare('UPDATE library SET album_id = ? WHERE album_id = ?').run(keep.id, dupe.id);
-      db.prepare(`
-        UPDATE albums SET
-          cover = COALESCE(cover, ?), year = COALESCE(year, ?), genre = COALESCE(genre, ?)
-        WHERE id = ?
-      `).run(dupe.cover, dupe.year, dupe.genre, keep.id);
-      db.prepare('DELETE FROM albums WHERE id = ?').run(dupe.id);
+      mergeAlbumInto(db, db.prepare('SELECT * FROM albums WHERE id = ?').get(keep.id), dupe);
+      merged++;
+    }
+  }
+  return merged;
+}
+
+// Moves everything of album `dupe` into `keep` and deletes `dupe`. The kept
+// album takes over what it lacks (cover, year, genre, MusicBrainz ids).
+function mergeAlbumInto(db, keep, dupe) {
+  db.prepare('UPDATE songs SET album_id = ? WHERE album_id = ?').run(keep.id, dupe.id);
+  db.prepare('UPDATE library SET album_id = ? WHERE album_id = ?').run(keep.id, dupe.id);
+  if (!keep.cover && dupe.cover) {
+    db.prepare('UPDATE albums SET cover = ?, cover_status = ? WHERE id = ?').run(dupe.cover, dupe.cover_status || null, keep.id);
+  }
+  db.prepare(`
+    UPDATE albums SET year = COALESCE(year, ?), genre = COALESCE(genre, ?),
+      mb_release_id = COALESCE(mb_release_id, ?), mb_release_group_id = COALESCE(mb_release_group_id, ?)
+    WHERE id = ?
+  `).run(dupe.year, dupe.genre, dupe.mb_release_id || null, dupe.mb_release_group_id || null, keep.id);
+  db.prepare('DELETE FROM albums WHERE id = ?').run(dupe.id);
+}
+
+/**
+ * Albums that only exist because a collaboration credit named them, e.g.
+ * "Vom selben Stern" by "Ich + Ich x Annette Humpe" next to "Vom selben Stern"
+ * by "Ich + Ich": merged into the main artist's album. Only where that album
+ * exists (same title, artist = the credit before "x", "feat.", "&", ...).
+ * The songs keep their own artist.
+ */
+function mergeCollaborationAlbums(db) {
+  const albums = db.prepare(`
+    SELECT a.*, ar.name AS artist_name FROM albums a JOIN artists ar ON ar.id = a.artist_id
+    ORDER BY a.created_at ASC
+  `).all();
+  const byTitle = new Map();
+  for (const album of albums) {
+    const key = norm(album.title);
+    if (!key) continue;
+    if (!byTitle.has(key)) byTitle.set(key, []);
+    byTitle.get(key).push(album);
+  }
+
+  let merged = 0;
+  for (const group of byTitle.values()) {
+    if (group.length < 2) continue;
+    const byArtist = new Map(group.map(a => [normArtist(a.artist_name), a]));
+    // Target of each album: the album of the longest main artist name
+    const target = new Map();
+    for (const album of group) {
+      for (const base of collabBaseNames(album.artist_name)) {
+        const hit = byArtist.get(base);
+        if (hit && hit.id !== album.id) { target.set(album.id, hit); break; }
+      }
+    }
+    const root = (album) => {
+      const seen = new Set();
+      while (target.has(album.id) && !seen.has(album.id)) { seen.add(album.id); album = target.get(album.id); }
+      return album;
+    };
+    for (const album of group) {
+      if (!target.has(album.id)) continue;
+      const keep = db.prepare('SELECT * FROM albums WHERE id = ?').get(root(album).id);
+      const dupe = db.prepare('SELECT * FROM albums WHERE id = ?').get(album.id);
+      if (!keep || !dupe || keep.id === dupe.id) continue;
+      mergeAlbumInto(db, keep, dupe);
       merged++;
     }
   }
@@ -166,7 +224,7 @@ function mergeDuplicateSongs(db, findSongFile) {
 function dedupeLibrary(db, findSongFile) {
   ensureTables(db);
   const result = db.transaction(() => {
-    const albums = mergeDuplicateAlbums(db);
+    const albums = mergeDuplicateAlbums(db) + mergeCollaborationAlbums(db);
     const songs = mergeDuplicateSongs(db, findSongFile);
     cleanupOrphanedAlbums(db);
     return { albums, songs };
