@@ -57,6 +57,10 @@ function findSongFile(filename) {
   return null;
 }
 
+// Uploads in progress: the automatic correction waits for them (an upload
+// keeps album ids across several files)
+let activeUploads = 0;
+
 // Uploaded files land in the music folder before their songs are inserted.
 // The background scan must not index them in the meantime.
 const pendingUploads = new Set();
@@ -214,6 +218,7 @@ router.delete('/users/:id', requireAdmin, (req, res) => {
 
 async function processUpload(req, res) {
   const uploadedNames = Object.values(req.files || {}).flat().map(f => f.filename);
+  activeUploads++;
   try {
     const db        = getDB();
     const cfg       = getConfig();
@@ -322,6 +327,7 @@ async function processUpload(req, res) {
   } finally {
     // Anything not inserted is left to the regular scan
     for (const name of uploadedNames) pendingUploads.delete(name);
+    activeUploads--;
   }
 }
 
@@ -992,10 +998,62 @@ router.delete('/albums/:id/cover', requireAdmin, (req, res) => {
   const db = getDB();
   const album = db.prepare('SELECT * FROM albums WHERE id = ?').get(req.params.id);
   if (!album) return res.status(404).json({ error: 'Album not found' });
-  db.prepare("UPDATE albums SET cover = NULL, cover_status = 'none' WHERE id = ?").run(album.id);
+  db.prepare("UPDATE albums SET cover = NULL, cover_status = 'removed' WHERE id = ?").run(album.id);
   db.prepare('UPDATE songs SET cover = NULL WHERE album_id = ? AND cover = ?').run(album.id, album.cover);
   covers.deleteCoverIfUnused(db, album.cover);
   res.json({ ok: true });
+});
+
+// ── AUTOMATIC CORRECTION ──────────────────────────────────────────────────────
+// Database-only cleanup, on every start and once a day: merges duplicate
+// albums (same artist and title, or split off by a collaboration credit like
+// "A x B") and duplicate songs. No files are read and nothing is looked up
+// online, so it takes seconds even for large libraries. It never runs while a
+// scan or an upload is changing the library; it is retried afterwards.
+
+const CORRECTION_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const CORRECTION_RETRY_MS    = 10 * 60 * 1000;
+let correctionTimer = null;
+let nextCorrectionAt = null;
+
+function runLibraryCorrection(trigger = 'daily') {
+  if (runningScan || activeUploads > 0) return { postponed: true };
+  const result = dedupeLibrary(getDB(), findSongFile);
+  const entry = { at: Date.now(), trigger, albums: result.albums, songs: result.songs };
+  setConfig('lastLibraryCorrection', entry);
+  if (result.albums || result.songs) {
+    log('info', 'admin', `Automatische Korrektur: ${result.albums} doppelte Alben und ${result.songs} doppelte Lieder zusammengeführt`);
+  }
+  return entry;
+}
+
+function scheduleLibraryCorrection(delayMs = CORRECTION_INTERVAL_MS) {
+  clearTimeout(correctionTimer);
+  nextCorrectionAt = Date.now() + delayMs;
+  correctionTimer = setTimeout(() => {
+    let result;
+    try {
+      result = runLibraryCorrection('daily');
+    } catch (err) {
+      console.error('[cumu] Automatic correction error:', err.message);
+    }
+    scheduleLibraryCorrection(result?.postponed ? CORRECTION_RETRY_MS : CORRECTION_INTERVAL_MS);
+  }, delayMs);
+  correctionTimer.unref?.();
+}
+
+router.get('/correction', requireAdmin, (req, res) => {
+  res.json({ last: getConfig().lastLibraryCorrection || null, nextAt: nextCorrectionAt });
+});
+
+router.post('/correction/run', requireAdmin, (req, res) => {
+  try {
+    const result = runLibraryCorrection('manual');
+    if (result.postponed) return res.status(409).json({ error: 'Gerade läuft ein Scan oder Upload. Die Korrektur läuft danach automatisch.' });
+    res.json({ last: result, nextAt: nextCorrectionAt });
+  } catch (err) {
+    res.status(500).json({ error: 'Korrektur fehlgeschlagen: ' + err.message });
+  }
 });
 
 // ── AGENTS & AUTO-LOOKUP ROUTES ───────────────────────────────────────────────
@@ -1303,13 +1361,8 @@ router.runLibraryScan = runLibraryScan;
 router.checkLibrary  = checkLibrary;
 router.getScanPath   = getScanPath;
 router.repairMergedAlbums = repairMergedAlbums;
-router.dedupeLibrary = () => {
-  const result = dedupeLibrary(getDB(), findSongFile);
-  if (result.albums || result.songs) {
-    log('info', 'admin', `Merged ${result.albums} duplicate album(s) and ${result.songs} duplicate song(s)`);
-  }
-  return result;
-};
+router.runLibraryCorrection = runLibraryCorrection;
+router.scheduleLibraryCorrection = scheduleLibraryCorrection;
 router.handleUpload   = handleUpload;
 router.processUpload   = processUpload;
 

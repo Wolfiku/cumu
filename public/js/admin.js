@@ -200,6 +200,18 @@ const CumuAdmin = (function() {
             <span id="coverScanResult" class="font-body-sm text-body-sm"></span>
           </div>
         </div>
+      </section>
+
+      <section class="flex flex-col gap-md mt-xl">
+        <h2 class="font-title-md text-title-md text-on-surface border-b border-border-subtle pb-sm">Automatische Korrektur</h2>
+        <div class="flex flex-col gap-sm p-md rounded-lg bg-surface-container-low">
+          <p class="font-body-sm text-body-sm text-text-muted">Räumt die Bibliothek beim Start und einmal am Tag auf: doppelte Alben (gleicher Titel und Künstler, oder abgespalten durch Kollaborationen wie „Alan Walker x Ava Max“) und doppelte Lieder werden zusammengeführt, Cover bleiben erhalten. Es werden nur Einträge in der Datenbank verglichen, keine Dateien gelesen und nichts online gesucht. Dauert Sekunden, ist also kein Rescan.</p>
+          <div id="correctionStatus" class="font-body-sm text-body-sm text-text-muted">Loading…</div>
+          <div class="flex flex-wrap items-center gap-md mt-sm">
+            <button id="btnCorrectionRun" class="px-md py-sm border border-border-subtle text-on-surface font-body-sm text-body-sm rounded hover:bg-surface-bright transition-all disabled:opacity-50">Jetzt ausführen</button>
+            <span id="correctionResult" class="font-body-sm text-body-sm"></span>
+          </div>
+        </div>
       </section>`;
 
     const btn = document.getElementById('btnScanLibrary');
@@ -259,6 +271,33 @@ const CumuAdmin = (function() {
         resEl.className = 'font-body-sm text-body-sm text-danger';
       }
     }
+    function renderCorrection(c) {
+      const el = document.getElementById('correctionStatus');
+      if (!el || !c) return;
+      const when = t => new Date(t).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' });
+      const last = c.last
+        ? `Zuletzt: ${when(c.last.at)} · ${num(c.last.albums)} Alben und ${num(c.last.songs)} Lieder zusammengeführt.`
+        : 'Lief seit dem Update noch nicht.';
+      el.textContent = last + (c.nextAt ? ` Nächster Lauf: ${when(c.nextAt)}.` : '');
+    }
+    CumuApi.get('/admin/correction').then(renderCorrection).catch(() => {});
+    document.getElementById('btnCorrectionRun').addEventListener('click', async (e) => {
+      const resEl = document.getElementById('correctionResult');
+      e.target.disabled = true;
+      resEl.textContent = '';
+      resEl.className = 'font-body-sm text-body-sm';
+      try {
+        const res = await CumuApi.post('/admin/correction/run', {});
+        if (!res || res.error) throw new Error(res?.error || 'Fehlgeschlagen');
+        renderCorrection(res);
+        resEl.textContent = 'Fertig.';
+      } catch (err) {
+        resEl.textContent = err.message || 'Fehlgeschlagen';
+        resEl.className = 'font-body-sm text-body-sm text-danger';
+      }
+      e.target.disabled = false;
+    });
+
     document.getElementById('btnCoverScan').addEventListener('click', () => startCoverScan(false));
     document.getElementById('btnCoverRetry').addEventListener('click', () => startCoverScan(true));
 
@@ -395,7 +434,7 @@ const CumuAdmin = (function() {
   }
 
   async function removeAlbumCover(albumId) {
-    if (!confirm('Remove this cover? The album will not get a cover automatically again (use "Find cover" or "Retry albums without match").')) return;
+    if (!confirm('Remove this cover? The album will not get a cover automatically again (use "Find cover" for a new search).')) return;
     await CumuApi.del(`/admin/albums/${albumId}/cover`);
     switchTab('albums');
   }

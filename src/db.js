@@ -205,7 +205,8 @@ function initDB() {
 
   // Album covers: MusicBrainz ids (for the Cover Art Archive) and how the cover
   // was found. cover_status: 'user' | 'embedded' | 'found' (online) | 'none'
-  // (searched, nothing found) | 'error' (search failed, retried) | NULL (not
+  // (searched, nothing found) | 'removed' (admin removed it, never searched
+  // again automatically) | 'error' (search failed, retried) | NULL (not
   // searched yet)
   const albumCols = db.prepare('PRAGMA table_info(albums)').all().map(c => c.name);
   if (!albumCols.includes('mb_release_id'))       db.exec("ALTER TABLE albums ADD COLUMN mb_release_id TEXT");

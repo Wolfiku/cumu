@@ -14,6 +14,64 @@ function sameTitle(a, b) {
   return String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
 }
 
+// ── Collaborations ───────────────────────────────────────────────────────────
+// Without an album artist tag a song's own artist names its album, so a track
+// by "Alan Walker x Ava Max" would start an album of its own next to the
+// "Alan Walker" one. These helpers find the main artist of such a credit.
+// A credit is only cut where an album with the same title by the shorter name
+// exists, so band names like "Ich + Ich" or "Simon & Garfunkel" stay intact.
+
+const COLLAB_SEPARATOR = /\s*[,;&+×]\s*|\s+(?:feat\.?|ft\.?|featuring|x|vs\.?|with|mit)\s+/giu;
+
+function normArtist(name) {
+  return String(name || '').normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+/** "Ich + Ich x Annette Humpe" -> ["ich + ich", "ich"] (longest first) */
+function collabBaseNames(name) {
+  const full = String(name || '').normalize('NFKC');
+  const bases = [];
+  for (const m of full.matchAll(COLLAB_SEPARATOR)) {
+    const base = normArtist(full.slice(0, m.index));
+    if (base) bases.push(base);
+  }
+  return [...new Set(bases)].reverse();
+}
+
+function albumsWithTitle(db, title) {
+  return db.prepare(`
+    SELECT a.*, ar.name AS artist_name FROM albums a LEFT JOIN artists ar ON ar.id = a.artist_id
+    WHERE LOWER(TRIM(a.title)) = LOWER(TRIM(?))
+  `).all(title);
+}
+
+/**
+ * Album `title` that belongs to the same main artist as `artistId`: either
+ * by the main artist of a collaboration credit, or (the other way round) an
+ * album that was started by a collaboration track of this artist. The latter
+ * is handed over to this artist.
+ */
+function findCollaborationAlbum(db, title, artistId) {
+  const artist = artistId ? db.prepare('SELECT name FROM artists WHERE id = ?').get(artistId) : null;
+  if (!artist) return null;
+  const own = normArtist(artist.name);
+  const candidates = albumsWithTitle(db, title).filter(a => a.artist_id && a.artist_id !== artistId);
+  if (!candidates.length) return null;
+
+  // 1. this credit is a collaboration of an artist who has the album
+  for (const base of collabBaseNames(artist.name)) {
+    const hit = candidates.find(a => normArtist(a.artist_name) === base);
+    if (hit) return hit.id;
+  }
+  // 2. the album was started by a collaboration of this artist
+  const started = candidates.find(a => collabBaseNames(a.artist_name).includes(own));
+  if (started) {
+    db.prepare('UPDATE albums SET artist_id = ? WHERE id = ?').run(artistId, started.id);
+    return started.id;
+  }
+  return null;
+}
+
 /**
  * Deletes albums without songs. If another album of the same artist with the
  * same title is still in use, it inherits the deleted album's cover.
@@ -70,6 +128,12 @@ function getOrCreateAlbum(db, title, artistId, meta = {}, existingAlbumId = null
   // 1. Search for existing album by title and artist_id
   if (!row && artistId) {
     row = db.prepare('SELECT * FROM albums WHERE LOWER(TRIM(title)) = LOWER(?) AND artist_id = ?').get(title, artistId);
+  }
+
+  // 1b. Same album under the main artist of a collaboration ("A x B" -> "A")
+  if (!row && artistId) {
+    const collabId = findCollaborationAlbum(db, title, artistId);
+    if (collabId) row = db.prepare('SELECT * FROM albums WHERE id = ?').get(collabId);
   }
 
   // 2. Search by title where artist_id is NULL
@@ -135,4 +199,4 @@ function resolveEditedSongAlbum(db, song, title, artistId, meta = {}) {
   return getOrCreateAlbum(db, title, artistId, meta);
 }
 
-module.exports = { getOrCreateAlbum, cleanupOrphanedAlbums, resolveEditedSongAlbum };
+module.exports = { getOrCreateAlbum, cleanupOrphanedAlbums, resolveEditedSongAlbum, collabBaseNames, normArtist };
