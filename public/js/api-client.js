@@ -48,10 +48,15 @@ const CumuApi = (() => {
 
   // ── Network Helper ──────────────────────────────────────────────────────────
 
+  const GET_TIMEOUT_MS = 30000;
+
   async function safeFetch(url, opts) {
     try {
       return await fetch(url, opts);
     } catch (err) {
+      if (err && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+        throw new Error('Der Server antwortet nicht. Bitte versuche es gleich noch einmal.');
+      }
       if (err instanceof TypeError || (err.message && (err.message.includes('fetch') || err.message.includes('NetworkError') || err.message.includes('Failed to fetch')))) {
         throw new Error('Server nicht erreichbar. Bitte stelle sicher, dass der Backend-Server läuft.');
       }
@@ -203,6 +208,11 @@ const CumuApi = (() => {
 
     const opts = { method, headers };
     if (body !== undefined) opts.body = JSON.stringify(body);
+    // Reads give up after a while instead of leaving a page loading forever
+    // (server restarting, proxy hanging). Writes may legitimately take longer.
+    if (method === 'GET' && typeof AbortSignal !== 'undefined' && AbortSignal.timeout) {
+      opts.signal = AbortSignal.timeout(GET_TIMEOUT_MS);
+    }
 
     const res = await safeFetch(url, opts);
 
@@ -226,7 +236,18 @@ const CumuApi = (() => {
     return res;
   }
 
-  async function get(url)              { return (await request('GET', url)).json(); }
+  // Error pages of a reverse proxy (502/504 HTML) are no JSON: report them
+  // as an error instead of a JSON parse failure
+  async function readJson(res) {
+    const text = await res.text();
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new Error(res.ok ? 'Ungültige Antwort vom Server' : `Server-Fehler (HTTP ${res.status})`);
+    }
+  }
+
+  async function get(url)              { return readJson(await request('GET', url)); }
   async function post(url, body)       { return (await request('POST', url, body)).json(); }
   async function put(url, body)        { return (await request('PUT', url, body)).json(); }
   async function del(url)              { return (await request('DELETE', url)).json(); }

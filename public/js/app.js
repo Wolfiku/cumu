@@ -596,6 +596,24 @@ function showToast(msg) {
 
   // ── Navigation Router ──────────────────────────────────────────────────────
 
+  // A page whose loading failed (server unreachable, error page) shows the
+  // error and a retry button instead of its loading text forever
+  window.addEventListener('unhandledrejection', (event) => {
+    const text = (main?.textContent || '').trim();
+    const stillLoading = main && main.children.length === 1 && text.length < 60 && text.endsWith('…');
+    if (!stillLoading) return;
+    const page = currentPage;
+    const params = window._lastNavParams;
+    const message = event.reason?.message || 'Laden fehlgeschlagen';
+    main.innerHTML = `
+      <div class="p-margin-desktop flex flex-col items-center gap-md text-center">
+        <span class="material-symbols-outlined text-[40px] text-text-muted">cloud_off</span>
+        <p class="font-body-lg text-body-lg text-on-surface">${esc(message)}</p>
+        <button id="pageRetryBtn" class="px-lg py-sm rounded-lg bg-text-high-contrast text-background font-body-sm text-body-sm font-semibold hover:scale-105 active:scale-95 transition-all">Erneut versuchen</button>
+      </div>`;
+    document.getElementById('pageRetryBtn')?.addEventListener('click', () => navigate(page, params));
+  });
+
   window.navigate = function (page, params) {
     currentPage = page;
     window._lastNavParams = params;
