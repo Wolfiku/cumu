@@ -1313,7 +1313,10 @@ function showToast(msg) {
     window._currentSongId = currentSong.id;
     updateMediaSession();
 
-    const coverSrc = currentSong.cover ? `/stream/cover/${currentSong.cover}` : 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect width="16" height="16" fill="%23f3f3f4"/></svg>';
+    // Podcast episodes carry a full image URL, songs a cover file name
+    const coverSrc = currentSong.cover
+      ? (/^(https?:|data:|\/)/.test(currentSong.cover) ? currentSong.cover : `/stream/cover/${currentSong.cover}`)
+      : 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect width="16" height="16" fill="%23f3f3f4"/></svg>';
     const npCover = document.getElementById('npCover');
     if (npCover) npCover.src = coverSrc;
 
