@@ -425,7 +425,15 @@ router.get('/albums/:id', requireAuth, (req, res) => {
   const db = getDB();
   const album = db.prepare(`SELECT al.*, ar.name as artist_name FROM albums al LEFT JOIN artists ar ON ar.id=al.artist_id WHERE al.id=?`).get(req.params.id);
   if (!album) return res.status(404).json({ error: 'Not found' });
-  const songs = db.prepare(`SELECT s.*, ar.name as artist_name FROM songs s LEFT JOIN artists ar ON ar.id=s.artist_id WHERE s.album_id=? ORDER BY s.track_number ASC`).all(req.params.id);
+  // Each song carries the album's cover (and title) like in every other list,
+  // so the player shows the cover when a song is started from the album page
+  const songs = db.prepare(`
+    SELECT s.*, al.title as album_title, COALESCE(al.cover, s.cover) as cover, ar.name as artist_name
+    FROM songs s
+    LEFT JOIN albums al ON al.id = s.album_id
+    LEFT JOIN artists ar ON ar.id = s.artist_id
+    WHERE s.album_id = ? ORDER BY s.track_number ASC
+  `).all(req.params.id);
   res.json({ ...album, songs });
 });
 
