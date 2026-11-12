@@ -33,7 +33,7 @@ curl -fsSL https://raw.githubusercontent.com/Wolfiku/cumu/main/scripts/install.s
 ```
 [+] Interactive Setup Wizard     — create your custom admin account on first launch
 [+] Custom Port Support          — specify custom server port during install, in web setup, or via env
-[+] Automated Daily Updates      — auto-updates via cron (Linux) & Watchtower (Docker)
+[+] Automated Daily Updates      — new releases via cron (Linux) & Watchtower (Docker), not every push
 [+] Admin Update Dashboard       — check for and trigger system updates directly in the web UI
 [+] Instant Drag & Drop Import   — drop audio files or full folders into browser UI or ./music
 [+] Recursive Library Scanner    — auto-scans nested subdirectories (Artist/Album/Song.mp3)
