@@ -198,6 +198,22 @@ async function prepareLibrary() {
     }
   }
 
+  // Fresh backup before the album merge rules (collaborations, same release,
+  // same album folder) run for the first time. Until it exists they are skipped.
+  if (getConfig().albumMergeBackup !== 2) {
+    if (getDB().prepare('SELECT 1 FROM songs LIMIT 1').get()) {
+      try {
+        const backupPath = await backupDatabase('before-album-merge');
+        console.log(`[cumu] Database backed up to ${backupPath}`);
+        setConfig('albumMergeBackup', 2);
+      } catch (err) {
+        console.error('[cumu] Database backup failed, album merging stays off until the next start:', err.message);
+      }
+    } else {
+      setConfig('albumMergeBackup', 2);
+    }
+  }
+
   try {
     const res = await adminRoutes.repairMergedAlbums();
     if (res.split > 0) console.log(`[cumu] Repaired ${res.split} merged album(s).`);

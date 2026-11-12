@@ -17,10 +17,12 @@ function sameTitle(a, b) {
 // ── Collaborations ───────────────────────────────────────────────────────────
 // Without an album artist tag a song's own artist names its album, so tracks
 // by "Alan Walker x Ava Max" and "Alan Walker, K-391 & Corsak" would each
-// start an album of their own. Albums with the same title whose credits name
-// the same main artist (the first one named) are one album. It is credited to
-// the part all credits share: "Alan Walker" for the two above, "Ich + Ich" for
-// "Ich + Ich" and "Ich + Ich x Annette Humpe". The songs keep their own artist.
+// start an album of their own. Albums with the same title whose credits start
+// with the same artist of the library are one album, credited to that artist
+// ("Alan Walker"; "Ich + Ich" for "Ich + Ich x Annette Humpe"). Only names
+// that are artists with songs of their own count as such a main artist, so
+// band names are never cut into pieces ("Crosby, Stills & Nash" does not
+// become "Crosby"). The songs keep their own artist.
 
 const COLLAB_SEPARATOR = /\s*[,;&+×]\s*|\s+[\(\[]?(?:feat\.?|ft\.?|featuring|x|vs\.?|with|mit)\s+/giu;
 
@@ -45,12 +47,6 @@ function creditPrefixes(name) {
   return parts.filter(p => !seen.has(p.key) && seen.add(p.key)).sort((a, b) => b.key.length - a.key.length);
 }
 
-/** The first artist a credit names ("alan walker" for "Alan Walker x Ava Max") */
-function mainArtistKey(name) {
-  const parts = creditPrefixes(name);
-  return parts.length ? parts[parts.length - 1].key : '';
-}
-
 /** Every artist a credit names: "Alan Walker, K-391 & Corsak" -> 3 names */
 function creditParticipants(name) {
   return String(name || '').normalize('NFKC').split(COLLAB_SEPARATOR)
@@ -58,18 +54,45 @@ function creditParticipants(name) {
     .filter(part => part.key);
 }
 
-/** An artist all credits name somewhere ("K-391 & Alan Walker", "Alan Walker x Y"), or null */
-function sharedParticipant(names) {
+/**
+ * An artist all credits name somewhere ("K-391 & Alan Walker", "Alan Walker x
+ * Y" -> Alan Walker), or null. With several, artists of the library with the
+ * most songs come first.
+ */
+function sharedParticipant(names, known = new Map()) {
   const lists = names.map(creditParticipants);
   if (!lists.length || lists.some(l => !l.length)) return null;
-  return lists[0].find(p => lists.every(l => l.some(q => q.key === p.key))) || null;
+  const shared = lists[0].filter(p => lists.every(l => l.some(q => q.key === p.key)));
+  return shared.sort((a, b) => (known.get(b.key) || 0) - (known.get(a.key) || 0))[0] || null;
 }
 
-/** The longest leading part all credits share, or null */
-function commonCredit(names) {
+/**
+ * Artists that have songs of their own, by normalized name -> number of songs.
+ * A shortened credit only counts as an artist if it is one of these, so
+ * "Crosby, Stills & Nash" and "Crosby, Stills, Nash & Young" never meet
+ * as "Crosby, Stills".
+ */
+function knownArtists(db) {
+  const map = new Map();
+  for (const row of db.prepare(`
+    SELECT ar.name, COUNT(s.id) AS songs FROM artists ar JOIN songs s ON s.artist_id = ar.id GROUP BY ar.id
+  `).all()) {
+    const key = normArtist(row.name);
+    map.set(key, (map.get(key) || 0) + row.songs);
+  }
+  return map;
+}
+
+/**
+ * The artist two or more credits have in common as their main artist: the
+ * longest leading part they share that is an artist of the library
+ * ("Alan Walker" for "Alan Walker, K-391 & Corsak" and "Alan Walker x Sofia
+ * Carson"). null when there is none.
+ */
+function commonMainArtist(names, known) {
   const lists = names.map(creditPrefixes);
   if (!lists.length || lists.some(l => !l.length)) return null;
-  return lists[0].find(p => lists.every(l => l.some(q => q.key === p.key))) || null;
+  return lists[0].find(p => known.has(p.key) && lists.every(l => l.some(q => q.key === p.key))) || null;
 }
 
 function artistIdForName(db, name) {
@@ -115,11 +138,12 @@ function pickAlbumToKeep(db, albums, credit) {
 function findCollaborationAlbum(db, title, artistId) {
   const artist = artistId ? db.prepare('SELECT name FROM artists WHERE id = ?').get(artistId) : null;
   if (!artist) return null;
-  const main = mainArtistKey(artist.name);
+  const known = knownArtists(db);
+  known.set(normArtist(artist.name), (known.get(normArtist(artist.name)) || 0) + 1); // the song being added
   const candidates = albumsWithTitle(db, title)
-    .filter(a => a.artist_id && a.artist_id !== artistId && mainArtistKey(a.artist_name) === main);
+    .filter(a => a.artist_id && a.artist_id !== artistId && commonMainArtist([artist.name, a.artist_name], known));
   if (!candidates.length) return null;
-  const credit = commonCredit([artist.name, ...candidates.map(a => a.artist_name)]);
+  const credit = commonMainArtist([artist.name, ...candidates.map(a => a.artist_name)], known);
   const album = pickAlbumToKeep(db, candidates, credit);
   creditAlbumTo(db, album, credit);
   return album.id;
@@ -252,4 +276,4 @@ function resolveEditedSongAlbum(db, song, title, artistId, meta = {}) {
   return getOrCreateAlbum(db, title, artistId, meta);
 }
 
-module.exports = { getOrCreateAlbum, cleanupOrphanedAlbums, resolveEditedSongAlbum, mainArtistKey, commonCredit, sharedParticipant, creditAlbumTo, pickAlbumToKeep };
+module.exports = { getOrCreateAlbum, cleanupOrphanedAlbums, resolveEditedSongAlbum, commonMainArtist, sharedParticipant, knownArtists, creditAlbumTo, pickAlbumToKeep };

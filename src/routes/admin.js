@@ -1025,7 +1025,9 @@ let nextCorrectionAt = null;
 
 function runLibraryCorrection(trigger = 'daily') {
   if (runningScan || activeUploads > 0) return { postponed: true };
-  const result = dedupeLibrary(getDB(), findSongFile);
+  // Albums split by collaborations are only merged once the database was
+  // backed up before the first run of these rules (see server.js)
+  const result = dedupeLibrary(getDB(), findSongFile, { splitAlbums: getConfig().albumMergeBackup === 2 });
   const entry = { at: Date.now(), trigger, albums: result.albums, songs: result.songs };
   setConfig('lastLibraryCorrection', entry);
   if (result.albums || result.songs) {
