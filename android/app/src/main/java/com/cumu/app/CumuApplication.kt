@@ -1,5 +1,7 @@
 package com.cumu.app
 
+import kotlinx.coroutines.launch
+
 import android.app.Application
 import coil3.ImageLoader
 import coil3.PlatformContext
@@ -26,6 +28,7 @@ class CumuApplication : Application(), SingletonImageLoader.Factory {
     lateinit var downloads: DownloadStore; private set
     lateinit var player: PlayerConnection; private set
     lateinit var playback: com.cumu.app.data.PlaybackSettings; private set
+    lateinit var live: com.cumu.app.data.LiveClient; private set
     lateinit var searchHistory: com.cumu.app.data.SearchHistory; private set
 
     override fun onCreate() {
@@ -36,7 +39,10 @@ class CumuApplication : Application(), SingletonImageLoader.Factory {
         repo = Repository(api) { downloads.songs.value.values.map { it.song } }
         downloads = DownloadStore(this, api, appScope)
         playback = com.cumu.app.data.PlaybackSettings(this)
+        live = com.cumu.app.data.LiveClient(this, api, appScope) { repo.refreshInboxUnread() }
         player = PlayerConnection(this)
+        // Live playback (devices, parties) while signed in
+        appScope.launch { sessions.session.collect { if (it != null) live.start() else live.stop() } }
         searchHistory = com.cumu.app.data.SearchHistory(this)
     }
 

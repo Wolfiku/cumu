@@ -145,12 +145,23 @@ fun MiniPlayer(onOpen: () -> Unit) {
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
                             Text(sg.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
-                            val sub = s.error ?: sg.artistName
+                            val party by app.live.party.collectAsState()
+                            val sub = s.error ?: when {
+                                party != null -> "Listening Party · ${sg.artistName ?: ""}"
+                                s.remoteDevice != null -> "Auf ${s.remoteDevice}"
+                                else -> sg.artistName
+                            }
                             if (!sub.isNullOrBlank()) Text(
                                 sub,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = if (s.error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = if (s.remoteDevice != null || party != null) FontWeight.SemiBold else FontWeight.Normal,
+                                color = when {
+                                    s.error != null -> MaterialTheme.colorScheme.error
+                                    party != null -> PartyGradient[0]
+                                    s.remoteDevice != null -> LiveGreen
+                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                },
                             )
                         }
                     }

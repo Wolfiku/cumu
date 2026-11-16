@@ -54,6 +54,8 @@ curl -fsSL https://raw.githubusercontent.com/Wolfiku/cumu/main/scripts/install.s
 [+] Shared Playlists            — private, public (whole server) or shared with chosen users, collaborative editing
 [+] Share & Inbox               — send songs, albums & playlists to other users, links to every item
 [+] Privacy Controls            — invitations, shares, name visibility, statistics, blocking, delete history
+[+] Devices & Remote Control    — see where music plays, control it and move playback between web and app
+[+] Listening Parties           — listen in sync with others on the server, guests suggest songs
 [+] Modern Theme Engine          — clean, minimalist Studio Environment design system
 [+] 100% Self-Hosted & Private   — SQLite backend, no cloud dependency, no telemetry
 ```

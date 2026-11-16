@@ -21,6 +21,7 @@ import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.AutoStories
 import androidx.compose.material.icons.rounded.Block
+import androidx.compose.material.icons.rounded.Celebration
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.DeleteForever
 import androidx.compose.material.icons.rounded.Inbox
@@ -82,6 +83,7 @@ private fun kindText(type: String) = when (type) {
     "album" -> "ein Album"
     "artist" -> "einen Künstler"
     "audiobook" -> "ein Hörbuch"
+    "party" -> "eine Einladung zur Listening Party"
     else -> "einen Song"
 }
 
@@ -109,6 +111,7 @@ fun InboxScreen() {
             "artist" -> nav.artist(it.itemId)
             "playlist" -> nav.playlist(it.itemId)
             "audiobook" -> nav.audiobook(it.itemId)
+            "party" -> { app.live.joinParty(it.itemId); nav.back() }
         }
     }
 
@@ -135,6 +138,7 @@ fun InboxScreen() {
                                     "artist" -> Icons.Rounded.Person
                                     "playlist" -> Icons.AutoMirrored.Rounded.QueueMusic
                                     "audiobook" -> Icons.Rounded.AutoStories
+                                    "party" -> Icons.Rounded.Celebration
                                     else -> Icons.Rounded.MusicNote
                                 },
                             )

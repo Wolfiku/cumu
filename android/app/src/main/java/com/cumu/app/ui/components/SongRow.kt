@@ -22,6 +22,7 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.AutoStories
 import androidx.compose.material.icons.rounded.Bedtime
+import androidx.compose.material.icons.rounded.Celebration
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.Download
@@ -216,6 +217,12 @@ fun SongMenu(song: Song, onRemove: (() -> Unit)? = null, removeLabel: String = "
                         } catch (e: Exception) { snackbar(errorText(e)) }
                     }
                 },
+            )
+            val party by app.live.party.collectAsState()
+            if (party?.isHost == false) DropdownMenuItem(
+                text = { Text("Zur Party vorschlagen") },
+                leadingIcon = { Icon(Icons.Rounded.Celebration, null) },
+                onClick = { open = false; app.player.suggestToParty(song) },
             )
             DropdownMenuItem(
                 text = { Text("Teilen") },

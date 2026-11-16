@@ -39,6 +39,9 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Celebration
+import androidx.compose.material.icons.rounded.Devices
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.material.icons.rounded.DragHandle
@@ -105,6 +108,10 @@ fun PlayerScreen() {
     val s by app.player.state.collectAsState()
     var showQueue by remember { mutableStateOf(false) }
     var showSleep by remember { mutableStateOf(false) }
+    var showDevices by remember { mutableStateOf(false) }
+    var showParty by remember { mutableStateOf(false) }
+    val devices by app.live.devices.collectAsState()
+    val party by app.live.party.collectAsState()
     // Position while the user drags the slider
     var dragPos by remember { mutableStateOf<Float?>(null) }
 
@@ -189,6 +196,8 @@ fun PlayerScreen() {
                 FavoriteButton(song.id)
             }
             }
+            // "Wiedergabe auf …" / party: only when it applies
+            com.cumu.app.ui.components.LivePill(s.remoteDevice, party, onDevices = { showDevices = true }, onParty = { showParty = true })
             s.error?.let { Text(it, Modifier.fillMaxWidth().padding(top = 8.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
 
             Spacer(Modifier.height(12.dp))
@@ -248,6 +257,13 @@ fun PlayerScreen() {
                 Spacer(Modifier.width(4.dp))
                 SleepTimerChip(isBook) { showSleep = true }
                 Spacer(Modifier.weight(1f))
+                // Devices: only when more than one device is online (left of the queue)
+                if (devices.size > 1 || s.remoteDevice != null) IconButton(onClick = { showDevices = true }) {
+                    Icon(Icons.Rounded.Devices, "Geräte", tint = if (s.remoteDevice != null) com.cumu.app.ui.components.LiveGreen else LocalContentColor.current)
+                }
+                IconButton(onClick = { showParty = true }) {
+                    Icon(Icons.Rounded.Celebration, "Listening Party", tint = if (party != null) com.cumu.app.ui.components.PartyGradient[0] else LocalContentColor.current)
+                }
                 if (isBook) IconButton(onClick = { showQueue = true }) { Icon(Icons.Rounded.FormatListNumbered, "Kapitel") }
                 else IconButton(onClick = { showQueue = true }) { Icon(Icons.AutoMirrored.Rounded.QueueMusic, "Warteschlange") }
             }
@@ -258,6 +274,8 @@ fun PlayerScreen() {
         QueueList(if (isBook) "Kapitel" else "Warteschlange")
     }
     if (showSleep) SleepTimerSheet(isBook) { showSleep = false }
+    if (showDevices) com.cumu.app.ui.components.DevicePickerSheet { showDevices = false }
+    if (showParty) com.cumu.app.ui.components.PartySheet { showParty = false }
 }
 
 /** Audiobook controls: previous/next chapter, 15 s back, 30 s forward. */

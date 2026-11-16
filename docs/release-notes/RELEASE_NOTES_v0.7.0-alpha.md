@@ -1,4 +1,4 @@
-# cumu v0.7.0-alpha — Quality of Life & Social: Audiobooks, Crossfade, Shared Playlists
+# cumu v0.7.0-alpha — Quality of Life & Social: Audiobooks, Crossfade, Shared Playlists, Devices & Listening Parties
 
 > ⚠️ **This is an alpha release.** cumu is still under active development. Expect bugs, back up your `data` folder before updating, and please report problems in the [issues](https://github.com/Wolfiku/cumu/issues).
 
@@ -60,6 +60,21 @@
 - **Links:** every item has a link (`https://your-server/#/album/…`). It opens the item directly after login. Copy it on the web; in the app, share it with any app or copy it.
 - A private playlist can only be sent once the person may open it: cumu offers to invite them in the same step.
 
+## 🔊 Play on Other Devices (web and Android)
+
+- **See where music plays.** Every open cumu (browser tab, Android app) is a device of your account. When another device plays, the others show **"Wiedergabe auf …"**: on the web as a green line above the player bar and as a green pill on the now playing page, in the app as a green pill in the player and "Auf …" in the mini player.
+- **Control it from anywhere.** Play/pause, next, previous, seeking, shuffle, repeat and volume work on the playing device. Tapping a song starts it there.
+- **Switch devices.** The device button lists your devices; tap one to move the playback there, with queue and position. Web: in the player bar and on the now playing page. App: on the now playing page, left of the queue. The button appears **only when more than one device is online**.
+- Only one device of an account plays at a time: starting music on one device pauses the other.
+
+## 🎉 Listening Parties (web and Android)
+
+- Start a party from the 🎉 button while something plays. Invite people by user name (they get it in "Mit dir geteilt") or share the link.
+- **Guests hear the same music in sync**: same song, same position, play and pause follow the host. They see "Party von …" in the player.
+- **Suggest songs:** guests tap a song (or ⋮ → "Zur Party vorschlagen"); it plays right after the current song in the host's queue, in the order the suggestions came.
+- Only the host controls the playback. The host ends the party, guests can leave any time. Blocked users cannot join each other's parties.
+- Parties are not saved: they end when the host leaves or the server restarts.
+
 ## 🛡️ Privacy (web: Settings → Privatsphäre, app: Profil → Privatsphäre)
 
 - **Invitations to playlists:** allow or refuse.
@@ -93,12 +108,13 @@
 - `POST /api/shares` `{ username, type, id, message? }`, `GET /api/shares/inbox`, `GET /api/shares/unread`, `POST /api/shares/:id|all/read`, `DELETE /api/shares/:id`; WebSocket event `share_received`.
 - `GET /api/users/suggest?q=`, `GET|PUT /api/me/privacy`, `POST /api/me/blocks` `{ username }`, `DELETE /api/me/blocks/:userId`, `DELETE /api/me/history`.
 - `/api/home` and `/api/library/overview` gain `inboxUnread`.
+- WebSocket (`/ws`): `hello`, `device_state`, `device_command` (`play`, `pause`, `toggle`, `next`, `prev`, `seek`, `volume`, `shuffle`, `repeat`, `play_songs`, `transfer`, `handoff`), `devices`; parties: `party_create`, `party_join`, `party_leave`, `party_invite`, `party_queue_add`, `party_state`, `party_sync`, `party_ended`. Shares can carry the type `party`.
 - Songs carry `intro_silence_ms`, `outro_silence_ms`, `loudness_lufs`, `peak_db` and `loudness_gain_db` once analysed.
 
 ## ⬆️ Updating
 
 - **Docker / NAS:** Watchtower updates automatically, or use "Update installieren" in the admin panel.
 - **Linux / LXC / .deb:** `sudo cumu-update`
-- **Android:** install the new `cumu_0.7.0-alpha.apk` from this release for the sleep timer, audiobooks, crossfade, gestures, the new queue, shared playlists, sharing and privacy. Older app versions keep working, but they show no audiobook sections.
+- **Android:** install the new `cumu_0.7.0-alpha.apk` from this release for the sleep timer, audiobooks, crossfade, gestures, the new queue, shared playlists, sharing, privacy, devices and listening parties. Older app versions keep working, but they show no audiobook sections.
 
 After updating, reload the web app once (the offline cache is refreshed automatically).
