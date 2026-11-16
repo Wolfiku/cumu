@@ -258,7 +258,8 @@ function searchLibrary(db, q, userId, opts = {}) {
   }
 
   // Own playlists
-  const playlistRows = userId ? db.prepare('SELECT * FROM playlists WHERE user_id = ?').all(userId) : [];
+  // Own, shared with the user, and every public playlist
+  const playlistRows = userId ? require('./playlistSharing').visiblePlaylistRows(db, userId) : [];
   const playlists = rank(playlistRows, p => scoreText(pq, p.name) * 0.95, 10);
 
   const out = {

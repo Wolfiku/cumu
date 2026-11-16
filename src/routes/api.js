@@ -17,6 +17,7 @@ const { fetchPodcastSearchResults } = require('./podcasts');
 const { searchLibrary, prepareQuery, scoreText } = require('../services/search');
 const audiobooks = require('../services/audiobooks');
 const { musicOnly, isSpeechGenre } = audiobooks;
+const sharing = require('../services/playlistSharing');
 
 const router = express.Router();
 
@@ -123,7 +124,9 @@ router.get('/home', requireAuth, (req, res) => {
     LIMIT 12
   `).all();
 
-  const cumuPlaylists = playlistSummaries(db, userId).filter(p => p.is_generated === 1 && p.song_count > 0);
+  const cumuPlaylists = playlistSummaries(db, userId).filter(p => p.is_generated === 1 && p.is_owner === 1 && p.song_count > 0);
+  // Public playlists of other users, for the start page
+  const publicPlaylists = sharing.discoverPublic(db, userId, null, 12);
 
   // Audiobooks get their own section: started books first, then the newest
   const books = audiobooks.listBooks(db, userId);
@@ -132,7 +135,7 @@ router.get('/home', requireAuth, (req, res) => {
 
   res.json({
     recentlyPlayed, mostPlayed, newSongs, topAlbums, topAlbumsMode,
-    newAlbums, artists, cumuPlaylists, genres: genreStats(db, userId),
+    newAlbums, artists, cumuPlaylists, publicPlaylists, genres: genreStats(db, userId),
     audiobooks: {
       continue: continueBooks.slice(0, 10),
       recent: books.filter(b => !startedIds.has(b.id)).slice(0, 12),
@@ -152,17 +155,18 @@ function isGeneratedPlaylist(pl) {
  * ids (enough for lists and download badges). Two queries in total.
  */
 function playlistSummaries(db, userId) {
-  const rows = db.prepare('SELECT * FROM playlists WHERE user_id = ? ORDER BY created_at DESC').all(userId);
+  // Own playlists, shared with the user, and saved public ones
+  const rows = sharing.libraryPlaylistRows(db, userId);
   if (!rows.length) return [];
+  const ids = rows.map(r => r.id);
   const entries = db.prepare(`
     SELECT ps.playlist_id, ps.song_id, COALESCE(s.cover, al.cover) AS cover
-    FROM playlists p
-    JOIN playlist_songs ps ON ps.playlist_id = p.id
+    FROM playlist_songs ps
     JOIN songs s ON s.id = ps.song_id
     LEFT JOIN albums al ON al.id = s.album_id
-    WHERE p.user_id = ?
+    WHERE ps.playlist_id IN (${ids.map(() => '?').join(',')})
     ORDER BY ps.playlist_id, ps.position ASC
-  `).all(userId);
+  `).all(...ids);
   const byList = new Map();
   for (const e of entries) {
     let l = byList.get(e.playlist_id);
@@ -173,7 +177,7 @@ function playlistSummaries(db, userId) {
   return rows.map(pl => {
     const l = byList.get(pl.id) || { ids: [], cover: null };
     return {
-      ...pl,
+      ...sharing.decorate(db, pl, userId),
       is_generated: isGeneratedPlaylist(pl),
       song_count: l.ids.length,
       song_ids: l.ids,
@@ -315,6 +319,7 @@ router.get('/search', requireAuth, async (req, res) => {
   const pq = prepareQuery(q);
   const audiobookResults = audiobooks.searchBooks(db, userId, (t) => scoreText(pq, t), 10);
   const playlists = rankedPlaylists.map(pl => {
+    pl = sharing.decorate(db, pl, userId);
     const pSongs = db.prepare(`
       SELECT s.*, al.title as album_title, al.cover, ar.name as artist_name
       FROM playlist_songs ps
@@ -500,22 +505,61 @@ router.get('/artists/:id', requireAuth, (req, res) => {
 });
 
 // ── Playlists ──────────────────────────────────────────────────────────────
+// Own playlists, playlists shared with the user and public ones they saved.
+// Every answer carries visibility, owner_username, access, can_edit, saved.
+
+const PLAYLIST_SONGS_SQL = `
+  SELECT s.*, al.title as album_title, COALESCE(al.cover, s.cover) as cover, ar.name as artist_name,
+    ps.added_by, ab.username as added_by_username, ps.added_at
+  FROM playlist_songs ps
+  JOIN songs s ON s.id=ps.song_id
+  LEFT JOIN albums al ON al.id=s.album_id
+  LEFT JOIN artists ar ON ar.id=s.artist_id
+  LEFT JOIN users ab ON ab.id=ps.added_by
+  WHERE ps.playlist_id=?
+  ORDER BY ps.position ASC`;
+
+/** Loads a playlist the user may see, or answers 404 (also for private playlists of others). */
+function loadPlaylist(req, res) {
+  const db = getDB();
+  const pl = db.prepare('SELECT * FROM playlists WHERE id=?').get(req.params.id);
+  const access = sharing.accessOf(db, pl, req.user.id);
+  if (!pl || !access.canView) { res.status(404).json({ error: 'Playlist nicht gefunden' }); return null; }
+  return { db, pl, access };
+}
+
+/** Like loadPlaylist, but the user must be allowed to change the songs. */
+function loadEditablePlaylist(req, res) {
+  const r = loadPlaylist(req, res);
+  if (!r) return null;
+  const generated = sharing.isGenerated(r.pl);
+  // cumu keeps its own playlists up to date (isSystemSync), nobody edits them by hand
+  if (generated && !(req.body && req.body.isSystemSync && r.access.role === 'owner')) {
+    res.status(403).json({ error: 'Cumu-erstellte Playlisten können nicht bearbeitet werden' });
+    return null;
+  }
+  if (!generated && !r.access.canEdit) {
+    res.status(403).json({ error: 'Du darfst diese Playlist nicht bearbeiten' });
+    return null;
+  }
+  return r;
+}
+
+function requireOwner(req, res) {
+  const r = loadPlaylist(req, res);
+  if (!r) return null;
+  if (r.access.role !== 'owner') { res.status(403).json({ error: 'Nur der Ersteller kann das ändern' }); return null; }
+  return r;
+}
+
 router.get('/playlists', requireAuth, (req, res) => {
   const db = getDB();
-  const rawPlaylists = db.prepare(`SELECT * FROM playlists WHERE user_id=? ORDER BY created_at DESC`).all(req.user.id);
-  const playlists = rawPlaylists.map(pl => {
-    const is_generated = (pl.is_generated === 1 || (pl.description && pl.description.includes('[dynamic:'))) ? 1 : 0;
-    const songs = db.prepare(`
-      SELECT s.*, al.title as album_title, al.cover, ar.name as artist_name
-      FROM playlist_songs ps
-      JOIN songs s ON s.id=ps.song_id
-      LEFT JOIN albums al ON al.id=s.album_id
-      LEFT JOIN artists ar ON ar.id=s.artist_id
-      WHERE ps.playlist_id=?
-      ORDER BY ps.position ASC
-    `).all(pl.id);
-    return { ...pl, is_generated, songs };
-  });
+  const songsStmt = db.prepare(PLAYLIST_SONGS_SQL);
+  const playlists = sharing.libraryPlaylistRows(db, req.user.id).map(pl => ({
+    ...sharing.decorate(db, pl, req.user.id),
+    is_generated: isGeneratedPlaylist(pl),
+    songs: songsStmt.all(pl.id),
+  }));
   res.json(playlists);
 });
 
@@ -525,37 +569,72 @@ router.post('/playlists', requireAuth, (req, res) => {
   if (!name) return res.status(400).json({ error: 'Name required' });
   const id = uuidv4();
   const isGen = (is_generated === 1 || is_generated === true || (description && description.includes('[dynamic:'))) ? 1 : 0;
-  db.prepare('INSERT INTO playlists (id, name, user_id, description, is_generated) VALUES (?, ?, ?, ?, ?)').run(id, name, req.user.id, description || '', isGen);
-  res.json({ id, name, description, is_generated: isGen });
+  // New playlists are always private; sharing is set afterwards
+  db.prepare("INSERT INTO playlists (id, name, user_id, description, is_generated, visibility, updated_at) VALUES (?, ?, ?, ?, ?, 'private', unixepoch())")
+    .run(id, name, req.user.id, description || '', isGen);
+  res.json({ id, name, description, is_generated: isGen, visibility: 'private' });
+});
+
+// Public playlists of other users (browse / search)
+router.get('/playlists/discover', requireAuth, (req, res) => {
+  const db = getDB();
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 30, 1), 100);
+  const rows = sharing.discoverPublic(db, req.user.id, req.query.q, limit);
+  const coverStmt = db.prepare(`SELECT COALESCE(al.cover, s.cover) AS cover FROM playlist_songs ps JOIN songs s ON s.id = ps.song_id
+    LEFT JOIN albums al ON al.id = s.album_id WHERE ps.playlist_id = ? AND COALESCE(al.cover, s.cover) IS NOT NULL ORDER BY ps.position LIMIT 1`);
+  const savedStmt = db.prepare('SELECT 1 FROM playlist_saves WHERE user_id = ? AND playlist_id = ?');
+  res.json(rows.map(pl => ({
+    ...pl,
+    owner_id: pl.user_id,
+    is_generated: 0,
+    access: 'public',
+    is_owner: 0,
+    can_edit: 0,
+    saved: savedStmt.get(req.user.id, pl.id) ? 1 : 0,
+    cover: pl.cover || coverStmt.get(pl.id)?.cover || null,
+  })));
 });
 
 router.get('/playlists/:id', requireAuth, (req, res) => {
-  const db = getDB();
-  const playlist = db.prepare(`
-    SELECT p.*, u.username as owner_username 
-    FROM playlists p 
-    LEFT JOIN users u ON u.id = p.user_id 
-    WHERE p.id=?
-  `).get(req.params.id);
-  if (!playlist) return res.status(404).json({ error: 'Not found' });
-  const is_generated = (playlist.is_generated === 1 || (playlist.description && playlist.description.includes('[dynamic:'))) ? 1 : 0;
-  const songs = db.prepare(`SELECT s.*, al.title as album_title, al.cover, ar.name as artist_name FROM playlist_songs ps JOIN songs s ON s.id=ps.song_id LEFT JOIN albums al ON al.id=s.album_id LEFT JOIN artists ar ON ar.id=s.artist_id WHERE ps.playlist_id=? ORDER BY ps.position ASC`).all(req.params.id);
-  res.json({ ...playlist, is_generated, songs });
+  const r = loadPlaylist(req, res);
+  if (!r) return;
+  const { db, pl, access } = r;
+  const songs = db.prepare(PLAYLIST_SONGS_SQL).all(pl.id);
+  res.json({
+    ...sharing.decorate(db, pl, req.user.id, access),
+    is_generated: isGeneratedPlaylist(pl),
+    songs,
+    members: sharing.members(db, pl.id),
+  });
+});
+
+// Rename / describe / change visibility (owner only)
+router.put('/playlists/:id', requireAuth, (req, res) => {
+  const r = requireOwner(req, res);
+  if (!r) return;
+  const { db, pl } = r;
+  const { name, description, visibility } = req.body || {};
+  if (visibility !== undefined) {
+    if (!sharing.VISIBILITIES.includes(visibility)) return res.status(400).json({ error: 'Ungültige Sichtbarkeit' });
+    if (visibility !== 'private' && sharing.isGenerated(pl)) return res.status(400).json({ error: 'Cumu-Playlists bleiben privat' });
+  }
+  if (name !== undefined && !String(name).trim()) return res.status(400).json({ error: 'Name required' });
+  db.prepare('UPDATE playlists SET name = COALESCE(?, name), description = COALESCE(?, description), visibility = COALESCE(?, visibility), updated_at = unixepoch() WHERE id = ?')
+    .run(name !== undefined ? String(name).trim() : null, description !== undefined ? String(description) : null, visibility || null, pl.id);
+  const updated = db.prepare('SELECT * FROM playlists WHERE id = ?').get(pl.id);
+  res.json({ success: true, playlist: { ...sharing.decorate(db, updated, req.user.id), members: sharing.members(db, pl.id) } });
 });
 
 router.post('/playlists/:id/songs', requireAuth, (req, res) => {
-  const db = getDB();
-  const targetPl = db.prepare('SELECT is_generated, description FROM playlists WHERE id=?').get(req.params.id);
-  if (targetPl && (targetPl.is_generated === 1 || (targetPl.description && targetPl.description.includes('[dynamic:')))) {
-    if (!req.body.isSystemSync) {
-      return res.status(403).json({ error: 'Cumu-erstellte Playlisten können nicht bearbeitet werden' });
-    }
-  }
+  const r = loadEditablePlaylist(req, res);
+  if (!r) return;
+  const { db, pl } = r;
   const { songId } = req.body;
-  const maxPos = db.prepare('SELECT MAX(position) as mp FROM playlist_songs WHERE playlist_id=?').get(req.params.id);
+  const maxPos = db.prepare('SELECT MAX(position) as mp FROM playlist_songs WHERE playlist_id=?').get(pl.id);
   const pos = (maxPos?.mp || 0) + 1;
   try {
-    db.prepare('INSERT OR IGNORE INTO playlist_songs (playlist_id, song_id, position) VALUES (?, ?, ?)').run(req.params.id, songId, pos);
+    db.prepare('INSERT OR IGNORE INTO playlist_songs (playlist_id, song_id, position, added_by) VALUES (?, ?, ?, ?)').run(pl.id, songId, pos, req.user.id);
+    sharing.touch(db, pl.id);
     res.json({ success: true });
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -563,41 +642,110 @@ router.post('/playlists/:id/songs', requireAuth, (req, res) => {
 });
 
 router.post('/playlists/:id/sync-songs', requireAuth, (req, res) => {
-  const db = getDB();
-  const targetPl = db.prepare('SELECT is_generated, description FROM playlists WHERE id=?').get(req.params.id);
-  if (targetPl && (targetPl.is_generated === 1 || (targetPl.description && targetPl.description.includes('[dynamic:')))) {
-    if (!req.body.isSystemSync) {
-      return res.status(403).json({ error: 'Cumu-erstellte Playlisten können nicht bearbeitet werden' });
-    }
-  }
+  const r = loadEditablePlaylist(req, res);
+  if (!r) return;
+  const { db, pl } = r;
   const { songIds } = req.body;
   if (!Array.isArray(songIds)) return res.status(400).json({ error: 'songIds must be an array' });
-  db.prepare('DELETE FROM playlist_songs WHERE playlist_id=?').run(req.params.id);
-  const stmt = db.prepare('INSERT OR IGNORE INTO playlist_songs (playlist_id, song_id, position) VALUES (?, ?, ?)');
-  const insertMany = db.transaction((ids) => {
+  // Keep who added which song when the list is only reordered
+  const addedBy = new Map(db.prepare('SELECT song_id, added_by, added_at FROM playlist_songs WHERE playlist_id=?').all(pl.id).map(x => [x.song_id, x]));
+  const stmt = db.prepare('INSERT OR IGNORE INTO playlist_songs (playlist_id, song_id, position, added_by, added_at) VALUES (?, ?, ?, ?, ?)');
+  db.transaction((ids) => {
+    db.prepare('DELETE FROM playlist_songs WHERE playlist_id=?').run(pl.id);
     ids.forEach((sid, idx) => {
-      stmt.run(req.params.id, sid, idx + 1);
+      const old = addedBy.get(sid);
+      stmt.run(pl.id, sid, idx + 1, old ? old.added_by : req.user.id, old ? old.added_at : Math.floor(Date.now() / 1000));
     });
-  });
-  insertMany(songIds);
+  })(songIds);
+  sharing.touch(db, pl.id);
   res.json({ success: true, count: songIds.length });
 });
 
 router.delete('/playlists/:id/songs/:songId', requireAuth, (req, res) => {
-  const db = getDB();
-  const targetPl = db.prepare('SELECT is_generated, description FROM playlists WHERE id=?').get(req.params.id);
-  if (targetPl && (targetPl.is_generated === 1 || (targetPl.description && targetPl.description.includes('[dynamic:')))) {
-    return res.status(403).json({ error: 'Cumu-erstellte Playlisten können nicht bearbeitet werden' });
-  }
-  db.prepare('DELETE FROM playlist_songs WHERE playlist_id=? AND song_id=?').run(req.params.id, req.params.songId);
+  const r = loadEditablePlaylist(req, res);
+  if (!r) return;
+  r.db.prepare('DELETE FROM playlist_songs WHERE playlist_id=? AND song_id=?').run(r.pl.id, req.params.songId);
+  sharing.touch(r.db, r.pl.id);
   res.json({ success: true });
 });
 
+// Owner: deletes the playlist. Everyone else: removes it from their library
+// (leaves a shared playlist / unsaves a public one).
 router.delete('/playlists/:id', requireAuth, (req, res) => {
   const db = getDB();
-  db.prepare('DELETE FROM playlist_songs WHERE playlist_id=?').run(req.params.id);
-  db.prepare('DELETE FROM playlists WHERE id=? AND user_id=?').run(req.params.id, req.user.id);
-  res.json({ success: true });
+  const pl = db.prepare('SELECT * FROM playlists WHERE id=?').get(req.params.id);
+  if (!pl) return res.json({ success: true });
+  if (pl.user_id === req.user.id) {
+    db.prepare('DELETE FROM playlist_songs WHERE playlist_id=?').run(pl.id);
+    sharing.forgetPlaylist(db, pl.id);
+    db.prepare('DELETE FROM playlists WHERE id=? AND user_id=?').run(pl.id, req.user.id);
+    return res.json({ success: true, deleted: true });
+  }
+  db.prepare('DELETE FROM playlist_members WHERE playlist_id=? AND user_id=?').run(pl.id, req.user.id);
+  db.prepare('DELETE FROM playlist_saves WHERE playlist_id=? AND user_id=?').run(pl.id, req.user.id);
+  res.json({ success: true, removed: true });
+});
+
+// Save a public (or shared) playlist to the own library
+router.put('/playlists/:id/save', requireAuth, (req, res) => {
+  const r = loadPlaylist(req, res);
+  if (!r) return;
+  if (r.access.role === 'owner') return res.json({ success: true, saved: false });
+  r.db.prepare('INSERT OR IGNORE INTO playlist_saves (user_id, playlist_id) VALUES (?, ?)').run(req.user.id, r.pl.id);
+  res.json({ success: true, saved: true });
+});
+
+router.delete('/playlists/:id/save', requireAuth, (req, res) => {
+  getDB().prepare('DELETE FROM playlist_saves WHERE user_id = ? AND playlist_id = ?').run(req.user.id, req.params.id);
+  res.json({ success: true, saved: false });
+});
+
+// ── Playlist members (shared playlists) ────────────────────────────────────
+router.get('/playlists/:id/members', requireAuth, (req, res) => {
+  const r = loadPlaylist(req, res);
+  if (!r) return;
+  res.json(sharing.members(r.db, r.pl.id));
+});
+
+// Body: { username, canEdit? } — invites a user of this instance by name
+router.post('/playlists/:id/members', requireAuth, (req, res) => {
+  const r = requireOwner(req, res);
+  if (!r) return;
+  const { db, pl } = r;
+  if (sharing.isGenerated(pl)) return res.status(400).json({ error: 'Cumu-Playlists bleiben privat' });
+  const username = String((req.body && req.body.username) || '').trim();
+  if (!username) return res.status(400).json({ error: 'Benutzername fehlt' });
+  const user = db.prepare('SELECT id, username FROM users WHERE username = ? COLLATE NOCASE').get(username);
+  if (!user) return res.status(404).json({ error: `Nutzer „${username}“ gibt es auf diesem Server nicht` });
+  if (user.id === req.user.id) return res.status(400).json({ error: 'Das ist deine eigene Playlist' });
+  db.prepare(`INSERT INTO playlist_members (playlist_id, user_id, can_edit, added_by) VALUES (?, ?, ?, ?)
+    ON CONFLICT(playlist_id, user_id) DO UPDATE SET can_edit = excluded.can_edit`)
+    .run(pl.id, user.id, req.body.canEdit ? 1 : 0, req.user.id);
+  // Inviting someone into a private playlist makes it shared
+  if ((pl.visibility || 'private') === 'private') db.prepare("UPDATE playlists SET visibility = 'shared' WHERE id = ?").run(pl.id);
+  sharing.touch(db, pl.id);
+  const updated = db.prepare('SELECT * FROM playlists WHERE id = ?').get(pl.id);
+  res.json({ success: true, visibility: updated.visibility, members: sharing.members(db, pl.id) });
+});
+
+// Body: { canEdit }
+router.put('/playlists/:id/members/:userId', requireAuth, (req, res) => {
+  const r = requireOwner(req, res);
+  if (!r) return;
+  r.db.prepare('UPDATE playlist_members SET can_edit = ? WHERE playlist_id = ? AND user_id = ?')
+    .run(req.body && req.body.canEdit ? 1 : 0, r.pl.id, req.params.userId);
+  res.json({ success: true, members: sharing.members(r.db, r.pl.id) });
+});
+
+// Owner removes a member; a member removes themselves ("me" works too)
+router.delete('/playlists/:id/members/:userId', requireAuth, (req, res) => {
+  const db = getDB();
+  const pl = db.prepare('SELECT * FROM playlists WHERE id=?').get(req.params.id);
+  if (!pl) return res.status(404).json({ error: 'Playlist nicht gefunden' });
+  const target = req.params.userId === 'me' ? req.user.id : req.params.userId;
+  if (pl.user_id !== req.user.id && target !== req.user.id) return res.status(403).json({ error: 'Nur der Ersteller kann das ändern' });
+  db.prepare('DELETE FROM playlist_members WHERE playlist_id = ? AND user_id = ?').run(pl.id, target);
+  res.json({ success: true, members: sharing.members(db, pl.id) });
 });
 
 // ── Library ────────────────────────────────────────────────────────────────
@@ -606,8 +754,9 @@ router.get('/library', requireAuth, (req, res) => {
   const userId = req.user.id;
   const songs     = db.prepare(`SELECT s.*, al.title as album_title, al.cover, ar.name as artist_name FROM library l JOIN songs s ON s.id=l.song_id LEFT JOIN albums al ON al.id=s.album_id LEFT JOIN artists ar ON ar.id=s.artist_id WHERE l.user_id=? AND l.song_id IS NOT NULL`).all(userId);
   const albums    = db.prepare(`SELECT al.*, ar.name as artist_name FROM library l JOIN albums al ON al.id=l.album_id LEFT JOIN artists ar ON ar.id=al.artist_id WHERE l.user_id=? AND l.album_id IS NOT NULL`).all(userId);
-  const rawPlaylists = db.prepare(`SELECT * FROM playlists WHERE user_id=?`).all(userId);
+  const rawPlaylists = sharing.libraryPlaylistRows(db, userId);
   const playlists = rawPlaylists.map(pl => {
+    pl = sharing.decorate(db, pl, userId);
     const is_generated = (pl.is_generated === 1 || (pl.description && pl.description.includes('[dynamic:'))) ? 1 : 0;
     const plSongs = db.prepare(`
       SELECT s.*, al.title as album_title, al.cover, ar.name as artist_name

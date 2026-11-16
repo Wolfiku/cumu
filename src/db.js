@@ -268,6 +268,9 @@ function initDB() {
   // Columns of the background audio analysis (silence, loudness)
   try { require('./services/audioAnalysis').initAnalysisColumns(db); } catch (err) { console.error('[cumu] audio analysis columns error:', err.message); }
 
+  // Playlist sharing (visibility, members, saved public playlists)
+  try { require('./services/playlistSharing').initPlaylistSharing(db); } catch (err) { console.error('[cumu] playlist sharing setup error:', err.message); }
+
   // Speech tracks become audiobooks (triggers keep it that way for new songs)
   try { initAudiobooks(db); } catch (err) { console.error('[cumu] audiobook setup error:', err.message); }
 

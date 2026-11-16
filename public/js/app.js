@@ -1935,7 +1935,7 @@ function showToast(msg) {
         </div>
         <div class="flex-1 min-w-0">
           <div class="text-body-lg font-body-lg text-text-high-contrast truncate group-hover:text-interactive-hover transition-colors font-medium">${esc(s.title)}</div>
-          <div class="text-body-sm font-body-sm text-text-muted truncate mt-xs">${esc(s.artist_name || 'Unknown artist')} ${s.album_title ? '&middot; ' + esc(s.album_title) : ''}</div>
+          <div class="text-body-sm font-body-sm text-text-muted truncate mt-xs">${esc(s.artist_name || 'Unknown artist')} ${s.album_title ? '&middot; ' + esc(s.album_title) : ''}${s._addedBy ? ` &middot; <span class="text-primary/80">hinzugefügt von ${esc(s._addedBy)}</span>` : ''}</div>
         </div>
         <div class="text-label-caps font-label-caps text-text-muted mr-md">${formatTime(s.duration)}</div>
         <button class="text-text-muted hover:text-text-high-contrast p-xs rounded-full hover:bg-surface-container transition-colors song-menu-btn" onclick="event.stopPropagation(); CumuApp.openSongMenu(event, this, '${s.id}')">
@@ -2071,6 +2071,7 @@ function showToast(msg) {
           ${getPlaylistCoverHtml(pl, 'medium')}
         </div>
         <span class="text-body-lg font-bold text-text-high-contrast truncate mt-xs">${esc(pl.name)}</span>
+        ${!isOwnPlaylist(pl) && pl.owner_username ? `<span class="text-body-sm text-text-muted truncate">von ${esc(pl.owner_username)}</span>` : ''}
       </div>`;
   }
 
@@ -2394,6 +2395,21 @@ function showToast(msg) {
       `;
     }
 
+    // Public playlists of other people on this server
+    if (homeData.publicPlaylists && homeData.publicPlaylists.length) {
+      const pls = homeData.publicPlaylists.slice(0, 10).map(p => ({ ...p, cover: p.cover ? `/stream/cover/${p.cover}` : null }));
+      html += `
+        <section class="mb-xl">
+          <div class="mb-md">
+            <h2 class="text-headline-lg-mobile md:text-headline-lg font-headline-lg font-bold text-text-high-contrast flex items-center gap-xs">
+              <span class="material-symbols-outlined text-secondary text-[28px]">public</span> Community Playlists
+            </h2>
+            <p class="text-body-sm text-text-muted mt-xs">Public playlists of other people on this server</p>
+          </div>
+          <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-md">${pls.map(renderSearchPlaylistCard).join('')}</div>
+        </section>`;
+    }
+
     window._currentPageSongs = allPageSongs;
 
     // 4. Genres & Stöbern (Exakte 100 Hex-Farben & Universaldesign OHNE Icons)
@@ -2698,7 +2714,7 @@ function showToast(msg) {
                         <h3 class="text-body-sm font-body-sm text-text-high-contrast font-medium truncate flex-1">${esc(p.name)}</h3>
                         ${pPinned ? `<span class="material-symbols-outlined text-primary text-[14px]" style="font-variation-settings: 'FILL' 1;" title="Pinned">push_pin</span>` : ''}
                       </div>
-                      <p class="text-body-sm font-body-sm text-text-muted truncate">${esc((p.description || 'Playlist').replace(/\s*\[dynamic:[^\]]+\]/, ''))}</p>
+                      <p class="text-body-sm font-body-sm text-text-muted truncate">${playlistSubtitle(p)}</p>
                     </div>
                   </div>`;
               }).join('') || '<p class="text-body-sm text-text-muted col-span-full">No playlists available.</p>'}
@@ -3062,6 +3078,135 @@ function showToast(msg) {
     return false;
   }
 
+  // ── Playlist sharing ───────────────────────────────────────────────────────
+  // Servers before 0.7.0 send no sharing fields: every playlist is the user's own.
+  // CumuApi answers errors as { error }: turn them into exceptions
+  const okOrThrow = (r) => { if (r && r.error) throw new Error(r.error); return r; };
+  const isOwnPlaylist = (pl) => !!pl && pl.is_owner !== 0;
+  const canEditPlaylist = (pl) => !!pl && (pl.can_edit !== undefined ? pl.can_edit === 1 : !isGeneratedPlaylist(pl));
+  const VISIBILITY_INFO = {
+    private: { icon: 'lock', label: 'Privat', text: 'Nur du siehst diese Playlist.' },
+    public: { icon: 'public', label: 'Öffentlich', text: 'Jeder auf diesem Server kann sie finden, speichern, herunterladen und hören.' },
+    shared: { icon: 'group', label: 'Geteilt', text: 'Nur Personen, die du per Benutzername einlädst.' },
+  };
+  function visibilityBadge(pl) {
+    const v = VISIBILITY_INFO[pl.visibility];
+    if (!v || pl.visibility === 'private') return '';
+    return `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-surface-container-high text-text-high-contrast border border-border-subtle"><span class="material-symbols-outlined text-[13px]">${v.icon}</span> ${v.label}</span>`;
+  }
+  /** "von anna" for playlists of other people, else the description. */
+  function playlistSubtitle(p) {
+    if (!isOwnPlaylist(p) && p.owner_username) return `von ${esc(p.owner_username)}${p.access === 'editor' ? ' · du kannst bearbeiten' : ''}`;
+    return esc((p.description || (isGeneratedPlaylist(p) ? 'Automatisch von Cumu erstellt' : 'Playlist')).replace(/\s*\[dynamic:[^\]]+\]/, ''));
+  }
+
+  async function togglePlaylistSave(playlistId, save) {
+    try {
+      if (save) okOrThrow(await CumuApi.put(`/api/playlists/${playlistId}/save`, {}));
+      else okOrThrow(await CumuApi.del(`/api/playlists/${playlistId}/save`));
+      showToast(save ? 'Zu deiner Bibliothek hinzugefügt' : 'Aus deiner Bibliothek entfernt');
+      await loadPlaylists();
+      if (currentPage === 'playlist') renderPlaylist(playlistId);
+    } catch (e) { showToast(e.message || 'Fehler'); }
+  }
+
+  async function leavePlaylist(playlistId) {
+    if (!confirm('Diese geteilte Playlist verlassen? Sie verschwindet aus deiner Bibliothek.')) return;
+    try {
+      okOrThrow(await CumuApi.del(`/api/playlists/${playlistId}/members/me`));
+      await CumuApi.del(`/api/playlists/${playlistId}/save`).catch(() => {});
+      await loadPlaylists();
+      showToast('Playlist verlassen');
+      navigate('library');
+    } catch (e) { showToast(e.message || 'Fehler'); }
+  }
+
+  /** Share dialog: visibility and invited people (owner only). */
+  async function openShareModal(playlistId) {
+    let modal = document.getElementById('sharePlaylistModal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'sharePlaylistModal';
+      modal.className = 'fixed inset-0 bg-background/80 backdrop-blur-sm z-[9999] flex items-center justify-center p-md';
+      modal.addEventListener('click', (e) => { if (e.target === modal) closeShare(); });
+      document.body.appendChild(modal);
+    }
+    const closeShare = () => { modal.style.display = 'none'; if (currentPage === 'playlist') renderPlaylist(playlistId); };
+    let pl;
+    try { pl = okOrThrow(await CumuApi.get(`/api/playlists/${playlistId}`)); } catch (e) { showToast(e.message || 'Playlist nicht gefunden'); return; }
+    let errorText = '';
+
+    const draw = () => {
+      const members = pl.members || [];
+      modal.innerHTML = `
+        <div class="w-full max-w-[520px] max-h-[88vh] overflow-y-auto bg-surface-container rounded-xl shadow-2xl border border-border-subtle p-lg flex flex-col gap-md">
+          <div class="flex items-center justify-between pb-sm border-b border-border-subtle">
+            <h2 class="text-title-md font-bold text-on-surface m-0 flex items-center gap-xs"><span class="material-symbols-outlined">share</span> „${esc(pl.name)}“ teilen</h2>
+            <button class="share-close text-text-muted hover:text-on-surface rounded-full p-xs hover:bg-surface-bright"><span class="material-symbols-outlined text-[20px]">close</span></button>
+          </div>
+          <div class="flex flex-col gap-sm">
+            ${['private', 'public', 'shared'].map(v => `
+              <button class="share-vis flex items-start gap-md text-left p-md rounded-lg border ${pl.visibility === v ? 'border-primary bg-primary/10' : 'border-border-subtle hover:bg-surface-bright'}" data-vis="${v}">
+                <span class="material-symbols-outlined ${pl.visibility === v ? 'text-primary' : 'text-text-muted'}">${VISIBILITY_INFO[v].icon}</span>
+                <span class="flex-1"><span class="block font-bold text-on-surface">${VISIBILITY_INFO[v].label}</span><span class="block text-body-sm text-text-muted">${VISIBILITY_INFO[v].text}</span></span>
+                ${pl.visibility === v ? '<span class="material-symbols-outlined text-primary">check_circle</span>' : ''}
+              </button>`).join('')}
+          </div>
+          ${pl.visibility !== 'private' ? `
+          <div class="flex flex-col gap-sm pt-sm border-t border-border-subtle">
+            <h3 class="font-bold text-on-surface m-0">${pl.visibility === 'shared' ? 'Personen mit Zugriff' : 'Personen, die mitbearbeiten'}</h3>
+            <form class="share-add flex gap-sm items-center flex-wrap">
+              <input name="username" autocomplete="off" placeholder="Benutzername" class="flex-1 min-w-[140px] bg-surface-container-low border border-border-subtle rounded-lg px-md py-sm text-on-surface focus:border-primary outline-none" />
+              <label class="flex items-center gap-xs text-body-sm text-on-surface cursor-pointer select-none"><input type="checkbox" name="canEdit" ${pl.visibility === 'public' ? 'checked' : ''} class="accent-primary"> darf bearbeiten</label>
+              <button class="px-md py-sm rounded-lg bg-text-high-contrast text-background font-bold">Einladen</button>
+            </form>
+            ${errorText ? `<p class="text-body-sm text-error m-0">${esc(errorText)}</p>` : ''}
+            ${members.length ? members.map(m => `
+              <div class="flex items-center gap-md p-sm rounded-lg bg-surface-container-low">
+                <div class="w-8 h-8 rounded-full bg-primary/20 text-primary flex items-center justify-center font-bold">${esc((m.username || '?')[0].toUpperCase())}</div>
+                <span class="flex-1 min-w-0 truncate font-medium text-on-surface">${esc(m.username)}</span>
+                <label class="flex items-center gap-xs text-body-sm text-text-muted cursor-pointer select-none"><input type="checkbox" class="share-edit accent-primary" data-user="${esc(m.user_id)}" ${m.can_edit ? 'checked' : ''}> bearbeiten</label>
+                <button class="share-remove text-text-muted hover:text-error p-xs rounded-full" data-user="${esc(m.user_id)}" title="Entfernen"><span class="material-symbols-outlined text-[20px]">person_remove</span></button>
+              </div>`).join('') : `<p class="text-body-sm text-text-muted m-0">${pl.visibility === 'shared' ? 'Noch niemand eingeladen.' : 'Jeder kann zuhören. Lade Leute ein, die auch Songs hinzufügen dürfen.'}</p>`}
+          </div>` : ''}
+        </div>`;
+      modal.querySelector('.share-close').onclick = closeShare;
+      modal.querySelectorAll('.share-vis').forEach(b => b.onclick = async () => {
+        try {
+          const r = okOrThrow(await CumuApi.put(`/api/playlists/${playlistId}`, { visibility: b.dataset.vis }));
+          pl = { ...pl, ...r.playlist };
+          errorText = '';
+        } catch (e) { errorText = e.message; }
+        draw();
+      });
+      const form = modal.querySelector('.share-add');
+      if (form) form.onsubmit = async (e) => {
+        e.preventDefault();
+        const username = form.username.value.trim();
+        if (!username) return;
+        try {
+          const r = okOrThrow(await CumuApi.post(`/api/playlists/${playlistId}/members`, { username, canEdit: form.canEdit.checked }));
+          pl.members = r.members;
+          pl.visibility = r.visibility;
+          errorText = '';
+          showToast(`${username} eingeladen`);
+        } catch (err) { errorText = err.message || 'Einladen fehlgeschlagen'; }
+        draw();
+        modal.querySelector('.share-add input[name=username]')?.focus();
+      };
+      modal.querySelectorAll('.share-edit').forEach(c => c.onchange = async () => {
+        try { pl.members = okOrThrow(await CumuApi.put(`/api/playlists/${playlistId}/members/${c.dataset.user}`, { canEdit: c.checked })).members; } catch (e) { errorText = e.message; }
+        draw();
+      });
+      modal.querySelectorAll('.share-remove').forEach(b => b.onclick = async () => {
+        try { pl.members = okOrThrow(await CumuApi.del(`/api/playlists/${playlistId}/members/${b.dataset.user}`)).members; } catch (e) { errorText = e.message; }
+        draw();
+      });
+    };
+    draw();
+    modal.style.display = 'flex';
+  }
+
   async function renderPlaylists() {
     await loadPlaylists();
     const pinnedKeys = getPinnedKeys();
@@ -3070,7 +3215,7 @@ function showToast(msg) {
         <div class="flex items-center justify-between mb-xl flex-wrap gap-md">
           <div>
             <h1 class="text-headline-lg font-headline-lg text-text-high-contrast font-bold mb-xs">Playlists</h1>
-            <p class="text-body-sm text-text-muted">Your personal music collections & automatically created Cumu playlists</p>
+            <p class="text-body-sm text-text-muted">Your playlists, playlists shared with you and public playlists you saved</p>
           </div>
           <div class="flex items-center gap-md flex-wrap">
             ${playlists.length > 3 ? `
@@ -3104,7 +3249,7 @@ function showToast(msg) {
                     ${isGen ? `<span class="material-symbols-outlined text-primary text-[15px]" title="Von Cumu automatisch erstellt">auto_awesome</span>` : ''}
                     ${pPinned ? `<span class="material-symbols-outlined text-primary text-[16px]" style="font-variation-settings: 'FILL' 1;" title="Pinned">push_pin</span>` : ''}
                   </div>
-                  <p class="text-body-sm text-text-muted truncate mt-xs">${esc((p.description || (isGen ? 'Automatisch von Cumu erstellt' : 'Playlist')).replace(/\s*\[dynamic:[^\]]+\]/, ''))}</p>
+                  <p class="text-body-sm text-text-muted truncate mt-xs flex items-center gap-1">${p.visibility && p.visibility !== 'private' ? `<span class="material-symbols-outlined text-[14px]">${VISIBILITY_INFO[p.visibility]?.icon || ''}</span>` : ''}${playlistSubtitle(p)}</p>
                 </div>`;
             }).join('')}
           </div>`
@@ -3977,13 +4122,21 @@ function showToast(msg) {
   async function renderPlaylist(playlistId) {
     main.innerHTML = '<div class="page-section"><div class="spinner">Lade Playlist…</div></div>';
     let pl = await CumuApi.get(`/api/playlists/${playlistId}`);
-    if (!pl) return;
-    pl = await syncDynamicPlaylist(pl);
+    if (!pl || pl.error) {
+      main.innerHTML = `<div class="p-xl text-center text-text-muted"><span class="material-symbols-outlined text-[40px] block mb-sm">lock</span>${esc((pl && pl.error) || 'Playlist nicht gefunden')}<p class="text-body-sm mt-xs">Vielleicht ist sie privat oder wurde gelöscht.</p></div>`;
+      return;
+    }
+    // Only the owner keeps cumu's own (dynamic) playlists up to date
+    if (isOwnPlaylist(pl)) pl = await syncDynamicPlaylist(pl);
 
     const isGen = isGeneratedPlaylist(pl);
+    const own = isOwnPlaylist(pl);
+    const canEdit = canEditPlaylist(pl);
     window._currentPlaylistIsGenerated = isGen;
+    window._currentPlaylistCanEdit = canEdit;
 
-    const songs = pl.songs || [];
+    // Several people edit: show who added each song
+    const songs = (pl.songs || []).map(s => (pl.member_count > 0 && s.added_by_username) ? { ...s, _addedBy: s.added_by_username } : s);
     window._currentPlaylistSongs = songs;
     const totalDur = songs.reduce((acc, t) => acc + (t.duration || 0), 0);
     const durStr = formatTotalDuration(totalDur);
@@ -4023,6 +4176,7 @@ function showToast(msg) {
           </div>
 
           <h1 class="text-3xl md:text-4xl font-extrabold text-text-high-contrast tracking-tight mb-2 truncate">${esc(pl.name)}</h1>
+          ${pl.visibility && pl.visibility !== 'private' ? `<div class="mb-2 flex items-center gap-2 flex-wrap">${visibilityBadge(pl)}${pl.member_count ? `<span class="text-body-sm text-text-muted">${pl.member_count} ${pl.member_count === 1 ? 'Person' : 'Personen'} eingeladen</span>` : ''}${pl.save_count ? `<span class="text-body-sm text-text-muted">· ${pl.save_count}× gespeichert</span>` : ''}</div>` : ''}
           ${cleanDesc ? `<p class="text-body-md text-text-muted mb-3 line-clamp-2 max-w-2xl">${esc(cleanDesc)}</p>` : ''}
 
           <!-- Playlist Details (Ersteller, Songs, Gesamtlänge) -->
@@ -4054,7 +4208,20 @@ function showToast(msg) {
               </button>
             ` : ''}
 
-            ${!isGen ? `
+            ${own && !isGen ? `
+              <button class="h-10 px-md rounded-full bg-surface-container-high hover:bg-surface-bright hover:border-primary/50 text-text-high-contrast flex items-center gap-xs hover:scale-105 active:scale-95 transition-all duration-200 border border-border-subtle shadow-sm cursor-pointer font-bold text-body-sm"
+                      onclick="CumuApp.openShareModal('${pl.id}')" title="Teilen & Sichtbarkeit">
+                <span class="material-symbols-outlined text-[20px]">${(VISIBILITY_INFO[pl.visibility] || VISIBILITY_INFO.private).icon}</span> Teilen
+              </button>
+            ` : ''}
+            ${!own && (pl.access === 'public' || pl.saved) ? `
+              <button class="h-10 px-md rounded-full ${pl.saved ? 'bg-primary/20 text-primary border-primary/40' : 'bg-surface-container-high text-text-high-contrast border-border-subtle hover:bg-surface-bright'} flex items-center gap-xs hover:scale-105 active:scale-95 transition-all border shadow-sm cursor-pointer font-bold text-body-sm"
+                      onclick="CumuApp.togglePlaylistSave('${pl.id}', ${pl.saved ? 'false' : 'true'})">
+                <span class="material-symbols-outlined text-[20px]" style="${pl.saved ? "font-variation-settings: 'FILL' 1;" : ''}">${pl.saved ? 'library_add_check' : 'library_add'}</span> ${pl.saved ? 'In deiner Bibliothek' : 'Zur Bibliothek'}
+              </button>
+            ` : ''}
+
+            ${canEdit && !isGen ? `
               <button id="plAddSongsBtn_${pl.id}"
                       class="w-10 h-10 rounded-full bg-surface-container-high hover:bg-surface-bright hover:border-primary/50 text-text-high-contrast flex items-center justify-center hover:scale-110 active:scale-95 transition-all duration-200 border border-border-subtle shadow-sm cursor-pointer"
                       onclick="CumuApp.openAddSongsModal('${pl.id}')"
@@ -4078,12 +4245,17 @@ function showToast(msg) {
               <span class="material-symbols-outlined text-[20px]" style="${pPinned ? "font-variation-settings: 'FILL' 1;" : ''}">push_pin</span>
             </button>
 
+            ${own ? `
             <button id="plDeleteBtn_${pl.id}"
                     class="w-10 h-10 rounded-full bg-surface-container-high hover:bg-red-500/15 hover:text-red-400 hover:border-red-500/30 text-text-muted flex items-center justify-center hover:scale-110 active:scale-95 transition-all duration-200 border border-border-subtle shadow-sm cursor-pointer"
                     onclick="CumuApp.deletePlaylist('${pl.id}')"
                     title="Playlist löschen">
               <span class="material-symbols-outlined text-[20px]">delete</span>
-            </button>
+            </button>` : (pl.access === 'editor' || pl.access === 'listener') ? `
+            <button class="w-10 h-10 rounded-full bg-surface-container-high hover:bg-red-500/15 hover:text-red-400 text-text-muted flex items-center justify-center hover:scale-110 active:scale-95 transition-all border border-border-subtle shadow-sm cursor-pointer"
+                    onclick="CumuApp.leavePlaylist('${pl.id}')" title="Playlist verlassen">
+              <span class="material-symbols-outlined text-[20px]">logout</span>
+            </button>` : ''}
           </div>
         </div>
       </div>
@@ -4104,7 +4276,7 @@ function showToast(msg) {
               <div style="margin-bottom:12px;display:flex;justify-content:center">${renderCoverPlaceholder('playlist', 'medium')}</div>
               <h3 style="margin:0 0 6px 0">${isGen ? 'Noch keine Songs in dieser automatischen Playlist' : 'This playlist is empty'}</h3>
               <p class="mute caption" style="margin-bottom:20px">${isGen ? 'Cumu wird hier automatisch passende Songs einfügen.' : 'Add songs to fill your playlist!'}</p>
-              ${!isGen ? `<button class="btn-primary" onclick="CumuApp.openAddSongsModal('${pl.id}')">Search & add songs</button>` : ''}
+              ${canEdit && !isGen ? `<button class="btn-primary" onclick="CumuApp.openAddSongsModal('${pl.id}')">Search & add songs</button>` : ''}
             </div>`
         }
       </div>`;
@@ -4862,7 +5034,7 @@ function showToast(msg) {
       <a class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" href="${CumuApi.downloadUrl(song.id)}" download onclick="CumuApp.closeContextMenu()">
         <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('download')}</span> Download
       </a>
-      ${isPlaylistView && currentPlaylistId && !isCurrentPlGen ? `
+      ${isPlaylistView && currentPlaylistId && !isCurrentPlGen && window._currentPlaylistCanEdit !== false ? `
         <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-red-400 hover:bg-surface-bright hover:text-red-300 transition-colors active:scale-95" onclick="CumuApp.removeFromPlaylist('${currentPlaylistId}', '${song.id}'); CumuApp.closeContextMenu()">
           <span class="text-red-400 flex items-center justify-center w-5 h-5">${CumuIcons.get('trash')}</span> Remove from Playlist
         </button>
@@ -4893,9 +5065,15 @@ function showToast(msg) {
 
     const ctxMenu = document.getElementById('contextMenu');
     if (!ctxMenu) return;
+    const own = isOwnPlaylist(pl);
 
     ctxMenu.innerHTML = `
-      ${!isGen ? `
+      ${own && !isGen ? `
+        <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.openShareModal('${pl.id}'); CumuApp.closeContextMenu()">
+          <span class="text-text-muted flex items-center justify-center w-5 h-5"><span class="material-symbols-outlined text-[20px]">share</span></span> Teilen & Sichtbarkeit
+        </button>
+      ` : ''}
+      ${!isGen && canEditPlaylist(pl) ? `
         <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.openAddSongsModal('${pl.id}'); CumuApp.closeContextMenu()">
           <span class="text-text-muted flex items-center justify-center w-5 h-5"><span class="material-symbols-outlined text-[20px]">playlist_add</span></span> Search & add songs
         </button>
@@ -4920,9 +5098,16 @@ function showToast(msg) {
         <span class="text-text-muted flex items-center justify-center w-5 h-5"><span class="material-symbols-outlined text-[20px]" style="${pPinned ? "font-variation-settings: 'FILL' 1;" : ''}">push_pin</span></span> ${pPinned ? 'Unpin from sidebar' : 'Pin to sidebar'}
       </button>
       <div class="my-xs border-t border-border-subtle"></div>
+      ${own ? `
       <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-red-400 hover:bg-surface-bright hover:text-red-300 transition-colors active:scale-95" onclick="CumuApp.deletePlaylist('${pl.id}'); CumuApp.closeContextMenu()">
         <span class="text-red-400 flex items-center justify-center w-5 h-5">${CumuIcons.get('trash')}</span> Delete Playlist
-      </button>
+      </button>` : (pl.access === 'editor' || pl.access === 'listener') ? `
+      <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-red-400 hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.leavePlaylist('${pl.id}'); CumuApp.closeContextMenu()">
+        <span class="text-red-400 flex items-center justify-center w-5 h-5"><span class="material-symbols-outlined text-[20px]">logout</span></span> Playlist verlassen
+      </button>` : `
+      <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.togglePlaylistSave('${pl.id}', ${pl.saved ? 'false' : 'true'}); CumuApp.closeContextMenu()">
+        <span class="text-text-muted flex items-center justify-center w-5 h-5"><span class="material-symbols-outlined text-[20px]">${pl.saved ? 'library_add_check' : 'library_add'}</span></span> ${pl.saved ? 'Aus Bibliothek entfernen' : 'Zur Bibliothek hinzufügen'}
+      </button>`}
     `;
 
     positionDropdownMenu(ctxMenu, targetEl, event);
@@ -4947,7 +5132,8 @@ function showToast(msg) {
   async function openAddToPlaylistModal(songId) {
     await loadPlaylists();
     const song = await CumuApi.get(`/api/songs/${songId}`);
-    const availablePlaylists = playlists.filter(p => !isGeneratedPlaylist(p));
+    // Own playlists and shared ones the user may edit
+    const availablePlaylists = playlists.filter(p => !isGeneratedPlaylist(p) && canEditPlaylist(p));
     
     let modal = document.getElementById('addToPlaylistModal');
     if (!modal) {
@@ -5122,8 +5308,12 @@ function showToast(msg) {
 
   async function playPlaylist(playlistId) {
     let pl = await CumuApi.get(`/api/playlists/${playlistId}`);
-    if (!pl) return;
-    pl = await syncDynamicPlaylist(pl);
+    if (!pl || pl.error) {
+      main.innerHTML = `<div class="p-xl text-center text-text-muted"><span class="material-symbols-outlined text-[40px] block mb-sm">lock</span>${esc((pl && pl.error) || 'Playlist nicht gefunden')}<p class="text-body-sm mt-xs">Vielleicht ist sie privat oder wurde gelöscht.</p></div>`;
+      return;
+    }
+    // Only the owner keeps cumu's own (dynamic) playlists up to date
+    if (isOwnPlaylist(pl)) pl = await syncDynamicPlaylist(pl);
     if (pl.songs?.length) playQueue(pl.songs, 0);
   }
 
@@ -5508,6 +5698,9 @@ function showToast(msg) {
   }
 
   window.CumuApp = {
+    openShareModal,
+    togglePlaylistSave,
+    leavePlaylist,
     playAudiobook,
     addAudiobookToQueue,
     restartAudiobook,
