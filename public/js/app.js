@@ -582,6 +582,7 @@ function showToast(msg) {
   }
 
   function handleWsMessage(msg) {
+    if (handleLiveMessage(msg)) return;
     if (msg.type === 'share_received' && msg.share) {
       setInboxBadge(msg.unread);
       showToast(`${msg.share.from_username || 'Jemand'} hat dir „${msg.share.title || 'etwas'}“ geschickt`);
@@ -683,8 +684,13 @@ function showToast(msg) {
 
   // ── Advanced Audio Engine (Crossfade & Gapless) ─────────────────────────────
 
+  let partyApplying = false; // the guest follows the host: not a click of the user
   async function playSong(song, isAudiobook = false, startPosition = 0) {
     if (!song || !song.id) { showToast('Song-Daten fehlen'); return; }
+    // Another device plays: start the song there
+    if (isRemote()) { sendCommand(remote.deviceId, 'play_songs', { songs: [songSummary(song)], index: 0 }); return; }
+    // Party guest: a click suggests the song to the host
+    if (isPartyGuest() && !partyApplying) { suggestToParty(song); return; }
     initWebAudio();
 
     // Leaving an audiobook chapter: remember where the user was
@@ -792,6 +798,12 @@ function showToast(msg) {
   }
 
   function playQueue(songs, startIndex = 0, isAudiobook = false) {
+    if (isRemote() && songs && songs.length) {
+      const from = Math.max(0, startIndex - 50);
+      sendCommand(remote.deviceId, 'play_songs', { songs: songs.slice(from, startIndex + 250).map(songSummary), index: startIndex - from });
+      return;
+    }
+    if (isPartyGuest() && songs && songs[startIndex]) { suggestToParty(songs[startIndex]); return; }
     queue = songs || [];
     queueIndex = startIndex;
     if (queue[queueIndex]) {
@@ -801,6 +813,14 @@ function showToast(msg) {
 
   function togglePlay() {
     if (!currentSong) return;
+    if (isPartyGuest()) { partyGuestNotice(); return; }
+    if (isRemote()) {
+      sendCommand(remote.deviceId, 'toggle');
+      remote.state = { ...remote.state, isPlaying: !remote.state.isPlaying, position: remotePosition() };
+      remote.receivedAt = Date.now();
+      applyRemoteState();
+      return;
+    }
     initWebAudio();
     if (isPlaying) {
       activeAudio.pause();
@@ -825,6 +845,8 @@ function showToast(msg) {
   }
 
   function nextTrack() {
+    if (isPartyGuest()) { partyGuestNotice(); return; }
+    if (isRemote()) { sendCommand(remote.deviceId, 'next'); return; }
     if (!queue.length) return;
     if (repeatMode === 'one' && currentSong) {
       playSong(currentSong, !!currentSong.isPodcast || !!currentSong.is_audiobook);
@@ -838,6 +860,8 @@ function showToast(msg) {
   }
 
   function prevTrack() {
+    if (isPartyGuest()) { partyGuestNotice(); return; }
+    if (isRemote()) { sendCommand(remote.deviceId, 'prev'); return; }
     if (!queue.length) return;
     if (isShuffle && queue.length > 1) {
       let prevIdx = Math.floor(Math.random() * queue.length);
@@ -950,6 +974,7 @@ function showToast(msg) {
 
     audioEl.addEventListener('ended', () => {
       if (audioEl === activeAudio) {
+        if (isPartyGuest()) { isPlaying = false; updatePlayerUI(); return; } // the host's next song comes by sync
         saveAudiobookProgress(true); // the end of the last chapter finishes the book
         if (repeatMode === 'one') {
           playSong(currentSong, !!currentSong.isPodcast || !!currentSong.is_audiobook);
@@ -1083,6 +1108,7 @@ function showToast(msg) {
 
   /** Called while a song plays: preloads the next song and starts the transition in time. */
   function checkTransition() {
+    if (isRemote() || isPartyGuest()) return; // nothing plays here / the host decides
     if (!isPlaying || isFading || !currentSong || activeAudio === audioPodcast || isSpokenWord) return;
     if (!isMusic(currentSong)) return;
     const el = activeAudio;
@@ -1385,15 +1411,19 @@ function showToast(msg) {
   }
 
   function toggleShuffle() {
+    if (isPartyGuest()) { partyGuestNotice(); return; }
+    if (isRemote()) { sendCommand(remote.deviceId, 'shuffle', { value: !isShuffle }); }
     isShuffle = !isShuffle;
     showToast(isShuffle ? 'Shuffle enabled' : 'Shuffle disabled');
     updatePlayerUI();
   }
 
   function toggleRepeat() {
+    if (isPartyGuest()) { partyGuestNotice(); return; }
     if (repeatMode === 'none') repeatMode = 'all';
     else if (repeatMode === 'all') repeatMode = 'one';
     else repeatMode = 'none';
+    if (isRemote()) sendCommand(remote.deviceId, 'repeat', { value: repeatMode });
 
     const modeLabels = { none: 'Repeat off', all: 'Repeat all', one: 'Repeat track' };
     showToast(modeLabels[repeatMode]);
@@ -1402,6 +1432,7 @@ function showToast(msg) {
 
   function setVolume(val) {
     const v = Math.max(0, Math.min(1, parseFloat(val)));
+    if (isRemote()) sendCommand(remote.deviceId, 'volume', { value: v });
     activeAudio.volume = v;
     standbyAudio.volume = v;
     audioPodcast.volume = v;
@@ -1555,6 +1586,7 @@ function showToast(msg) {
       renderNowPlaying();
     }
     updateQueueUI();
+    reportState();
     document.dispatchEvent(new CustomEvent('cumu:player', { detail: { song: currentSong, isPlaying, isFavorite: favorites.has(currentSong.id) } }));
   }
 
@@ -4843,7 +4875,7 @@ function showToast(msg) {
               <div class="np-equalizer ${isPlaying ? 'playing' : ''}">
                 <span></span><span></span><span></span><span></span>
               </div>
-              <span>NOW PLAYING</span>
+              <span>${party ? (party.role === 'host' ? 'DEINE PARTY' : 'PARTY VON ' + esc(party.party.host.username).toUpperCase()) : remote ? 'AUF ' + esc(remote.name).toUpperCase() : 'NOW PLAYING'}</span>
             </div>
             <button class="w-10 h-10 rounded-full bg-surface-container-low text-text-high-contrast flex items-center justify-center hover:scale-105 active:scale-95 transition-transform" onclick="CumuApp.openNowPlayingMenu(event, this)" title="Optionen">
               <span class="material-symbols-outlined">more_vert</span>
@@ -4865,6 +4897,7 @@ function showToast(msg) {
               ${currentSong.artist_name ? `<a class="hover:underline cursor-pointer text-text-high-contrast" onclick="navigate('artist','${currentSong.artist_id}')">${esc(currentSong.artist_name)}</a>` : 'Unbekannter Künstler'}
               ${currentSong.album_title ? ` &middot; <a class="hover:underline cursor-pointer opacity-80" onclick="navigate('album','${currentSong.album_id}')">${esc(currentSong.album_title)}</a>` : ''}
             </h2>
+            ${livePillHtml()}
           </div>
 
           <!-- 2. Slider (Progress Bar) -->
@@ -4911,6 +4944,14 @@ function showToast(msg) {
               <span class="material-symbols-outlined text-[22px]" style="${isFav ? "font-variation-settings: 'FILL' 1;" : ""}">${isFav ? 'favorite' : 'favorite'}</span>
             </button>
 
+            <!-- Devices (only with more than one device online) and listening party -->
+            <button class="live-devices-btn w-10 h-10 rounded-full bg-surface-container-low text-text-muted hover:text-text-high-contrast transition-colors flex items-center justify-center hover:scale-105 active:scale-95" style="${liveDevices.length > 1 || remote ? '' : 'display:none;'}${remote ? `color:${LIVE_GREEN};` : ''}" onclick="event.stopPropagation(); CumuApp.openDevicePicker(this)" title="Geräte">
+              <span class="material-symbols-outlined text-[22px]">devices</span>
+            </button>
+            <button class="live-party-btn w-10 h-10 rounded-full bg-surface-container-low text-text-muted hover:text-text-high-contrast transition-colors flex items-center justify-center hover:scale-105 active:scale-95" style="${party ? `color:${LIVE_PURPLE};` : ''}" onclick="CumuApp.openPartyPanel()" title="Listening Party">
+              <span class="material-symbols-outlined text-[22px]">celebration</span>
+            </button>
+
             <!-- Queue (Warteschlange) -->
             <button class="w-10 h-10 rounded-full bg-surface-container-low text-text-muted hover:text-text-high-contrast transition-colors flex items-center justify-center hover:scale-105 active:scale-95" onclick="CumuApp.toggleQueue()" title="Warteschlange umschalten">
               <span class="material-symbols-outlined text-[22px]">queue_music</span>
@@ -4932,11 +4973,9 @@ function showToast(msg) {
     const fullSeek = document.getElementById('fullNpSeek');
     if (fullSeek) {
       fullSeek.addEventListener('input', () => {
-        if (activeAudio && activeAudio.duration) {
-          const val = (fullSeek.value / 100) * activeAudio.duration;
-          activeAudio.currentTime = val;
-          fullSeek.style.setProperty('--progress-percent', `${fullSeek.value}%`);
-        }
+        // Local, or on the device that plays
+        seekPercent(parseFloat(fullSeek.value));
+        fullSeek.style.setProperty('--progress-percent', `${fullSeek.value}%`);
       });
     }
   }
@@ -4990,6 +5029,8 @@ function showToast(msg) {
     }
     const targetEl = btnEl || (event ? event.currentTarget : null);
     if (!currentSong) return;
+    const song = currentSong;
+    window._menuSong = song;
 
     const ctxMenu = document.getElementById('contextMenu');
     if (!ctxMenu) return;
@@ -5016,6 +5057,10 @@ function showToast(msg) {
       <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.openAddToPlaylistModal('${currentSong.id}'); CumuApp.closeContextMenu()">
         <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('playlist')}</span> Add to Playlist
       </button>
+      ${party && party.role === 'guest' ? `
+      <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-primary hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.suggestToParty(window._menuSong); CumuApp.closeContextMenu()">
+        <span class="flex items-center justify-center w-5 h-5"><span class="material-symbols-outlined text-[20px]">celebration</span></span> Zur Party vorschlagen
+      </button>` : ''}
       <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" data-share-type="song" data-share-id="${esc(song.id)}" data-share-title="${esc(song.title)}">
         <span class="text-text-muted flex items-center justify-center w-5 h-5"><span class="material-symbols-outlined text-[20px]">share</span></span> Teilen
       </button>
@@ -5033,6 +5078,7 @@ function showToast(msg) {
 
     const song = await CumuApi.get(`/api/songs/${songId}`);
     if (!song) return;
+    window._menuSong = song;
 
     const ctxMenu = document.getElementById('contextMenu');
     if (!ctxMenu) return;
@@ -5054,6 +5100,10 @@ function showToast(msg) {
       <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.openAddToPlaylistModal('${song.id}'); CumuApp.closeContextMenu()">
         <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('playlist')}</span> Add to Playlist
       </button>
+      ${party && party.role === 'guest' ? `
+      <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-primary hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.suggestToParty(window._menuSong); CumuApp.closeContextMenu()">
+        <span class="flex items-center justify-center w-5 h-5"><span class="material-symbols-outlined text-[20px]">celebration</span></span> Zur Party vorschlagen
+      </button>` : ''}
       <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" data-share-type="song" data-share-id="${esc(song.id)}" data-share-title="${esc(song.title)}">
         <span class="text-text-muted flex items-center justify-center w-5 h-5"><span class="material-symbols-outlined text-[20px]">share</span></span> Teilen
       </button>
@@ -5485,6 +5535,7 @@ function showToast(msg) {
 
   let lastAudiobookSave = 0;
   function saveAudiobookProgress(force = false, finished = false) {
+    if (isRemote()) return; // the playing device saves it
     if (!isAudiobookSong(currentSong) || !activeAudio || !navigator.onLine) return;
     const now = Date.now();
     if (!force && now - lastAudiobookSave < 10000) return;
@@ -5871,6 +5922,12 @@ function showToast(msg) {
   }
 
   async function openSharedItem(type, id) {
+    if (type === 'party') {
+      // Joins once the device is registered on the WebSocket
+      pendingPartyJoin = id;
+      wsSend('hello', { deviceId: DEVICE_ID, name: DEVICE_NAME, kind: DEVICE_KIND });
+      return;
+    }
     if (type === 'song') {
       const song = await CumuApi.get(`/api/songs/${id}`).catch(() => null);
       if (song && !song.error) playSong(song);
@@ -5901,7 +5958,7 @@ function showToast(msg) {
               ${cover ? `<img src="${cover}" class="w-full h-full object-cover" alt="">` : `<span class="material-symbols-outlined text-text-muted">${{ song: 'music_note', album: 'album', artist: 'person', playlist: 'queue_music', audiobook: 'auto_stories' }[it.item_type] || 'share'}</span>`}
             </div>
             <div class="flex-1 min-w-0">
-              <div class="text-body-sm text-text-muted"><b class="text-text-high-contrast">${esc(it.from_username)}</b> hat dir ${it.item_type === 'playlist' ? 'eine Playlist' : it.item_type === 'album' ? 'ein Album' : it.item_type === 'artist' ? 'einen Künstler' : it.item_type === 'audiobook' ? 'ein Hörbuch' : 'einen Song'} geschickt · ${timeAgo(it.created_at)}</div>
+              <div class="text-body-sm text-text-muted"><b class="text-text-high-contrast">${esc(it.from_username)}</b> hat dir ${it.item_type === 'playlist' ? 'eine Playlist' : it.item_type === 'album' ? 'ein Album' : it.item_type === 'artist' ? 'einen Künstler' : it.item_type === 'audiobook' ? 'ein Hörbuch' : it.item_type === 'party' ? 'eine Einladung zur Listening Party' : 'einen Song'} geschickt · ${timeAgo(it.created_at)}</div>
               <div class="text-body-lg font-bold text-text-high-contrast truncate">${esc(it.title)}</div>
               ${it.subtitle ? `<div class="text-body-sm text-text-muted truncate">${esc(it.subtitle)}</div>` : ''}
               ${it.message ? `<div class="mt-xs text-body-md text-on-surface bg-surface-container-low rounded-lg px-sm py-xs inline-block max-w-full break-words">„${esc(it.message)}“</div>` : ''}
@@ -5931,9 +5988,9 @@ function showToast(msg) {
   }
 
   // ── Links: #/song/<id>, #/album/<id>, #/playlist/<id>, ... ────────────────
-  const LINK_PAGES = ['song', 'album', 'artist', 'playlist', 'audiobook'];
+  const LINK_PAGES = ['song', 'album', 'artist', 'playlist', 'audiobook', 'party'];
   function linkTarget() {
-    const m = (location.hash || '').match(/^#\/(song|album|artist|playlist|audiobook)\/([^/?#]+)/);
+    const m = (location.hash || '').match(/^#\/(song|album|artist|playlist|audiobook|party)\/([^/?#]+)/);
     return m ? { type: m[1], id: decodeURIComponent(m[2]) } : null;
   }
   let pendingLink = linkTarget();
@@ -5959,7 +6016,512 @@ function showToast(msg) {
     navigate('discover');
   }
 
+  // ── Live: devices (play on / control other devices) & listening parties ────
+  // Every tab is a device. The device that plays reports its state; the
+  // others mirror it ("Wiedergabe auf …") and send commands to it.
+  // See src/services/live.js for the protocol.
+
+  const DEVICE_ID = (() => {
+    let id = null;
+    try { id = sessionStorage.getItem('cumu_device_id'); } catch (_) {}
+    if (!id) {
+      id = 'web-' + Math.random().toString(36).slice(2, 10);
+      try { sessionStorage.setItem('cumu_device_id', id); } catch (_) {}
+    }
+    return id;
+  })();
+  const DEVICE_NAME = (() => {
+    const ua = navigator.userAgent || '';
+    const browser = /Edg\//.test(ua) ? 'Edge' : /OPR\//.test(ua) ? 'Opera' : /Firefox\//.test(ua) ? 'Firefox'
+      : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
+    const os = /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iOS' : /Windows/.test(ua) ? 'Windows'
+      : /Mac OS X/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : '';
+    return os ? `${browser} · ${os}` : browser;
+  })();
+  const DEVICE_KIND = window.matchMedia && window.matchMedia('(max-width: 767px)').matches ? 'mobile-web' : 'web';
+
+  let liveDevices = [];
+  let activeDeviceId = null;
+  let remote = null;          // { deviceId, name, state, at } while another device plays
+  let party = null;           // { party, role: 'host' | 'guest' }
+  let partySuggestions = 0;   // host: suggested songs waiting after the current one
+  let pendingPartyJoin = null;
+  let lastReport = 0;
+  let lastReportKey = '';
+
+  const LIVE_GREEN = '#1f9d55';
+  const LIVE_PURPLE = '#9333ea';
+  const isRemote = () => !!remote;
+  const isPartyGuest = () => !!(party && party.role === 'guest');
+  const otherDevices = () => liveDevices.filter(d => d.id !== DEVICE_ID);
+  const deviceIcon = (d) => (d.kind === 'android' || d.kind === 'mobile-web') ? 'smartphone' : 'computer';
+
+  function wsSend(type, payload = {}) { CumuApi.wsPush(type, payload); }
+
+  function sendCommand(target, command, args = {}) { wsSend('device_command', { target, command, args }); }
+
+  /** Light song object for the other devices (same fields as the API). */
+  function songSummary(s) {
+    if (!s) return null;
+    const keep = ['id', 'title', 'artist_id', 'album_id', 'artist_name', 'album_title', 'cover', 'duration', 'track_number', 'genre',
+      'is_audiobook', 'book_id', 'book_title', 'intro_silence_ms', 'outro_silence_ms', 'loudness_gain_db'];
+    const o = {};
+    for (const k of keep) if (s[k] !== undefined && s[k] !== null) o[k] = s[k];
+    return o;
+  }
+
+  /** Reports the local playback (only while this tab plays or is the active device). */
+  function reportState(force = false) {
+    if (isRemote() || !currentSong || currentSong.isPodcast) return;
+    if (!isPlaying && activeDeviceId && activeDeviceId !== DEVICE_ID && !force) return;
+    const k = `${currentSong.id}|${isPlaying}|${queueIndex}|${queue.length}|${isShuffle}|${repeatMode}`;
+    const now = Date.now();
+    if (!force && k === lastReportKey && now - lastReport < 5000) return;
+    lastReport = now;
+    lastReportKey = k;
+    wsSend('device_state', {
+      state: {
+        song: songSummary(currentSong), isPlaying,
+        position: activeAudio ? activeAudio.currentTime || 0 : 0,
+        duration: activeAudio && isFinite(activeAudio.duration) ? activeAudio.duration : (currentSong.duration || 0),
+        volume: activeAudio ? activeAudio.volume : 1,
+        shuffle: isShuffle, repeat: repeatMode,
+        hasNext: queueIndex + 1 < queue.length || repeatMode === 'all' || isShuffle,
+        hasPrev: queueIndex > 0,
+        queueLength: queue.length,
+      },
+    });
+  }
+  setInterval(() => { if (isPlaying) reportState(); }, 5000);
+  ['seeked'].forEach(ev => [audioA, audioB].forEach(a => a.addEventListener(ev, () => { if (a === activeAudio) reportState(true); })));
+
+  // ── Remote mode: another device plays, this one shows it and controls it ──
+  function remotePosition() {
+    if (!remote || !remote.state) return 0;
+    const s = remote.state;
+    const pos = (s.position || 0) + (s.isPlaying ? (Date.now() - remote.receivedAt) / 1000 : 0);
+    return Math.min(pos, s.duration || pos);
+  }
+
+  function enterRemote(device) {
+    if (!device || !device.state || !device.state.song) return;
+    const wasRemote = isRemote();
+    if (!wasRemote && isPlaying) {
+      // Only one device of the account plays at a time
+      activeAudio.pause();
+      if (isFading) standbyAudio.pause();
+    }
+    remote = { deviceId: device.id, name: device.name, state: device.state, receivedAt: Date.now() - Math.max(0, (Date.now() - (device.stateAt || Date.now()))) };
+    applyRemoteState();
+  }
+
+  function applyRemoteState() {
+    if (!remote) return;
+    currentSong = { ...remote.state.song, _remote: true };
+    isPlaying = !!remote.state.isPlaying;
+    isShuffle = !!remote.state.shuffle;
+    if (remote.state.repeat) repeatMode = remote.state.repeat;
+    updatePlayerUI();
+    updateLiveUI();
+    tickRemote();
+  }
+
+  function leaveRemote() {
+    if (!remote) return;
+    remote = null;
+    isPlaying = false;
+    if (currentSong && currentSong._remote) currentSong = queue[queueIndex] || null;
+    if (currentSong) updatePlayerUI(); else hideNpBar();
+    updateLiveUI();
+  }
+
+  function tickRemote() {
+    if (!remote || !remote.state) return;
+    const dur = remote.state.duration || 0;
+    const cur = remotePosition();
+    const pct = dur ? (cur / dur) * 100 : 0;
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    const seek = document.getElementById('fullNpSeek');
+    if (seek && document.activeElement !== seek) { seek.value = pct; seek.style.setProperty('--progress-percent', `${pct}%`); }
+    set('fullNpCurrent', formatTime(cur));
+    set('fullNpDuration', formatTime(dur));
+    const mini = document.getElementById('miniNpProgress');
+    if (mini) mini.style.width = `${pct}%`;
+  }
+  setInterval(tickRemote, 500);
+
+  /** Seek from a slider (0..100) — local or on the playing device. */
+  function seekPercent(pct) {
+    if (isPartyGuest()) { partyGuestNotice(); return; }
+    if (isRemote()) {
+      const dur = remote.state.duration || 0;
+      const position = (pct / 100) * dur;
+      sendCommand(remote.deviceId, 'seek', { position });
+      remote.state = { ...remote.state, position };
+      remote.receivedAt = Date.now();
+      return;
+    }
+    if (activeAudio && activeAudio.duration) activeAudio.currentTime = (pct / 100) * activeAudio.duration;
+  }
+
+  /** Command from another device of the account. */
+  function handleDeviceCommand(msg) {
+    const a = msg.args || {};
+    switch (msg.command) {
+      case 'play': if (!isPlaying && currentSong) togglePlay(); break;
+      case 'pause': if (isPlaying) togglePlay(); break;
+      case 'toggle': togglePlay(); break;
+      case 'next': nextTrack(); break;
+      case 'prev': prevTrack(); break;
+      case 'seek': if (activeAudio && typeof a.position === 'number') { try { activeAudio.currentTime = a.position; } catch (_) {} } break;
+      case 'volume': if (typeof a.value === 'number') setVolume(a.value); break;
+      case 'shuffle': isShuffle = !!a.value; updatePlayerUI(); break;
+      case 'repeat': if (['none', 'all', 'one'].includes(a.value)) { repeatMode = a.value; updatePlayerUI(); } break;
+      case 'play_songs':
+        if (Array.isArray(a.songs) && a.songs.length) {
+          leaveRemote();
+          playQueue(a.songs, Math.min(Math.max(0, a.index || 0), a.songs.length - 1));
+        }
+        break;
+      case 'transfer': handOffTo(a.to); break;
+      case 'handoff': receiveHandoff(a, msg.fromName); break;
+    }
+    setTimeout(() => reportState(true), 300);
+  }
+
+  /** Gives the playback (queue + position) to another device and stops here. */
+  function handOffTo(targetId) {
+    if (!targetId || targetId === DEVICE_ID || !currentSong || isRemote()) return;
+    sendCommand(targetId, 'handoff', {
+      queue: queue.slice(Math.max(0, queueIndex - 50), queueIndex + 250).map(songSummary),
+      index: Math.min(queueIndex, 50),
+      position: activeAudio ? activeAudio.currentTime || 0 : 0,
+      isPlaying: true, shuffle: isShuffle, repeat: repeatMode,
+    });
+    activeAudio.pause();
+    if (isFading) standbyAudio.pause();
+    isPlaying = false;
+    updatePlayerUI();
+  }
+
+  function receiveHandoff(a, fromName) {
+    if (!Array.isArray(a.queue) || !a.queue.length) return;
+    remote = null;
+    isShuffle = !!a.shuffle;
+    if (a.repeat) repeatMode = a.repeat;
+    queue = a.queue;
+    queueIndex = Math.min(Math.max(0, a.index || 0), queue.length - 1);
+    playSong(queue[queueIndex], isAudiobookSong(queue[queueIndex]), a.position || 0);
+    showToast(`Wiedergabe von ${fromName || 'einem anderen Gerät'} übernommen`);
+    updateLiveUI();
+  }
+
+  /** "Play on" a device from the device list. */
+  function playOnDevice(targetId) {
+    closeDevicePicker();
+    if (isRemote()) {
+      if (targetId === remote.deviceId) return;
+      sendCommand(remote.deviceId, 'transfer', { to: targetId });
+      return;
+    }
+    if (targetId === DEVICE_ID) return;
+    if (!currentSong) { showToast('Starte zuerst einen Song'); return; }
+    handOffTo(targetId);
+  }
+
+  function handleDevices(msg) {
+    liveDevices = msg.devices || [];
+    activeDeviceId = msg.activeDeviceId || null;
+    const act = liveDevices.find(d => d.id === activeDeviceId);
+    if (act && act.id !== DEVICE_ID && act.state && act.state.song && !isPartyGuest()) enterRemote(act);
+    else if (remote && (!act || act.id === DEVICE_ID)) leaveRemote();
+    updateLiveUI();
+  }
+
+  function handleDeviceState(msg) {
+    if (msg.deviceId === DEVICE_ID) return;
+    const d = liveDevices.find(x => x.id === msg.deviceId);
+    if (d) { d.state = msg.state; d.stateAt = msg.at; }
+    if (remote && remote.deviceId === msg.deviceId) {
+      remote.state = msg.state;
+      remote.receivedAt = Date.now();
+      applyRemoteState();
+    } else if (msg.state && msg.state.isPlaying && msg.deviceId === activeDeviceId && d && !isPartyGuest()) {
+      enterRemote(d);
+    }
+  }
+
+  // ── Device picker ──────────────────────────────────────────────────────────
+  function closeDevicePicker() {
+    document.getElementById('devicePicker')?.remove();
+  }
+
+  function openDevicePicker(anchor) {
+    closeDevicePicker();
+    const box = document.createElement('div');
+    box.id = 'devicePicker';
+    box.className = 'fixed z-[9999] w-[320px] max-w-[calc(100vw-24px)] bg-surface-container-high border border-border-subtle rounded-xl shadow-2xl p-md';
+    const playingId = remote ? remote.deviceId : (isPlaying || currentSong ? DEVICE_ID : activeDeviceId);
+    const rows = [...liveDevices].sort((a, b) => (a.id === DEVICE_ID ? -1 : b.id === DEVICE_ID ? 1 : 0));
+    box.innerHTML = `
+      <div class="text-label-caps font-label-caps uppercase tracking-wider text-text-muted mb-sm">Gerät auswählen</div>
+      ${rows.map(d => {
+        const on = d.id === playingId;
+        const song = d.state && d.state.song;
+        return `
+        <button class="dev-row w-full flex items-center gap-md p-sm rounded-lg text-left ${on ? 'bg-primary/15' : 'hover:bg-surface-bright'}" data-dev="${esc(d.id)}">
+          <span class="material-symbols-outlined ${on ? 'text-primary' : 'text-text-muted'}">${on ? 'volume_up' : deviceIcon(d)}</span>
+          <span class="flex-1 min-w-0">
+            <span class="block font-bold truncate ${on ? 'text-primary' : 'text-on-surface'}">${esc(d.id === DEVICE_ID ? 'Dieses Gerät' : d.name)}</span>
+            <span class="block text-body-xs text-text-muted truncate">${d.id === DEVICE_ID ? esc(d.name) : (song ? `${d.state.isPlaying ? 'Spielt' : 'Pausiert'}: ${esc(song.title)}` : 'Bereit')}</span>
+          </span>
+          ${on ? '<span class="np-equalizer playing"><span></span><span></span><span></span><span></span></span>' : ''}
+        </button>`;
+      }).join('')}
+      <p class="text-body-xs text-text-muted mt-sm px-xs">Öffne cumu auf einem anderen Gerät mit deinem Konto, um dort weiterzuhören.</p>`;
+    document.body.appendChild(box);
+    const r = anchor ? anchor.getBoundingClientRect() : { right: window.innerWidth - 12, top: window.innerHeight - 100, bottom: window.innerHeight - 100 };
+    const left = Math.max(12, Math.min(window.innerWidth - box.offsetWidth - 12, r.right - box.offsetWidth));
+    const top = r.top - box.offsetHeight - 10 > 12 ? r.top - box.offsetHeight - 10 : r.bottom + 10;
+    box.style.left = `${left}px`;
+    box.style.top = `${top}px`;
+    box.querySelectorAll('.dev-row').forEach(b => b.addEventListener('click', () => playOnDevice(b.dataset.dev)));
+    setTimeout(() => document.addEventListener('click', function off(e) {
+      if (!box.contains(e.target)) { closeDevicePicker(); document.removeEventListener('click', off); }
+    }), 0);
+  }
+
+  // ── Listening party ────────────────────────────────────────────────────────
+  function partyGuestNotice() {
+    showToast(`${party.party.host.username} steuert die Party. Du kannst Songs vorschlagen.`);
+  }
+
+  function startParty() {
+    if (isRemote()) { showToast(`Starte die Party auf ${remote.name} oder hol die Wiedergabe erst hierher`); return; }
+    if (!currentSong) { showToast('Starte zuerst einen Song, dann die Party'); return; }
+    reportState(true);
+    wsSend('party_create');
+  }
+
+  function joinParty(partyId) {
+    if (!partyId) return;
+    if (isRemote()) leaveRemote();
+    wsSend('party_join', { partyId });
+  }
+
+  function leaveParty() {
+    if (!party) return;
+    const host = party.role === 'host';
+    if (host && !confirm('Party für alle beenden?')) return;
+    wsSend('party_leave');
+  }
+
+  function suggestToParty(song) {
+    if (!party || !song) return;
+    if (party.role === 'host') { addToQueue(song); return; }
+    wsSend('party_queue_add', { song: songSummary(song) });
+  }
+
+  /** Guest: follows the host's playback. */
+  function handlePartySync(msg) {
+    if (!isPartyGuest() || !msg.state || !msg.state.song) return;
+    const s = msg.state;
+    const age = Math.max(0, ((msg.serverNow || Date.now()) - (msg.at || Date.now())) / 1000);
+    const target = (s.position || 0) + (s.isPlaying ? age + 0.15 : 0);
+    if (!currentSong || currentSong.id !== s.song.id) {
+      queue = [s.song];
+      queueIndex = 0;
+      isShuffle = false;
+      repeatMode = 'none';
+      partyApplying = true;
+      playSong(s.song, false, target).finally(() => { partyApplying = false; });
+      if (!s.isPlaying) setTimeout(() => { activeAudio.pause(); isPlaying = false; updatePlayerUI(); }, 400);
+      return;
+    }
+    if (s.isPlaying && !isPlaying) { activeAudio.play().catch(() => {}); isPlaying = true; }
+    if (!s.isPlaying && isPlaying) { activeAudio.pause(); isPlaying = false; }
+    if (activeAudio && Math.abs((activeAudio.currentTime || 0) - target) > 1.5) {
+      try { activeAudio.currentTime = target; } catch (_) {}
+    }
+    updatePlayerUI();
+  }
+
+  function handlePartyQueueAdd(msg) {
+    if (!party || party.role !== 'host' || !msg.song) return;
+    ensureCurrentSongInQueue();
+    // Suggestions play in the order they came, right after the current song
+    const at = Math.min(queue.length, queueIndex + 1 + partySuggestions);
+    queue.splice(at, 0, { ...msg.song, _suggestedBy: msg.by });
+    partySuggestions++;
+    updateQueueUI();
+    showToast(`${msg.by} schlägt „${msg.song.title}“ vor`);
+  }
+
+  function openPartyPanel() {
+    let modal = document.getElementById('partyModal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'partyModal';
+      modal.className = 'fixed inset-0 bg-background/80 backdrop-blur-sm z-[9999] flex items-center justify-center p-md';
+      modal.addEventListener('click', (e) => { if (e.target === modal) modal.style.display = 'none'; });
+      document.body.appendChild(modal);
+    }
+    const p = party && party.party;
+    const host = party && party.role === 'host';
+    const link = p ? `${location.origin}/#/party/${p.id}` : '';
+    modal.innerHTML = !p ? `
+      <div class="w-full max-w-[440px] bg-surface-container rounded-xl shadow-2xl border border-border-subtle p-lg flex flex-col gap-md text-center">
+        <span class="material-symbols-outlined text-[48px] text-primary mx-auto">celebration</span>
+        <h2 class="text-title-md font-bold text-on-surface m-0">Listening Party</h2>
+        <p class="text-body-md text-text-muted m-0">Hört gemeinsam: Alle Gäste hören synchron, was du spielst, und können Songs vorschlagen.</p>
+        <button class="party-start px-lg py-sm rounded-full bg-primary text-on-primary font-bold">Party starten</button>
+        <button class="party-close text-body-sm text-text-muted">Abbrechen</button>
+      </div>` : `
+      <div class="w-full max-w-[480px] max-h-[88vh] overflow-y-auto bg-surface-container rounded-xl shadow-2xl border border-border-subtle p-lg flex flex-col gap-md">
+        <div class="flex items-center justify-between pb-sm border-b border-border-subtle">
+          <h2 class="text-title-md font-bold text-on-surface m-0 flex items-center gap-xs"><span class="material-symbols-outlined text-primary">celebration</span> Listening Party</h2>
+          <button class="party-close text-text-muted hover:text-on-surface rounded-full p-xs hover:bg-surface-bright"><span class="material-symbols-outlined text-[20px]">close</span></button>
+        </div>
+        <div class="flex flex-col gap-xs">
+          <div class="flex items-center gap-md p-sm rounded-lg bg-primary/10">
+            <div class="w-9 h-9 rounded-full bg-primary text-on-primary flex items-center justify-center font-bold">${esc((p.host.username || '?')[0].toUpperCase())}</div>
+            <div class="flex-1 min-w-0"><div class="font-bold text-on-surface truncate">${esc(p.host.username)}${host ? ' (du)' : ''}</div><div class="text-body-xs text-text-muted truncate">Gastgeber · ${esc(p.host.deviceName)}</div></div>
+            <span class="material-symbols-outlined text-primary">graphic_eq</span>
+          </div>
+          ${p.guests.length ? p.guests.map(g => `
+            <div class="flex items-center gap-md p-sm rounded-lg bg-surface-container-low">
+              <div class="w-9 h-9 rounded-full bg-surface-container-high text-on-surface flex items-center justify-center font-bold">${esc((g.username || '?')[0].toUpperCase())}</div>
+              <div class="flex-1 min-w-0"><div class="font-medium text-on-surface truncate">${esc(g.username)}</div><div class="text-body-xs text-text-muted truncate">${esc(g.deviceName)}</div></div>
+            </div>`).join('') : '<p class="text-body-sm text-text-muted m-0 px-xs">Noch keine Gäste. Lade jemanden ein oder teile den Link.</p>'}
+        </div>
+        <form class="party-invite flex gap-sm">
+          <input name="username" autocomplete="off" placeholder="Benutzername einladen" class="flex-1 min-w-0 bg-surface-container-low border border-border-subtle rounded-lg px-md py-sm text-on-surface focus:border-primary outline-none" />
+          <button class="px-md py-sm rounded-lg bg-text-high-contrast text-background font-bold">Einladen</button>
+        </form>
+        <div class="flex gap-sm">
+          <input readonly value="${esc(link)}" class="flex-1 min-w-0 bg-surface-container-low border border-border-subtle rounded-lg px-md py-sm text-body-sm text-text-muted" />
+          <button class="party-copy px-md py-sm rounded-lg bg-surface-container-high hover:bg-surface-bright text-on-surface font-bold">Link kopieren</button>
+        </div>
+        <p class="text-body-xs text-text-muted m-0">${host ? 'Gäste hören synchron mit. Vorgeschlagene Songs landen direkt nach dem aktuellen Song in deiner Warteschlange.' : 'Du hörst synchron mit. Über ⋮ → „Zur Party vorschlagen“ bei einem Song schickst du ihn an den Gastgeber.'}</p>
+        <button class="party-leave self-start px-md py-sm rounded-lg border border-error/40 text-error font-bold hover:bg-error/10">${host ? 'Party beenden' : 'Party verlassen'}</button>
+      </div>`;
+    modal.style.display = 'flex';
+    modal.querySelector('.party-close')?.addEventListener('click', () => { modal.style.display = 'none'; });
+    modal.querySelector('.party-start')?.addEventListener('click', () => { startParty(); });
+    modal.querySelector('.party-copy')?.addEventListener('click', async () => showToast((await copyText(link)) ? 'Link kopiert' : 'Kopieren nicht möglich'));
+    modal.querySelector('.party-leave')?.addEventListener('click', () => { leaveParty(); });
+    const form = modal.querySelector('.party-invite');
+    if (form) form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const username = form.username.value.trim();
+      if (!username) return;
+      wsSend('party_invite', { username });
+      form.username.value = '';
+    });
+  }
+
+  function handlePartyState(msg) {
+    const wasIn = !!party;
+    party = { party: msg.party, role: msg.role };
+    if (!wasIn) {
+      partySuggestions = 0;
+      showToast(msg.role === 'host' ? 'Party gestartet' : `Du bist in der Party von ${msg.party.host.username}`);
+      if (msg.role === 'guest' && remote) leaveRemote();
+    }
+    updateLiveUI();
+    if (document.getElementById('partyModal')?.style.display === 'flex') openPartyPanel();
+  }
+
+  function handlePartyEnded(msg) {
+    party = null;
+    partySuggestions = 0;
+    showToast(msg.reason || 'Die Party ist vorbei');
+    updateLiveUI();
+    const m = document.getElementById('partyModal');
+    if (m) m.style.display = 'none';
+  }
+
+  /** Strip above the player bar + device / party buttons. */
+  /** Pill on the now playing page: playing on another device / in a party. */
+  function livePillHtml() {
+    if (party) {
+      const p = party.party;
+      const n = p.guests.length;
+      const label = party.role === 'host' ? `Deine Listening Party · ${n} ${n === 1 ? 'Gast' : 'Gäste'}` : `Party von ${esc(p.host.username)} · ${n} ${n === 1 ? 'Gast' : 'Gäste'}`;
+      return `<button onclick="CumuApp.openPartyPanel()" class="mt-md inline-flex items-center gap-xs px-md py-xs rounded-full text-white font-bold text-body-sm shadow-md" style="background:linear-gradient(90deg,#7c3aed,#db2777)"><span class="material-symbols-outlined text-[18px]">celebration</span>${label}</button>`;
+    }
+    if (remote) {
+      const d = liveDevices.find(x => x.id === remote.deviceId);
+      return `<button onclick="event.stopPropagation(); CumuApp.openDevicePicker(this)" class="mt-md inline-flex items-center gap-xs px-md py-xs rounded-full text-white font-bold text-body-sm shadow-md" style="background:${LIVE_GREEN}"><span class="material-symbols-outlined text-[18px]">${d && deviceIcon(d) === 'smartphone' ? 'smartphone' : 'computer'}</span>Wiedergabe auf ${esc(remote.name)}</button>`;
+    }
+    return '';
+  }
+
+  function updateLiveUI() {
+    const multi = liveDevices.length > 1;
+    document.querySelectorAll('.live-devices-btn').forEach(b => {
+      // Only when really more than one device is online (inline style: the
+      // icon font's display rule would beat the "hidden" class)
+      b.classList.remove('hidden');
+      b.style.display = (multi || remote) ? '' : 'none';
+      b.style.color = remote ? LIVE_GREEN : '';
+    });
+    document.querySelectorAll('.live-party-btn').forEach(b => { b.style.color = party ? LIVE_PURPLE : ''; });
+    let strip = document.getElementById('liveStrip');
+    let text = '';
+    let icon = '';
+    if (party) {
+      const p = party.party;
+      const n = p.guests.length;
+      icon = 'celebration';
+      text = party.role === 'host'
+        ? `Deine Listening Party · ${n} ${n === 1 ? 'Gast' : 'Gäste'}`
+        : `Listening Party von ${esc(p.host.username)} · ${n} ${n === 1 ? 'Gast' : 'Gäste'}`;
+    } else if (remote) {
+      icon = remote.state && remote.state.song && /android|smartphone/i.test(remote.name) ? 'smartphone' : 'speaker_group';
+      const d = liveDevices.find(x => x.id === remote.deviceId);
+      icon = d ? (deviceIcon(d) === 'smartphone' ? 'smartphone' : 'computer') : icon;
+      text = `Wiedergabe auf ${esc(remote.name)}`;
+    }
+    if (!text) { if (strip) strip.remove(); document.body.classList.remove('live-strip-on'); return; }
+    if (!strip) {
+      strip = document.createElement('div');
+      strip.id = 'liveStrip';
+      document.body.appendChild(strip);
+    }
+    strip.className = `live-strip ${party ? 'is-party' : 'is-remote'}`;
+    strip.innerHTML = `<span class="material-symbols-outlined">${icon}</span><span class="live-strip-text">${text}</span>${party ? '<button class="live-strip-btn">Party</button>' : ''}`;
+    strip.onclick = () => { if (party) openPartyPanel(); else openDevicePicker(strip); };
+    document.body.classList.add('live-strip-on');
+  }
+
+  function handleLiveMessage(msg) {
+    switch (msg.type) {
+      case 'connected': wsSend('hello', { deviceId: DEVICE_ID, name: DEVICE_NAME, kind: DEVICE_KIND }); return true;
+      case 'hello_ok':
+        reportState(true);
+        if (pendingPartyJoin) { const id = pendingPartyJoin; pendingPartyJoin = null; joinParty(id); }
+        return true;
+      case 'devices': handleDevices(msg); return true;
+      case 'device_state': handleDeviceState(msg); return true;
+      case 'device_command': handleDeviceCommand(msg); return true;
+      case 'device_error': showToast(msg.message); return true;
+      case 'party_state': handlePartyState(msg); return true;
+      case 'party_sync': handlePartySync(msg); return true;
+      case 'party_queue_add': handlePartyQueueAdd(msg); return true;
+      case 'party_ended': handlePartyEnded(msg); return true;
+      case 'party_left': party = null; updateLiveUI(); showToast('Party verlassen'); return true;
+      case 'party_error': showToast(msg.message); return true;
+      case 'party_notice': showToast(msg.message); return true;
+      default: return false;
+    }
+  }
+
   window.CumuApp = {
+    openDevicePicker,
+    openPartyPanel,
+    suggestToParty,
+    seekPercent,
     openShareItemModal,
     refreshInboxBadge,
     openShareModal,

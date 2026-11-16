@@ -73,6 +73,9 @@ function createWsServer(httpServer) {
         return;
       }
 
+      // Devices and listening parties (src/services/live.js)
+      if (require('./services/live').onMessage(getDB(), userId, ws, msg)) return;
+
       // Accept state_update messages: broadcast to other clients
       if (msg.type === 'state_update' && msg.state) {
         broadcast(userId, { type: 'state_update', state: msg.state }, ws);
@@ -80,6 +83,7 @@ function createWsServer(httpServer) {
     });
 
     ws.on('close', () => {
+      try { require('./services/live').onClose(getDB(), userId, ws); } catch (e) { console.error('[ws] live close error:', e.message); }
       const room = rooms.get(userId);
       if (room) {
         room.delete(ws);

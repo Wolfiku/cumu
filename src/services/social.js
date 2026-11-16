@@ -19,7 +19,7 @@
 const { v4: uuidv4 } = require('uuid');
 
 const PRIVACY_KEYS = ['allow_invites', 'allow_shares', 'discoverable', 'show_name_public', 'count_in_stats'];
-const ITEM_TYPES = ['song', 'album', 'artist', 'playlist', 'audiobook'];
+const ITEM_TYPES = ['song', 'album', 'artist', 'playlist', 'audiobook', 'party'];
 
 function initSocial(db) {
   db.exec(`
@@ -153,6 +153,7 @@ function itemInfo(db, type, id, viewerId) {
     const book = require('./audiobooks').getBook(db, id, viewerId);
     return book && { title: book.title, subtitle: book.artist_name || 'Hörbuch', cover: book.cover };
   }
+  if (type === 'party') return require('./live').partyInfo(id);
   if (type === 'playlist') {
     const sharing = require('./playlistSharing');
     const pl = db.prepare('SELECT * FROM playlists WHERE id = ?').get(id);

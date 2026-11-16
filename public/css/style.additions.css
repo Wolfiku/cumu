@@ -1266,3 +1266,45 @@ html body span.material-symbols-outlined,
 .h-carousel-wrap.is-expanded [data-clone],
 .h-carousel-wrap.is-expanded [data-carousel-prev],
 .h-carousel-wrap.is-expanded [data-carousel-next] { display: none; }
+
+
+/* ── Live strip: "Wiedergabe auf …" / listening party (above the player bar) ── */
+.live-strip {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 96px;
+  z-index: 49;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 16px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.live-strip.is-remote { background: #1f9d55; }
+.live-strip.is-party { background: linear-gradient(90deg, #7c3aed, #db2777); }
+.live-strip .material-symbols-outlined { font-size: 18px; }
+.live-strip-text { overflow: hidden; text-overflow: ellipsis; }
+.live-strip-btn {
+  margin-left: 6px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+  font-size: 12px;
+  font-weight: 800;
+}
+@media (min-width: 768px) {
+  body:not(.np-active) .live-strip { bottom: 0; }
+}
+@media (max-width: 767px) {
+  .live-strip { bottom: calc(var(--m-tabbar-h, 56px) + var(--m-safe-bottom, 0px)); height: 28px; font-size: 12px; }
+  body.np-active .live-strip { bottom: calc(var(--m-tabbar-h, 56px) + var(--m-mini-h, 64px) + var(--m-safe-bottom, 0px) + 10px); }
+  body[data-page="nowplaying"] .live-strip { bottom: 0; }
+}
