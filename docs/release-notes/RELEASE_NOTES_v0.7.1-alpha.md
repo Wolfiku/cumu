@@ -1,6 +1,6 @@
-# cumu v0.7.1-alpha — Hotfix: Android app shows up as a device
+# cumu v0.7.1-alpha — Fix: Android app shows up as a device
 
-A hotfix for v0.7.0-alpha. **Update the Android app** (APK below); the server and the web app are unchanged.
+A small fix for v0.7.0-alpha. **Update the Android app** (APK below); the server and the web app are unchanged.
 
 ## 🐛 Fixed
 
