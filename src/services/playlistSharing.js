@@ -45,6 +45,9 @@ function initPlaylistSharing(db) {
     CREATE INDEX IF NOT EXISTS idx_playlist_saves_pl ON playlist_saves(playlist_id);
     CREATE INDEX IF NOT EXISTS idx_playlists_visibility ON playlists(visibility);
   `);
+  // Invitations wait until the invited person accepts them (older rows: accepted)
+  const memberCols = db.prepare('PRAGMA table_info(playlist_members)').all().map(c => c.name);
+  if (!memberCols.includes('status')) db.exec("ALTER TABLE playlist_members ADD COLUMN status TEXT NOT NULL DEFAULT 'accepted'");
 }
 
 const isGenerated = (pl) => pl.is_generated === 1 || !!(pl.description && pl.description.includes('[dynamic:'));
@@ -63,7 +66,7 @@ function accessOf(db, pl, userId) {
   if (db.prepare('SELECT 1 FROM user_blocks WHERE (user_id = ? AND blocked_id = ?) OR (user_id = ? AND blocked_id = ?)').get(userId, pl.user_id, pl.user_id, userId)) {
     return { role: null, canView: false, canEdit: false, saved };
   }
-  const m = db.prepare('SELECT can_edit FROM playlist_members WHERE playlist_id = ? AND user_id = ?').get(pl.id, userId);
+  const m = db.prepare("SELECT can_edit FROM playlist_members WHERE playlist_id = ? AND user_id = ? AND status = 'accepted'").get(pl.id, userId);
   if (m) return { role: m.can_edit ? 'editor' : 'listener', canView: true, canEdit: !!m.can_edit, saved };
   if (vis === 'public') return { role: 'public', canView: true, canEdit: false, saved };
   return { role: null, canView: false, canEdit: false, saved };
@@ -76,7 +79,7 @@ function decorate(db, pl, userId, access) {
   // Privacy: owners may hide their name on public playlists (invited people still see it)
   const hideName = a.role === 'public' && !showsName(db, pl.user_id);
   const counts = db.prepare(`SELECT
-      (SELECT COUNT(*) FROM playlist_members WHERE playlist_id = ?) AS members,
+      (SELECT COUNT(*) FROM playlist_members WHERE playlist_id = ? AND status = 'accepted') AS members,
       (SELECT COUNT(*) FROM playlist_saves WHERE playlist_id = ?) AS saves`).get(pl.id, pl.id);
   return {
     ...pl,
@@ -100,7 +103,7 @@ function libraryPlaylistRows(db, userId) {
   return db.prepare(`
     SELECT DISTINCT p.* FROM playlists p
     WHERE p.user_id = @u
-       OR (p.visibility IN ('shared', 'public') AND p.id IN (SELECT playlist_id FROM playlist_members WHERE user_id = @u))
+       OR (p.visibility IN ('shared', 'public') AND p.id IN (SELECT playlist_id FROM playlist_members WHERE user_id = @u AND status = 'accepted'))
        OR (p.visibility = 'public' AND p.id IN (SELECT playlist_id FROM playlist_saves WHERE user_id = @u))
     ORDER BY (p.user_id = @u) DESC, p.created_at DESC
   `).all({ u: userId });
@@ -112,7 +115,7 @@ function visiblePlaylistRows(db, userId) {
     SELECT DISTINCT p.* FROM playlists p
     WHERE p.user_id = @u OR (
       (p.visibility = 'public'
-        OR (p.visibility = 'shared' AND p.id IN (SELECT playlist_id FROM playlist_members WHERE user_id = @u)))
+        OR (p.visibility = 'shared' AND p.id IN (SELECT playlist_id FROM playlist_members WHERE user_id = @u AND status = 'accepted')))
       AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE (b.user_id = @u AND b.blocked_id = p.user_id) OR (b.user_id = p.user_id AND b.blocked_id = @u)))
   `).all({ u: userId });
 }
@@ -143,10 +146,35 @@ function discoverPublic(db, userId, q, limit = 30) {
 
 function members(db, playlistId) {
   return db.prepare(`
-    SELECT m.user_id, u.username, m.can_edit, m.added_at
+    SELECT m.user_id, u.username, m.can_edit, m.added_at, m.status
     FROM playlist_members m JOIN users u ON u.id = m.user_id
-    WHERE m.playlist_id = ? ORDER BY u.username COLLATE NOCASE
+    WHERE m.playlist_id = ? ORDER BY (m.status = 'accepted') DESC, u.username COLLATE NOCASE
   `).all(playlistId);
+}
+
+/** Playlist invitations waiting for the user's answer (social page). */
+function pendingInvitations(db, userId) {
+  return db.prepare(`
+    SELECT p.id, p.name, p.visibility, m.can_edit, m.added_at, u.username AS owner_username,
+      (SELECT COUNT(*) FROM playlist_songs ps WHERE ps.playlist_id = p.id) AS song_count,
+      (SELECT COALESCE(al.cover, s.cover) FROM playlist_songs ps JOIN songs s ON s.id = ps.song_id
+        LEFT JOIN albums al ON al.id = s.album_id WHERE ps.playlist_id = p.id AND COALESCE(al.cover, s.cover) IS NOT NULL
+        ORDER BY ps.position LIMIT 1) AS cover
+    FROM playlist_members m
+    JOIN playlists p ON p.id = m.playlist_id
+    JOIN users u ON u.id = p.user_id
+    WHERE m.user_id = ? AND m.status = 'pending' AND p.visibility != 'private'
+    ORDER BY m.added_at DESC
+  `).all(userId);
+}
+
+/** Accepts an invitation: the playlist is in the library from now on. */
+function acceptInvitation(db, playlistId, userId) {
+  return db.prepare("UPDATE playlist_members SET status = 'accepted' WHERE playlist_id = ? AND user_id = ? AND status = 'pending'").run(playlistId, userId).changes > 0;
+}
+
+function declineInvitation(db, playlistId, userId) {
+  return db.prepare("DELETE FROM playlist_members WHERE playlist_id = ? AND user_id = ? AND status = 'pending'").run(playlistId, userId).changes > 0;
 }
 
 function touch(db, playlistId) {
@@ -168,4 +196,5 @@ function forgetUser(db, userId) {
 module.exports = {
   VISIBILITIES, initPlaylistSharing, accessOf, decorate, isGenerated, libraryPlaylistRows,
   visiblePlaylistRows, discoverPublic, members, touch, forgetPlaylist, forgetUser,
+  pendingInvitations, acceptInvitation, declineInvitation,
 };

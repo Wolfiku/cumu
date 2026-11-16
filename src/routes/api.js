@@ -726,14 +726,35 @@ router.post('/playlists/:id/members', requireAuth, (req, res) => {
   // Privacy: the user may not accept invitations (or blocked the owner)
   const why = social.refusal(db, req.user.id, user, 'invite');
   if (why) return res.status(user.id === req.user.id ? 400 : 403).json({ error: why });
-  db.prepare(`INSERT INTO playlist_members (playlist_id, user_id, can_edit, added_by) VALUES (?, ?, ?, ?)
+  // The invited person has to accept first (social page); an accepted member only gets new rights
+  db.prepare(`INSERT INTO playlist_members (playlist_id, user_id, can_edit, added_by, status) VALUES (?, ?, ?, ?, 'pending')
     ON CONFLICT(playlist_id, user_id) DO UPDATE SET can_edit = excluded.can_edit`)
     .run(pl.id, user.id, req.body.canEdit ? 1 : 0, req.user.id);
   // Inviting someone into a private playlist makes it shared
   if ((pl.visibility || 'private') === 'private') db.prepare("UPDATE playlists SET visibility = 'shared' WHERE id = ?").run(pl.id);
   sharing.touch(db, pl.id);
   const updated = db.prepare('SELECT * FROM playlists WHERE id = ?').get(pl.id);
+  try {
+    require('../websocket').pushToUser(user.id, {
+      type: 'invitation_received', kind: 'playlist', playlistId: pl.id, title: pl.name,
+      from_username: db.prepare('SELECT username FROM users WHERE id = ?').get(req.user.id)?.username,
+      count: social.socialCount(db, user.id),
+    });
+  } catch (_) {}
   res.json({ success: true, visibility: updated.visibility, members: sharing.members(db, pl.id) });
+});
+
+// The invited user accepts / declines (social page)
+router.post('/playlists/:id/invitation', requireAuth, (req, res) => {
+  const db = getDB();
+  if (!sharing.acceptInvitation(db, req.params.id, req.user.id)) return res.status(404).json({ error: 'Keine offene Einladung' });
+  res.json({ success: true, count: social.socialCount(db, req.user.id) });
+});
+
+router.delete('/playlists/:id/invitation', requireAuth, (req, res) => {
+  const db = getDB();
+  sharing.declineInvitation(db, req.params.id, req.user.id);
+  res.json({ success: true, count: social.socialCount(db, req.user.id) });
 });
 
 // Body: { canEdit }

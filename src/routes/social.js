@@ -33,9 +33,10 @@ router.post('/shares', requireAuth, (req, res) => {
   const me = db.prepare('SELECT username FROM users WHERE id = ?').get(req.user.id);
   const info = social.itemInfo(db, type, id, r.toUserId);
   notify(r.toUserId, {
-    type: r.share.savedToLibrary ? 'playlist_received' : 'share_received',
+    type: 'share_received',
     share: { id: r.share.id, from_username: me && me.username, item_type: type, item_id: id, title: info && info.title, message: message || null },
     unread: social.unreadCount(db, r.toUserId),
+    count: social.socialCount(db, r.toUserId),
   });
   res.json({ success: true, share: r.share });
 });
@@ -60,6 +61,41 @@ router.delete('/shares/:id', requireAuth, (req, res) => {
   const db = getDB();
   social.deleteShare(db, req.user.id, req.params.id);
   res.json({ success: true, unread: social.unreadCount(db, req.user.id) });
+});
+
+// ── Social page & friends ─────────────────────────────────────────────────
+router.get('/social', requireAuth, (req, res) => {
+  res.json(social.socialOverview(getDB(), req.user.id));
+});
+
+router.get('/social/count', requireAuth, (req, res) => {
+  res.json({ count: social.socialCount(getDB(), req.user.id) });
+});
+
+router.get('/friends', requireAuth, (req, res) => {
+  res.json(social.friendsOf(getDB(), req.user.id));
+});
+
+// Body: { username }
+router.post('/friends', requireAuth, (req, res) => {
+  const db = getDB();
+  const r = social.requestFriend(db, req.user.id, req.body && req.body.username);
+  if (r.error) return res.status(r.status).json({ error: r.error });
+  notify(r.user.id, { type: 'friend_update', count: social.socialCount(db, r.user.id) });
+  res.json({ success: true, accepted: !!r.accepted, ...social.friendsOf(db, req.user.id) });
+});
+
+router.post('/friends/:userId/accept', requireAuth, (req, res) => {
+  const db = getDB();
+  social.acceptFriend(db, req.user.id, req.params.userId);
+  notify(req.params.userId, { type: 'friend_update', count: social.socialCount(db, req.params.userId) });
+  res.json({ success: true, ...social.friendsOf(db, req.user.id), count: social.socialCount(db, req.user.id) });
+});
+
+router.delete('/friends/:userId', requireAuth, (req, res) => {
+  const db = getDB();
+  social.removeFriend(db, req.user.id, req.params.userId);
+  res.json({ success: true, ...social.friendsOf(db, req.user.id), count: social.socialCount(db, req.user.id) });
 });
 
 // ── Privacy ────────────────────────────────────────────────────────────────

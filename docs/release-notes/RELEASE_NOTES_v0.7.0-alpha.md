@@ -40,39 +40,50 @@
 ## 📱 Android: Gestures & Queue
 
 - **Swipe the mini player:** left for the next title, right for the previous title, down to stop and close it.
+- **Swipe a song in the search to the right** to add it to the queue.
 - **Reorder the queue** by dragging the ≡ handle. The list scrolls along at the edges. Autoplay songs are marked in the queue.
 
 ## 👥 Shared Playlists (web and Android)
 
-- **Three levels:** every playlist starts **private**. Afterwards the owner chooses in *Teilen* (web: button on the playlist page, app: share icon):
+- **Three levels:** every playlist starts **private**. Afterwards the owner chooses in *Playlist-Einstellungen* (web: button on the playlist page, app: settings icon):
   - **Privat:** only you.
   - **Öffentlich:** everyone on this server can find it, add it to their library, download it and listen. On the start page as *Community Playlists*, and in the search.
   - **Geteilt:** only people you invite by **user name**. Each one either listens or may also add and remove songs.
-- **Collaborating:** in playlists several people edit, every song shows who added it. Shared playlists appear in the library of the invited people with "von …".
-- **Your library:** public playlists can be saved with one tap; invited people can leave a playlist. Only the owner can delete it, rename it or change who has access.
+- **Invitations need an answer:** the invited person finds the invitation on the **Social** page and accepts or declines it. Only after accepting the playlist is in their library, like any other playlist. The owner sees each person as *angefragt* or *angenommen*.
+- **Collaborating:** in playlists several people edit, every song shows who added it.
+- **Public playlists** are not added automatically: find them in the search, at the bottom of the start page (*Community Playlists*) or on the Social page (*Öffentliche Playlists entdecken*), and tap **Zur Bibliothek hinzufügen**. Invited people can leave a shared playlist (*Playlist verlassen*). Only the owner can delete it, rename it or change who has access.
 - "Add to playlist" offers only playlists you may edit.
 - Playlists cumu creates itself stay private.
 
 ## 📨 Send Music to Other Users (web and Android)
 
 - **Share** songs, albums, artists, playlists and audiobooks with a person on the server, with an optional message. Name suggestions appear while you type.
-- **Inbox "Mit dir geteilt":** everything others sent you, with sender, message and time. Tap to play or open. A badge shows new items: live on the web, in the app on the start page and in the library.
+- Everything others sent you lands on the **Social** page under *Mit dir geteilt*, with sender, message and time. Tap to play or open.
 - **Links:** every item has a link (`https://your-server/#/album/…`). It opens the item directly after login. Copy it on the web; in the app, share it with any app or copy it.
 - A private playlist can only be sent once the person may open it: cumu offers to invite them in the same step.
+
+## 👋 Social (web: tab above the settings, app: button top right on the start page, left of the search)
+
+- **Invitations** in one place: listening parties (*Beitreten* / *Ablehnen*), shared playlists (*Annehmen* / *Ablehnen*) and friend requests. A badge shows how many are open.
+- **Mit dir geteilt:** songs, albums, artists, playlists and audiobooks others sent you.
+- **Öffentliche Playlists entdecken:** public playlists of other people on the server.
+- **Party erstellen** and **Freunde verwalten** at the top. Friends are added by user name and must accept; they come first in name suggestions. Anyone on the server can still be invited by user name.
+- While you are in a party, the page shows with whom.
+- The phone layout of the web app has no Social page and no parties (the app has both).
 
 ## 🔊 Play on Other Devices (web and Android)
 
 - **See where music plays.** Every open cumu (browser tab, Android app) is a device of your account. When another device plays, the others show **"Wiedergabe auf …"**: on the web as a green line above the player bar and as a green pill on the now playing page, in the app as a green pill in the player and "Auf …" in the mini player.
 - **Control it from anywhere.** Play/pause, next, previous, seeking, shuffle, repeat and volume work on the playing device. Tapping a song starts it there.
-- **Switch devices.** The device button lists your devices; tap one to move the playback there, with queue and position. Web: in the player bar and on the now playing page. App: on the now playing page, left of the queue. The button appears **only when more than one device is online**.
+- **Switch devices.** The device button lists your devices; tap one to move the playback there, with queue and position. Web: in the player bar and on the now playing page. App: on the now playing page between *Zur Playlist hinzufügen* and the queue. The button appears **only when more than one device is online**.
 - Only one device of an account plays at a time: starting music on one device pauses the other.
 
 ## 🎉 Listening Parties (web and Android)
 
-- Start a party from the 🎉 button while something plays. Invite people by user name (they get it in "Mit dir geteilt") or share the link.
-- **Guests hear the same music in sync**: same song, same position, play and pause follow the host. They see "Party von …" in the player.
-- **Suggest songs:** guests tap a song (or ⋮ → "Zur Party vorschlagen"); it plays right after the current song in the host's queue, in the order the suggestions came.
-- Only the host controls the playback. The host ends the party, guests can leave any time. Blocked users cannot join each other's parties.
+- Start a party on the Social page (*Party erstellen*) while something plays. Invite anyone by user name (the invitation appears on their Social page) or share the link.
+- **Everyone hears the same music in sync** and **everyone controls it**: play, pause, next, previous, seeking and starting songs work for host and guests alike.
+- **Parties are pink:** the player bar (web), the mini player and the now playing page (app) turn pink, with "Party mit anna, max" showing who is in it.
+- The host ends the party, guests can leave any time. Blocked users cannot join each other's parties.
 - Parties are not saved: they end when the host leaves or the server restarts.
 
 ## 🛡️ Privacy (web: Settings → Privatsphäre, app: Profil → Privatsphäre)
@@ -95,7 +106,8 @@
 
 ## ✨ Small Improvements
 
-- **Playlists someone sends you land directly in your library**, like a saved playlist ("von …"), instead of waiting in the inbox.
+- **Autoplay** only continues a normal queue; when a playlist ends, nothing is added.
+- **Start page:** audiobooks and community playlists are at the bottom, below everything that was there before. Audiobooks also show in the search, and the web app has its own *audiobooks* tab.
 - **Artist pages (web):** the songs show their artist again instead of "Unknown artist".
 - **Android – artist pages:** the close button at the top left goes straight back to the last main tab (Start, Suche or Bibliothek), not to the player or another page.
 - **Android – offline mode:** when the server cannot be reached, or answers with a server error (5xx), the app switches to offline mode at once. A **red bar** says why ("Server nicht erreichbar", "Kein Internet", "Serverfehler (HTTP 502)"). The app checks the server at every start and every 3 seconds while offline, leaves the offline mode **as soon as the server answers**, and reloads the open page. Tapping the bar checks right away.
@@ -114,8 +126,9 @@
 - `DELETE /api/playlists/:id` deletes for the owner and removes the playlist from the library for everyone else.
 - `POST /api/shares` `{ username, type, id, message? }`, `GET /api/shares/inbox`, `GET /api/shares/unread`, `POST /api/shares/:id|all/read`, `DELETE /api/shares/:id`; WebSocket event `share_received`.
 - `GET /api/users/suggest?q=`, `GET|PUT /api/me/privacy`, `POST /api/me/blocks` `{ username }`, `DELETE /api/me/blocks/:userId`, `DELETE /api/me/history`.
-- `/api/home` and `/api/library/overview` gain `inboxUnread`.
-- WebSocket (`/ws`): `hello`, `device_state`, `device_command` (`play`, `pause`, `toggle`, `next`, `prev`, `seek`, `volume`, `shuffle`, `repeat`, `play_songs`, `transfer`, `handoff`), `devices`; parties: `party_create`, `party_join`, `party_leave`, `party_invite`, `party_queue_add`, `party_state`, `party_sync`, `party_ended`. Shares can carry the type `party`.
+- `/api/home` and `/api/library/overview` gain `inboxUnread` (unread shares); the social badge uses `/api/social/count`.
+- Social: `GET /api/social` (invitations, shares, friends, count), `GET /api/social/count`; playlist invitations `POST|DELETE /api/playlists/:id/invitation`; friends `GET /api/friends`, `POST /api/friends` `{ username }`, `POST /api/friends/:userId/accept`, `DELETE /api/friends/:userId`; WebSocket events `invitation_received`, `friend_update`. Playlist members carry `status` (`pending` | `accepted`).
+- WebSocket (`/ws`): `hello`, `device_state`, `device_command` (`play`, `pause`, `toggle`, `next`, `prev`, `seek`, `volume`, `shuffle`, `repeat`, `play_songs`, `transfer`, `handoff`), `devices`; parties: `party_create`, `party_join`, `party_leave`, `party_invite`, `party_queue_add`, `party_control` (a guest's command, carried out by the host's device), `party_state`, `party_sync`, `party_ended`. Shares can carry the type `party`.
 - Songs carry `intro_silence_ms`, `outro_silence_ms`, `loudness_lufs`, `peak_db` and `loudness_gain_db` once analysed.
 
 ## ⬆️ Updating

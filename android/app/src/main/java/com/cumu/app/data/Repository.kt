@@ -34,7 +34,7 @@ data class HomeFeed(
 class Repository(private val api: ApiClient, private val downloadedSongs: () -> List<Song>) {
 
     suspend fun home(): HomeData = try {
-        api.get("/api/home")
+        api.get<HomeData>("/api/home")
     } catch (e: OfflineException) {
         val songs = downloadedSongs()
         HomeData(recentlyPlayed = songs.take(10), newSongs = songs.drop(10).take(10))
@@ -265,12 +265,161 @@ class Repository(private val api: ApiClient, private val downloadedSongs: () -> 
         })
     }
 
+    // ── Sharing ──────────────────────────────────────────────────────────────
+
+    /** "private", "public" or "shared" (owner only). */
+    suspend fun setPlaylistVisibility(id: String, visibility: String): Playlist? {
+        val text = api.put("/api/playlists/$id", buildJsonObject { put("visibility", visibility) })
+        return runCatching { api.json.decodeFromString<PlaylistUpdate>(text).playlist }.getOrNull()
+    }
+
+    /** Invites a user of this server by name; answers the new member list. */
+    suspend fun addPlaylistMember(id: String, username: String, canEdit: Boolean): MembersAnswer {
+        val text = api.post("/api/playlists/$id/members", buildJsonObject { put("username", username); put("canEdit", canEdit) })
+        return api.json.decodeFromString(text)
+    }
+
+    suspend fun setPlaylistMemberEdit(id: String, userId: String, canEdit: Boolean): MembersAnswer {
+        val text = api.put("/api/playlists/$id/members/${enc(userId)}", buildJsonObject { put("canEdit", canEdit) })
+        return api.json.decodeFromString(text)
+    }
+
+    suspend fun removePlaylistMember(id: String, userId: String): MembersAnswer {
+        val text = api.delete("/api/playlists/$id/members/${enc(userId)}")
+        return api.json.decodeFromString(text)
+    }
+
+    /** Leaves a playlist someone shared with the user. */
+    suspend fun leavePlaylist(id: String) {
+        api.delete("/api/playlists/$id/members/me")
+        runCatching { api.delete("/api/playlists/$id/save") }
+    }
+
+    /** Adds a public playlist to the library (or removes it). */
+    suspend fun savePlaylist(id: String, save: Boolean) {
+        if (save) api.put("/api/playlists/$id/save") else api.delete("/api/playlists/$id/save")
+    }
+
+    /** Public playlists of other users on this server. */
+    suspend fun discoverPlaylists(q: String? = null): List<Playlist> =
+        api.get("/api/playlists/discover" + (q?.takeIf { it.isNotBlank() }?.let { "?q=${enc(it)}" } ?: ""))
+
     suspend fun deletePlaylist(id: String) {
         api.delete("/api/playlists/$id")
     }
 
     suspend fun addToLibrary(songId: String) {
         api.post("/api/library/song", buildJsonObject { put("songId", songId) })
+    }
+
+    // ── Audiobooks ───────────────────────────────────────────────────────────
+
+    suspend fun audiobooks(): AudiobookList = api.get("/api/audiobooks")
+    suspend fun cachedAudiobooks(): AudiobookList? = api.cached("/api/audiobooks")
+
+    suspend fun audiobook(id: String): Audiobook = try {
+        api.get("/api/audiobooks/${enc(id)}")
+    } catch (e: OfflineException) {
+        // Offline: rebuild the book from the downloaded chapters
+        val chapters = downloadedSongs().filter { it.isAudiobook && it.audiobookId == id }.sortedBy { it.trackNumber ?: Int.MAX_VALUE }
+        if (chapters.isEmpty()) throw e
+        Audiobook(
+            id = id, title = chapters.first().albumTitle ?: chapters.first().title,
+            artistId = chapters.first().artistId, artistName = chapters.first().artistName,
+            cover = chapters.firstNotNullOfOrNull { it.cover }, chapterCount = chapters.size,
+            duration = chapters.sumOf { it.duration ?: 0.0 }, chapters = chapters,
+        )
+    }
+
+    /** Saves where the user is in a book (shared with the web app). */
+    suspend fun saveAudiobookProgress(bookId: String, songId: String, positionSec: Double, finished: Boolean = false) {
+        api.put("/api/audiobooks/${enc(bookId)}/progress", buildJsonObject {
+            put("songId", songId)
+            put("position", positionSec)
+            if (finished) put("finished", true)
+        })
+    }
+
+    suspend fun clearAudiobookProgress(bookId: String) {
+        api.delete("/api/audiobooks/${enc(bookId)}/progress")
+    }
+
+    private fun enc(s: String) = URLEncoder.encode(s, "UTF-8").replace("+", "%20")
+
+    /** Similar music for autoplay (music only, never audiobooks). Empty on older servers. */
+    suspend fun radio(seeds: List<String>, exclude: List<String>): List<Song> = try {
+        api.get<RadioResult>("/api/radio?seeds=${enc(seeds.joinToString(","))}&exclude=${enc(exclude.joinToString(","))}&limit=20").songs
+    } catch (e: Exception) {
+        emptyList()
+    }
+
+    // ── Sending things to other users, inbox, privacy ───────────────────────
+
+    private val _inboxUnread = MutableStateFlow(0)
+    /** Unread items in "Mit dir geteilt". */
+    val inboxUnread: StateFlow<Int> = _inboxUnread.asStateFlow()
+
+    /** Badge of the social button: open invitations, unread things, friend requests. */
+    suspend fun refreshInboxUnread() {
+        runCatching { api.get<CountAnswer>("/api/social/count") }.getOrNull()?.let { _inboxUnread.value = it.count }
+    }
+
+    suspend fun social(): SocialData = api.get<SocialData>("/api/social").also { _inboxUnread.value = it.count }
+
+    suspend fun acceptPlaylistInvitation(id: String) { api.post("/api/playlists/${enc(id)}/invitation"); refreshInboxUnread() }
+    suspend fun declinePlaylistInvitation(id: String) { api.delete("/api/playlists/${enc(id)}/invitation"); refreshInboxUnread() }
+
+    suspend fun friends(): Friends = api.get("/api/friends")
+    /** Friend request by user name; true when it made you friends right away. */
+    suspend fun requestFriend(username: String): Boolean {
+        val text = api.post("/api/friends", buildJsonObject { put("username", username.trim()) })
+        return runCatching { (api.json.parseToJsonElement(text) as JsonObject)["accepted"]?.jsonPrimitive?.contentOrNull == "true" }.getOrDefault(false)
+    }
+    suspend fun acceptFriend(userId: String) { api.post("/api/friends/${enc(userId)}/accept"); refreshInboxUnread() }
+    suspend fun removeFriend(userId: String) { api.delete("/api/friends/${enc(userId)}"); refreshInboxUnread() }
+
+    suspend fun suggestUsers(q: String): List<UserSuggestion> =
+        if (q.isBlank()) emptyList() else runCatching { api.get<List<UserSuggestion>>("/api/users/suggest?q=${enc(q.trim())}") }.getOrDefault(emptyList())
+
+    /** Sends a song / album / artist / playlist / audiobook to a user of this server. */
+    suspend fun sendShare(username: String, type: String, id: String, message: String?) {
+        api.post("/api/shares", buildJsonObject {
+            put("username", username.trim())
+            put("type", type)
+            put("id", id)
+            if (!message.isNullOrBlank()) put("message", message.trim())
+        })
+    }
+
+    suspend fun inbox(): Inbox = api.get<Inbox>("/api/shares/inbox")
+
+    suspend fun markInboxRead() {
+        runCatching { api.post("/api/shares/all/read") }
+        refreshInboxUnread()
+    }
+
+    suspend fun deleteShare(id: String) {
+        api.delete("/api/shares/${enc(id)}")
+        refreshInboxUnread()
+    }
+
+    suspend fun song(id: String): Song = api.get("/api/songs/${enc(id)}")
+
+    suspend fun privacy(): Privacy = api.get("/api/me/privacy")
+
+    suspend fun setPrivacy(key: String, value: Boolean): Privacy =
+        api.json.decodeFromString(api.put("/api/me/privacy", buildJsonObject { put(key, value) }))
+
+    suspend fun blockUser(username: String): List<BlockedUser> =
+        api.json.decodeFromString<BlocksAnswer>(api.post("/api/me/blocks", buildJsonObject { put("username", username.trim()) })).blocked
+
+    suspend fun unblockUser(userId: String): List<BlockedUser> =
+        api.json.decodeFromString<BlocksAnswer>(api.delete("/api/me/blocks/${enc(userId)}")).blocked
+
+    /** Deletes the own listening history; returns how many entries. */
+    suspend fun deleteHistory(): Int {
+        val text = api.delete("/api/me/history")
+        return runCatching { (api.json.parseToJsonElement(text) as JsonObject)["deleted"]?.jsonPrimitive?.contentOrNull?.toInt() }.getOrNull() ?: 0
     }
 
     /** Counts a play (history, "most played"); fire and forget. */

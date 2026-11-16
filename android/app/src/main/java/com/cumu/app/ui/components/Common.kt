@@ -19,6 +19,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -58,6 +59,13 @@ fun <T> rememberLoad(vararg keys: Any?, cached: (suspend () -> T?)? = null, bloc
     var attempt by remember { mutableIntStateOf(0) }
     var state by remember(*keys) { mutableStateOf<Load<T>>(Load.Loading) }
     var refreshing by remember { mutableStateOf(false) }
+    // Server back after being offline: load fresh data at once
+    val offline by CumuApplication.instance.api.offline.collectAsState()
+    var wasOffline by remember { mutableStateOf(offline) }
+    LaunchedEffect(offline) {
+        if (wasOffline && !offline) attempt++
+        wasOffline = offline
+    }
     LaunchedEffect(*keys, attempt) {
         var quiet = false // updating saved content: no spinner over it
         if (state !is Load.Ok && cached != null) {

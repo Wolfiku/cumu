@@ -50,6 +50,15 @@ function initSocial(db) {
       read_at    INTEGER
     );
     CREATE INDEX IF NOT EXISTS idx_shares_to ON shares(to_user, created_at);
+    -- Friends: requester -> addressee, 'pending' until accepted
+    CREATE TABLE IF NOT EXISTS friendships (
+      user_id    TEXT NOT NULL,
+      friend_id  TEXT NOT NULL,
+      status     TEXT NOT NULL DEFAULT 'pending',
+      created_at INTEGER DEFAULT (unixepoch()),
+      PRIMARY KEY (user_id, friend_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_friendships_friend ON friendships(friend_id);
   `);
 }
 
@@ -106,7 +115,8 @@ function suggestUsers(db, userId, q, limit = 8) {
     WHERE u.id != @me AND COALESCE(u.is_blocked, 0) = 0 AND COALESCE(p.discoverable, 1) = 1
       AND LOWER(u.username) LIKE @like
       AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE (b.user_id = @me AND b.blocked_id = u.id) OR (b.user_id = u.id AND b.blocked_id = @me))
-    ORDER BY (LOWER(u.username) LIKE @prefix) DESC, u.username COLLATE NOCASE
+    ORDER BY EXISTS (SELECT 1 FROM friendships f WHERE f.status = 'accepted' AND ((f.user_id = @me AND f.friend_id = u.id) OR (f.friend_id = @me AND f.user_id = u.id))) DESC,
+      (LOWER(u.username) LIKE @prefix) DESC, u.username COLLATE NOCASE
     LIMIT @limit
   `).all({ me: userId, like: `%${term}%`, prefix: `${term}%`, limit });
 }
@@ -179,16 +189,6 @@ function createShare(db, fromId, toUsername, type, itemId, message) {
   if (type === 'playlist' && !itemInfo(db, type, itemId, to.id)) {
     return { error: `${to.username} kann diese Playlist nicht öffnen. Mach sie öffentlich oder lade ${to.username} ein.`, status: 400, needsAccess: true };
   }
-  // Playlists go straight into the recipient's library (like a saved one),
-  // they do not wait in the inbox
-  if (type === 'playlist') {
-    const pl = db.prepare('SELECT user_id FROM playlists WHERE id = ?').get(itemId);
-    const member = db.prepare('SELECT 1 FROM playlist_members WHERE playlist_id = ? AND user_id = ?').get(itemId, to.id);
-    if (pl && pl.user_id !== to.id && !member) {
-      db.prepare('INSERT OR IGNORE INTO playlist_saves (user_id, playlist_id) VALUES (?, ?)').run(to.id, itemId);
-    }
-    return { share: { id: null, to_user: to.id, to_username: to.username, savedToLibrary: true }, toUserId: to.id };
-  }
   const id = uuidv4();
   const text = message ? String(message).trim().slice(0, 500) : null;
   db.prepare('INSERT INTO shares (id, from_user, to_user, item_type, item_id, message) VALUES (?, ?, ?, ?, ?, ?)')
@@ -198,7 +198,7 @@ function createShare(db, fromId, toUsername, type, itemId, message) {
 
 function inbox(db, userId, limit = 100) {
   const rows = db.prepare(`SELECT sh.*, u.username AS from_username FROM shares sh JOIN users u ON u.id = sh.from_user
-    WHERE sh.to_user = ? AND sh.item_type != 'playlist' ORDER BY sh.created_at DESC LIMIT ?`).all(userId, limit);
+    WHERE sh.to_user = ? ORDER BY sh.created_at DESC LIMIT ?`).all(userId, limit);
   return rows
     .filter(r => !isBlocked(db, userId, r.from_user))
     .map(r => {
@@ -214,7 +214,7 @@ function inbox(db, userId, limit = 100) {
 }
 
 function unreadCount(db, userId) {
-  return db.prepare(`SELECT COUNT(*) AS n FROM shares sh WHERE sh.to_user = ? AND sh.read_at IS NULL AND sh.item_type != 'playlist'
+  return db.prepare(`SELECT COUNT(*) AS n FROM shares sh WHERE sh.to_user = ? AND sh.read_at IS NULL
     AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.user_id = ? AND b.blocked_id = sh.from_user)`).get(userId, userId).n;
 }
 
@@ -227,7 +227,78 @@ function deleteShare(db, userId, shareId) {
   db.prepare('DELETE FROM shares WHERE id = ? AND to_user = ?').run(shareId, userId);
 }
 
+// ── Friends ─────────────────────────────────────────────────────────────────
+
+function friendsOf(db, userId) {
+  const rows = db.prepare(`
+    SELECT f.user_id, f.friend_id, f.status, f.created_at,
+      a.username AS from_name, b.username AS to_name
+    FROM friendships f JOIN users a ON a.id = f.user_id JOIN users b ON b.id = f.friend_id
+    WHERE f.user_id = @u OR f.friend_id = @u
+  `).all({ u: userId });
+  const friends = [], incoming = [], outgoing = [];
+  for (const r of rows) {
+    const mine = r.user_id === userId;
+    const other = { user_id: mine ? r.friend_id : r.user_id, username: mine ? r.to_name : r.from_name, since: r.created_at };
+    if (isBlocked(db, userId, other.user_id)) continue;
+    if (r.status === 'accepted') friends.push(other);
+    else if (mine) outgoing.push(other);
+    else incoming.push(other);
+  }
+  const byName = (a, b) => a.username.localeCompare(b.username);
+  return { friends: friends.sort(byName), incoming: incoming.sort(byName), outgoing: outgoing.sort(byName) };
+}
+
+/** Friend request by name; a request the other one already sent is accepted. */
+function requestFriend(db, userId, username) {
+  const to = userByName(db, username);
+  if (!to || to.is_blocked) return { error: 'Diesen Nutzer gibt es auf diesem Server nicht', status: 404 };
+  if (to.id === userId) return { error: 'Das bist du selbst', status: 400 };
+  if (isBlocked(db, userId, to.id)) return { error: `${to.username} kann keine Anfragen bekommen`, status: 403 };
+  const reverse = db.prepare('SELECT status FROM friendships WHERE user_id = ? AND friend_id = ?').get(to.id, userId);
+  if (reverse) {
+    db.prepare("UPDATE friendships SET status = 'accepted' WHERE user_id = ? AND friend_id = ?").run(to.id, userId);
+    return { accepted: true, user: to };
+  }
+  db.prepare("INSERT OR IGNORE INTO friendships (user_id, friend_id, status) VALUES (?, ?, 'pending')").run(userId, to.id);
+  return { requested: true, user: to };
+}
+
+function acceptFriend(db, userId, requesterId) {
+  return db.prepare("UPDATE friendships SET status = 'accepted' WHERE user_id = ? AND friend_id = ? AND status = 'pending'").run(requesterId, userId).changes > 0;
+}
+
+/** Removes a friend, declines a request or cancels an own request. */
+function removeFriend(db, userId, otherId) {
+  db.prepare('DELETE FROM friendships WHERE (user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?)').run(userId, otherId, otherId, userId);
+}
+
+// ── Social page ─────────────────────────────────────────────────────────────
+
+/** Everything for the social page: invitations, things sent to me, friends. */
+function socialOverview(db, userId) {
+  const sharing = require('./playlistSharing');
+  const items = inbox(db, userId);
+  const parties = items.filter(i => i.item_type === 'party' && i.available);
+  // Party invitations of parties that are over are gone
+  for (const i of items.filter(x => x.item_type === 'party' && !x.available)) deleteShare(db, userId, i.id);
+  return {
+    invitations: { playlists: sharing.pendingInvitations(db, userId), parties },
+    shares: items.filter(i => i.item_type !== 'party'),
+    friends: friendsOf(db, userId),
+    count: socialCount(db, userId),
+  };
+}
+
+/** Badge of the social tab: open invitations, unread shares, friend requests. */
+function socialCount(db, userId) {
+  const sharing = require('./playlistSharing');
+  const reqs = db.prepare("SELECT COUNT(*) AS n FROM friendships WHERE friend_id = ? AND status = 'pending'").get(userId).n;
+  return sharing.pendingInvitations(db, userId).length + unreadCount(db, userId) + reqs;
+}
+
 function forgetUser(db, userId) {
+  db.prepare('DELETE FROM friendships WHERE user_id = ? OR friend_id = ?').run(userId, userId);
   db.prepare('DELETE FROM user_privacy WHERE user_id = ?').run(userId);
   db.prepare('DELETE FROM user_blocks WHERE user_id = ? OR blocked_id = ?').run(userId, userId);
   db.prepare('DELETE FROM shares WHERE from_user = ? OR to_user = ?').run(userId, userId);
@@ -236,4 +307,5 @@ function forgetUser(db, userId) {
 module.exports = {
   PRIVACY_KEYS, ITEM_TYPES, initSocial, getPrivacy, setPrivacy, isBlocked, blockUser, unblockUser, blockedUsers,
   suggestUsers, userByName, refusal, itemInfo, createShare, inbox, unreadCount, markRead, deleteShare, forgetUser,
+  friendsOf, requestFriend, acceptFriend, removeFriend, socialOverview, socialCount,
 };

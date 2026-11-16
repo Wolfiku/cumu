@@ -270,9 +270,25 @@ function partyInvite(db, userId, ws, msg) {
       type: 'share_received',
       share: { id: r.share.id, from_username: username(db, userId), item_type: 'party', item_id: party.id, title: info && info.title },
       unread: social.unreadCount(db, r.toUserId),
+      count: social.socialCount(db, r.toUserId),
     });
   } catch (_) {}
   send(ws, { type: 'party_notice', message: `${r.share.to_username} eingeladen` });
+}
+
+/**
+ * A guest controls the party like the host (play, pause, next, seek, start
+ * songs): forwarded to the host's device, whose state then syncs everyone.
+ */
+const PARTY_COMMANDS = ['play', 'pause', 'toggle', 'next', 'prev', 'seek', 'play_songs'];
+function partyControl(db, userId, ws, msg) {
+  const me = ws._cumuDevice;
+  if (!me || !PARTY_COMMANDS.includes(msg.command)) return;
+  const party = parties.get(partyOf.get(key(userId, me.deviceId)));
+  if (!party) return;
+  const host = deviceOf(party.hostUser, party.hostDevice);
+  if (!host) return;
+  send(host.ws, { type: 'device_command', from: me.deviceId, fromName: `${username(db, userId)} (Party)`, command: msg.command, args: msg.args || {}, party: true });
 }
 
 /** Title for the inbox / links. */
@@ -297,6 +313,7 @@ function onMessage(db, userId, ws, msg) {
     case 'party_end': partyLeave(db, userId, ws); return true;
     case 'party_queue_add': partyQueueAdd(db, userId, ws, msg); return true;
     case 'party_invite': partyInvite(db, userId, ws, msg); return true;
+    case 'party_control': partyControl(db, userId, ws, msg); return true;
     default: return false;
   }
 }
