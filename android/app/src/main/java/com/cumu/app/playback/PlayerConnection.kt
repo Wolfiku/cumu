@@ -88,6 +88,8 @@ class PlayerConnection(private val app: CumuApplication) {
                         // Last chapter over: the server marks the book as finished
                         saveAudiobookProgress(c, force = true)
                         if (_sleep.value?.endOfTrack == true) fallAsleep(c)
+                        // Queue over before autoplay could add songs: add them and go on
+                        else maybeAutoplay(c, ended = true)
                     }
                 }
             })
@@ -101,6 +103,7 @@ class PlayerConnection(private val app: CumuApplication) {
                     publish()
                     saveAudiobookProgress(c)
                     fadeBeforeEndOfTrack(c)
+                    maybeAutoplay(c)
                 }
                 delay(500)
             }
@@ -195,6 +198,41 @@ class PlayerConnection(private val app: CumuApplication) {
         if (_sleep.value?.endOfTrack != true || c.duration <= 0) return
         val left = ((c.duration - c.currentPosition) / c.playbackParameters.speed.coerceAtLeast(0.1f)).toLong()
         c.volume = if (left < END_FADE_MS) (left.toFloat() / END_FADE_MS).coerceIn(0.05f, 1f) else 1f
+    }
+
+    // ── Autoplay ─────────────────────────────────────────────────────────────
+
+    private var autoplayFor: String? = null
+
+    /**
+     * Near the end of the queue: appends similar music, so playback (and the
+     * crossfade) simply continues. Never after audiobooks, never with repeat.
+     */
+    private fun maybeAutoplay(c: MediaController, ended: Boolean = false) {
+        if (!app.playback.state.value.autoplay || app.api.offline.value) return
+        val cur = c.currentMediaItem?.let(::songOf) ?: return
+        if (cur.isAudiobook || c.repeatMode != Player.REPEAT_MODE_OFF) return
+        if (c.nextMediaItemIndex != androidx.media3.common.C.INDEX_UNSET) return
+        if (!ended && (c.duration <= 0 || c.duration - c.currentPosition > 30_000)) return
+        if (autoplayFor == cur.id && !ended) return
+        autoplayFor = cur.id
+        val all = (0 until c.mediaItemCount).mapNotNull { songOf(c.getMediaItemAt(it)) }.filter { !it.isAudiobook }
+        val seeds = all.take(c.currentMediaItemIndex + 1).takeLast(5).map { it.id }
+        val exclude = all.takeLast(100).map { it.id }
+        app.appScope.launch {
+            val songs = app.repo.radio(seeds, exclude).filter { !it.isAudiobook }
+            if (songs.isEmpty()) return@launch
+            withController { ctl ->
+                // The queue changed meanwhile (new list started): leave it alone
+                if (ctl.currentMediaItem?.mediaId != cur.id) return@withController
+                val firstNew = ctl.mediaItemCount
+                ctl.addMediaItems(songs.map { itemOf(it.copy(autoplay = 1)) })
+                if (ended || ctl.playbackState == Player.STATE_ENDED) {
+                    ctl.seekTo(firstNew, 0)
+                    ctl.play()
+                }
+            }
+        }
     }
 
     // ── Audiobooks ───────────────────────────────────────────────────────────
@@ -400,7 +438,8 @@ class PlayerConnection(private val app: CumuApplication) {
     }
 
     companion object {
-        private const val KEY_SONG = "cumu_song"
+        /** Extras key of the Song JSON inside every MediaItem (also read by PlaybackService). */
+        const val KEY_SONG = "cumu_song"
         private const val KEY_SPEED = "audiobook_speed"
         private const val FADE_MS = 15_000L
         private const val END_FADE_MS = 8_000L

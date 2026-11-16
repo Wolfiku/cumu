@@ -163,6 +163,7 @@ jobs:
           Priority: optional
           Architecture: all
           Depends: nodejs (>= 18)
+          Recommends: ffmpeg
           Maintainer: Wolfiku <noreply@github.com>
           Description: Self-hosted music streaming server
            cumu is a self-hosted Node.js music streaming application

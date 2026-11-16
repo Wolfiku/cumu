@@ -27,6 +27,12 @@ data class Song(
     /** Book of an audiobook chapter, set by the app when it starts a book. */
     @SerialName("book_id") val bookId: String? = null,
     @SerialName("book_title") val bookTitle: String? = null,
+    // Server audio analysis (v0.7.0): silence at start / end, loudness correction
+    @SerialName("intro_silence_ms") val introSilenceMs: Long? = null,
+    @SerialName("outro_silence_ms") val outroSilenceMs: Long? = null,
+    @SerialName("loudness_gain_db") val loudnessGainDb: Double? = null,
+    /** 1 for songs autoplay added after the queue. */
+    val autoplay: Int? = null,
 ) {
     /** Audiobook chapters never play between music, only when started explicitly. */
     val isAudiobook: Boolean get() = audiobookFlag == 1 || genre?.trim()?.lowercase()?.let { it in SPEECH_GENRES } == true
@@ -73,6 +79,9 @@ data class Audiobook(
 ) {
     val started: Boolean get() = progress != null && !progress.finished
 }
+
+@Serializable
+data class RadioResult(val songs: List<Song> = emptyList())
 
 @Serializable
 data class AudiobookList(

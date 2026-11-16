@@ -1,4 +1,4 @@
-# cumu v0.7.0-alpha — Quality of Life: Audiobooks & Sleep Timer
+# cumu v0.7.0-alpha — Quality of Life: Audiobooks, Crossfade & Sleep Timer
 
 > ⚠️ **This is an alpha release.** cumu is still under active development. Expect bugs, back up your `data` folder before updating, and please report problems in the [issues](https://github.com/Wolfiku/cumu/issues).
 
@@ -25,6 +25,27 @@
 - While the timer runs, the player shows the countdown. You can extend it by 5 minutes or turn it off.
 - For audiobooks, the position is saved when the timer pauses.
 
+## 🎚️ Seamless Playback (web and Android)
+
+- **Skip silence (void skipping).** The silent part at the start and end of a song is skipped. The next song starts at its first sound.
+- **Crossfade + skip silence combined.** The silence counts towards the fade: with 3 s of silence at the end and a 5 s crossfade, the songs fade into each other for 2 s of real sound. Without crossfade, playback cuts straight from the last sound to the next one.
+- **Crossfade in the Android app** (0 – 12 s, in *Profil → Wiedergabe*). It is a real overlap: the old song keeps playing while the new one fades in, with equal-power curves (no dip in the middle).
+- **Normalize volume.** Every song plays at the same loudness (target −14 LUFS, peaks kept below −1 dBTP), so no song is much louder or quieter than the others.
+- **Autoplay.** When the queue is over, cumu continues with similar music (same artists and genres, similar years, nothing you just heard). Songs are added early enough for the crossfade. Never after audiobooks or podcasts, never with repeat on.
+- **Shuffle crossfades too** on the web: the next shuffled song is picked in advance and preloaded.
+- Audiobooks and podcasts never fade, skip or autoplay.
+- **Server analysis:** cumu analyses every music track once in the background with **ffmpeg** (silence at start and end, EBU R128 loudness and true peak). New tracks are analysed after scans and uploads. Without ffmpeg, only ReplayGain tags are used for normalization and silence is not skipped. The Docker image already contains ffmpeg; on Linux installations `install.sh` now installs it.
+- All three options can be switched off: on the web in *Settings → Audio Engine*, in the app in *Profil → Wiedergabe*.
+
+## 📱 Android: Gestures & Queue
+
+- **Swipe the mini player:** left for the next title, right for the previous title, down to stop and close it.
+- **Reorder the queue** by dragging the ≡ handle. The list scrolls along at the edges. Autoplay songs are marked in the queue.
+
+## 🐛 Fixes
+
+- Settings no longer overwrite each other: `/api/sync` merges `extraSettings` instead of replacing them. Before, saving one setting could reset others, such as podcast search.
+
 ## 🔌 API
 
 - `GET /api/audiobooks`: all books with your progress, plus the started ones (`continue`).
@@ -32,11 +53,13 @@
 - `PUT /api/audiobooks/:id/progress` `{ songId, position, finished? }` / `DELETE /api/audiobooks/:id/progress`.
 - `/api/home` gains `audiobooks`, `/api/search` and `/api/artists/:id` gain `audiobooks`, `/api/library/overview` gains `audiobookCount`.
 - `/api/songs` lists music only; add `?audiobooks=1` to include the chapters.
+- `GET /api/radio?seeds=<ids>&exclude=<ids>&limit=20`: similar music for autoplay.
+- Songs carry `intro_silence_ms`, `outro_silence_ms`, `loudness_lufs`, `peak_db` and `loudness_gain_db` once analysed.
 
 ## ⬆️ Updating
 
 - **Docker / NAS:** Watchtower updates automatically, or use "Update installieren" in the admin panel.
 - **Linux / LXC / .deb:** `sudo cumu-update`
-- **Android:** install the new `cumu_0.7.0-alpha.apk` from this release for the sleep timer and audiobooks. Older app versions keep working, but they show no audiobook sections.
+- **Android:** install the new `cumu_0.7.0-alpha.apk` from this release for the sleep timer, audiobooks, crossfade, gestures and the new queue. Older app versions keep working, but they show no audiobook sections.
 
 After updating, reload the web app once (the offline cache is refreshed automatically).

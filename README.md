@@ -40,6 +40,9 @@ curl -fsSL https://raw.githubusercontent.com/Wolfiku/cumu/main/scripts/install.s
 [+] Podcast Search & Player      — search millions of shows/episodes, manage feeds & progress
 [+] Audiobooks                   — speech tracks become audiobooks: chapters, speed, resume on every device
 [+] Sleep Timer (Android)        — pause after a set time or at the end of the title, with fade-out
+[+] Crossfade & Skip Silence     — real crossfade (web + Android), silence at start/end skipped, combined smartly
+[+] Volume Normalization        — every song at the same loudness (ffmpeg EBU R128 analysis or ReplayGain)
+[+] Autoplay                    — similar music continues when the queue is over
 [+] PWA & Offline Mode           — save playlists offline for playback without internet
 [+] Native Android App           — streaming, background playback, offline library & downloads (APK in Releases)
 [+] Login Brute-Force Protection — failed logins are rate-limited per account and IP

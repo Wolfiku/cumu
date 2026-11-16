@@ -39,6 +39,14 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.material.icons.rounded.DragHandle
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.zIndex
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.FormatListNumbered
@@ -353,11 +361,46 @@ private fun FavoriteButton(songId: String) {
     }
 }
 
+/** One queue entry; its key stays the same while it is dragged (the same song may be queued twice). */
+private data class QueueEntry(val key: String, val song: com.cumu.app.data.Song)
+
+private fun entriesOf(queue: List<com.cumu.app.data.Song>): List<QueueEntry> {
+    val seen = HashMap<String, Int>()
+    return queue.map { song ->
+        val n = (seen[song.id] ?: 0) + 1
+        seen[song.id] = n
+        QueueEntry("${song.id}#$n", song)
+    }
+}
+
+/** The queue: tap plays, ≡ drags to a new place, × removes. */
 @Composable
 private fun QueueList(title: String = "Warteschlange") {
     val app = CumuApplication.instance
     val s by app.player.state.collectAsState()
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = (s.index - 1).coerceAtLeast(0))
+    val entries = remember { mutableStateListOf<QueueEntry>().apply { addAll(entriesOf(s.queue)) } }
+    var dragKey by remember { mutableStateOf<String?>(null) }
+    var dragOffset by remember { mutableFloatStateOf(0f) }
+    var dragFrom by remember { mutableIntStateOf(-1) }
+    // Follow the player, except while the user drags
+    LaunchedEffect(s.queue) {
+        if (dragKey == null) {
+            entries.clear()
+            entries.addAll(entriesOf(s.queue))
+        }
+    }
+    val currentKey = remember(s.queue, s.index) { entriesOf(s.queue).getOrNull(s.index)?.key }
+
+    val finish: () -> Unit = {
+        val to = entries.indexOfFirst { it.key == dragKey }
+        val from = dragFrom
+        dragKey = null
+        dragOffset = 0f
+        if (from >= 0 && to >= 0 && from != to) app.player.move(from, to)
+    }
+
     Column(Modifier.fillMaxWidth()) {
         Text(
             "$title · ${s.queue.size} Titel",
@@ -365,12 +408,63 @@ private fun QueueList(title: String = "Warteschlange") {
             style = MaterialTheme.typography.titleMedium,
         )
         LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().height(480.dp)) {
-            itemsIndexed(s.queue, key = { i, song -> "$i-${song.id}" }) { i, song ->
-                val current = i == s.index
+            itemsIndexed(entries, key = { _, e -> e.key }) { i, e ->
+                val song = e.song
+                val current = e.key == currentKey
+                val dragging = e.key == dragKey
                 Row(
-                    Modifier.fillMaxWidth().clickable { app.player.skipTo(i) }.padding(start = 20.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+                    Modifier
+                        .then(
+                            if (dragging) Modifier
+                                .zIndex(1f)
+                                .graphicsLayer { translationY = dragOffset; shadowElevation = 12f }
+                                .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                            else Modifier.animateItem(),
+                        )
+                        .fillMaxWidth()
+                        .clickable { app.player.skipTo(i) }
+                        .padding(start = 4.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    // Drag handle
+                    Icon(
+                        Icons.Rounded.DragHandle, "Verschieben",
+                        Modifier
+                            .size(48.dp)
+                            .padding(12.dp)
+                            .pointerInput(e.key) {
+                                detectDragGestures(
+                                    onDragStart = {
+                                        dragKey = e.key
+                                        dragFrom = entries.indexOfFirst { it.key == e.key }
+                                        dragOffset = 0f
+                                    },
+                                    onDragEnd = { finish() },
+                                    onDragCancel = { finish() },
+                                ) { change, amount ->
+                                    change.consume()
+                                    dragOffset += amount.y
+                                    val from = entries.indexOfFirst { it.key == dragKey }
+                                    val info = listState.layoutInfo.visibleItemsInfo
+                                    val me = info.firstOrNull { it.index == from } ?: return@detectDragGestures
+                                    val center = me.offset + dragOffset + me.size / 2f
+                                    val target = info.firstOrNull { it.index != from && center >= it.offset && center <= it.offset + it.size }
+                                    if (target != null) {
+                                        entries.add(target.index, entries.removeAt(from))
+                                        dragOffset -= (target.offset - me.offset).toFloat()
+                                    }
+                                    // Near the edges the list scrolls along
+                                    val viewEnd = listState.layoutInfo.viewportEndOffset
+                                    val step = when {
+                                        center > viewEnd - 120 -> 24f
+                                        center < listState.layoutInfo.viewportStartOffset + 120 -> -24f
+                                        else -> 0f
+                                    }
+                                    if (step != 0f) scope.launch { dragOffset += listState.scrollBy(step) }
+                                }
+                            },
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     Cover(song.cover, 40.dp, songId = song.id, corner = 4.dp)
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
@@ -379,7 +473,10 @@ private fun QueueList(title: String = "Warteschlange") {
                             color = if (current) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                             fontWeight = if (current) FontWeight.SemiBold else FontWeight.Normal,
                         )
-                        Text(song.artistName ?: "", maxLines = 1, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            listOfNotNull(song.artistName, if (song.autoplay == 1) "Autoplay" else null).joinToString(" · "),
+                            maxLines = 1, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                     if (!current) IconButton(onClick = { app.player.removeAt(i) }) { Icon(Icons.Rounded.Close, "Entfernen") }
                     else Box(Modifier.size(48.dp))

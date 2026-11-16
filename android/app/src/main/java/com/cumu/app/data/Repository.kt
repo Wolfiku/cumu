@@ -307,6 +307,13 @@ class Repository(private val api: ApiClient, private val downloadedSongs: () -> 
 
     private fun enc(s: String) = URLEncoder.encode(s, "UTF-8").replace("+", "%20")
 
+    /** Similar music for autoplay (music only, never audiobooks). Empty on older servers. */
+    suspend fun radio(seeds: List<String>, exclude: List<String>): List<Song> = try {
+        api.get<RadioResult>("/api/radio?seeds=${enc(seeds.joinToString(","))}&exclude=${enc(exclude.joinToString(","))}&limit=20").songs
+    } catch (e: Exception) {
+        emptyList()
+    }
+
     /** Counts a play (history, "most played"); fire and forget. */
     suspend fun reportPlay(songId: String) {
         runCatching { api.post("/api/songs/$songId/play") }
