@@ -237,6 +237,13 @@ class LiveClient(
             "party_ended" -> { _party.value = null; _notices.tryEmit(str(o, "reason") ?: "Die Party ist vorbei") }
             "party_left" -> { _party.value = null; _notices.tryEmit("Party verlassen") }
             "share_received" -> scope.launch { runCatching { onShareReceived() } }
+            // A playlist someone sent is in the library now (no inbox entry)
+            "playlist_received" -> {
+                val sh = o["share"] as? JsonObject
+                val from = sh?.let { str(it, "from_username") } ?: "Jemand"
+                val title = sh?.let { str(it, "title") } ?: ""
+                _notices.tryEmit("$from hat dir die Playlist „$title“ geschickt – sie ist jetzt in deiner Bibliothek")
+            }
         }
     }
 

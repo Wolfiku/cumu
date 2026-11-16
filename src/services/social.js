@@ -179,6 +179,16 @@ function createShare(db, fromId, toUsername, type, itemId, message) {
   if (type === 'playlist' && !itemInfo(db, type, itemId, to.id)) {
     return { error: `${to.username} kann diese Playlist nicht öffnen. Mach sie öffentlich oder lade ${to.username} ein.`, status: 400, needsAccess: true };
   }
+  // Playlists go straight into the recipient's library (like a saved one),
+  // they do not wait in the inbox
+  if (type === 'playlist') {
+    const pl = db.prepare('SELECT user_id FROM playlists WHERE id = ?').get(itemId);
+    const member = db.prepare('SELECT 1 FROM playlist_members WHERE playlist_id = ? AND user_id = ?').get(itemId, to.id);
+    if (pl && pl.user_id !== to.id && !member) {
+      db.prepare('INSERT OR IGNORE INTO playlist_saves (user_id, playlist_id) VALUES (?, ?)').run(to.id, itemId);
+    }
+    return { share: { id: null, to_user: to.id, to_username: to.username, savedToLibrary: true }, toUserId: to.id };
+  }
   const id = uuidv4();
   const text = message ? String(message).trim().slice(0, 500) : null;
   db.prepare('INSERT INTO shares (id, from_user, to_user, item_type, item_id, message) VALUES (?, ?, ?, ?, ?, ?)')
@@ -188,7 +198,7 @@ function createShare(db, fromId, toUsername, type, itemId, message) {
 
 function inbox(db, userId, limit = 100) {
   const rows = db.prepare(`SELECT sh.*, u.username AS from_username FROM shares sh JOIN users u ON u.id = sh.from_user
-    WHERE sh.to_user = ? ORDER BY sh.created_at DESC LIMIT ?`).all(userId, limit);
+    WHERE sh.to_user = ? AND sh.item_type != 'playlist' ORDER BY sh.created_at DESC LIMIT ?`).all(userId, limit);
   return rows
     .filter(r => !isBlocked(db, userId, r.from_user))
     .map(r => {
@@ -204,7 +214,7 @@ function inbox(db, userId, limit = 100) {
 }
 
 function unreadCount(db, userId) {
-  return db.prepare(`SELECT COUNT(*) AS n FROM shares sh WHERE sh.to_user = ? AND sh.read_at IS NULL
+  return db.prepare(`SELECT COUNT(*) AS n FROM shares sh WHERE sh.to_user = ? AND sh.read_at IS NULL AND sh.item_type != 'playlist'
     AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.user_id = ? AND b.blocked_id = sh.from_user)`).get(userId, userId).n;
 }
 

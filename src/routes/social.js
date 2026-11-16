@@ -33,7 +33,7 @@ router.post('/shares', requireAuth, (req, res) => {
   const me = db.prepare('SELECT username FROM users WHERE id = ?').get(req.user.id);
   const info = social.itemInfo(db, type, id, r.toUserId);
   notify(r.toUserId, {
-    type: 'share_received',
+    type: r.share.savedToLibrary ? 'playlist_received' : 'share_received',
     share: { id: r.share.id, from_username: me && me.username, item_type: type, item_id: id, title: info && info.title, message: message || null },
     unread: social.unreadCount(db, r.toUserId),
   });

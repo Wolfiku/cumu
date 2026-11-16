@@ -1308,8 +1308,3 @@ html body span.material-symbols-outlined,
   body.np-active .live-strip { bottom: calc(var(--m-tabbar-h, 56px) + var(--m-mini-h, 64px) + var(--m-safe-bottom, 0px) + 10px); }
   body[data-page="nowplaying"] .live-strip { bottom: 0; }
 }
-
-/* Mobile top bar: the inbox sits there on the start page only */
-@media (max-width: 767px) {
-  body:not([data-page="discover"]) .mobile-inbox-btn { display: none; }
-}

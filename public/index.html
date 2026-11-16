@@ -140,12 +140,8 @@
     </button>
     <span class="font-headline-lg-mobile text-headline-lg-mobile text-on-surface lowercase font-bold cursor-pointer" onclick="navigate('discover')">cumu</span>
     <div class="flex gap-xs -mr-sm">
-      <button class="mobile-icon-btn mobile-inbox-btn relative" onclick="navigate('inbox')" aria-label="Mit dir geteilt">
-        <span class="material-symbols-outlined">inbox</span>
-        <span class="inbox-badge hidden absolute top-1 right-1 min-w-[16px] h-4 px-[3px] rounded-full bg-error text-white text-[10px] font-bold flex items-center justify-center">0</span>
-      </button>
-      <button class="mobile-icon-btn" onclick="navigate('settings')" aria-label="Profil">
-        <span class="material-symbols-outlined">account_circle</span>
+      <button class="mobile-icon-btn" onclick="CumuMobile.openSearch()" aria-label="Search">
+        <span class="material-symbols-outlined">search</span>
       </button>
     </div>
   </nav>
@@ -176,6 +172,11 @@
       <a id="navItem-podcasts" href="#" onclick="navigate('podcasts'); return false;" class="flex items-center gap-md px-md py-sm rounded-lg text-text-muted hover:scale-105 hover:bg-surface-bright transition-transform duration-200 active:scale-95 font-label-caps text-label-caps">
         <span class="material-symbols-outlined" data-icon="podcasts">podcasts</span>
         podcasts
+      </a>
+      <a id="navItem-inbox" href="#" onclick="navigate('inbox'); return false;" class="flex items-center gap-md px-md py-sm rounded-lg text-text-muted hover:scale-105 hover:bg-surface-bright transition-transform duration-200 active:scale-95 font-label-caps text-label-caps">
+        <span class="material-symbols-outlined" data-icon="inbox">inbox</span>
+        shared with you
+        <span class="inbox-badge hidden ml-auto min-w-[20px] h-5 px-1 rounded-full bg-primary text-on-primary text-[11px] font-bold flex items-center justify-center">0</span>
       </a>
       <a id="navItem-audiobooks" href="#" onclick="navigate('audiobooks'); return false;" class="flex items-center gap-md px-md py-sm rounded-lg text-text-muted hover:scale-105 hover:bg-surface-bright transition-transform duration-200 active:scale-95 font-label-caps text-label-caps">
         <span class="material-symbols-outlined" data-icon="auto_stories">auto_stories</span>
@@ -258,13 +259,13 @@
       <span class="material-symbols-outlined">home</span>
       <span class="mobile-tab-label">home</span>
     </button>
-    <button class="mobile-tab" data-tab="search" onclick="CumuMobile.openTab('search')">
-      <span class="material-symbols-outlined">search</span>
-      <span class="mobile-tab-label">search</span>
-    </button>
     <button class="mobile-tab" data-tab="library" onclick="CumuMobile.openTab('library')">
       <span class="material-symbols-outlined">library_music</span>
       <span class="mobile-tab-label">library</span>
+    </button>
+    <button class="mobile-tab" data-tab="profile" onclick="CumuMobile.openTab('profile')">
+      <span class="material-symbols-outlined">account_circle</span>
+      <span class="mobile-tab-label">profile</span>
     </button>
   </nav>
 

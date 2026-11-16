@@ -504,7 +504,8 @@ router.get('/artists/:id', requireAuth, (req, res) => {
   if (!artist) return res.status(404).json({ error: 'Not found' });
   // Music only; the artist's audiobooks come as their own list
   const albums = db.prepare(`SELECT * FROM albums WHERE artist_id=? AND COALESCE(is_audiobook,0)=0 ORDER BY year DESC`).all(req.params.id);
-  const songs  = db.prepare(`SELECT s.*, al.title as album_title, al.cover FROM songs s LEFT JOIN albums al ON al.id=s.album_id WHERE s.artist_id=? AND ${musicOnly('s')} ORDER BY s.created_at DESC`).all(req.params.id);
+  // Songs carry the artist name and album cover like every other list
+  const songs  = db.prepare(`SELECT s.*, al.title as album_title, COALESCE(al.cover, s.cover) as cover, ar.name as artist_name FROM songs s LEFT JOIN albums al ON al.id=s.album_id LEFT JOIN artists ar ON ar.id=s.artist_id WHERE s.artist_id=? AND ${musicOnly('s')} ORDER BY s.created_at DESC`).all(req.params.id);
   const books = audiobooks.listBooks(db, req.user.id).filter(b => b.artist_id === req.params.id);
   res.json({ ...artist, albums, songs, audiobooks: books });
 });
