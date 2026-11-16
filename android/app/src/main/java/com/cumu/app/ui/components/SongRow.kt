@@ -76,6 +76,8 @@ fun SongRow(
     onRemove: (() -> Unit)? = null,
     removeLabel: String = "Aus Playlist entfernen",
     onPlay: (() -> Unit)? = null,
+    /** Extra text after artist · album, e.g. "hinzugefügt von anna". */
+    extra: String? = null,
 ) {
     val app = CumuApplication.instance
     val player by app.player.state.collectAsState()
@@ -124,7 +126,7 @@ fun SongRow(
                 color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
             )
             Text(
-                listOfNotNull(song.artistName, song.albumTitle).joinToString(" · ").ifEmpty { "Unbekannt" },
+                listOfNotNull(song.artistName, song.albumTitle, extra).joinToString(" · ").ifEmpty { "Unbekannt" },
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

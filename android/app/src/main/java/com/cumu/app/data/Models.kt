@@ -33,6 +33,8 @@ data class Song(
     @SerialName("loudness_gain_db") val loudnessGainDb: Double? = null,
     /** 1 for songs autoplay added after the queue. */
     val autoplay: Int? = null,
+    /** Playlists several people edit: who added the song. */
+    @SerialName("added_by_username") val addedByUsername: String? = null,
 ) {
     /** Audiobook chapters never play between music, only when started explicitly. */
     val isAudiobook: Boolean get() = audiobookFlag == 1 || genre?.trim()?.lowercase()?.let { it in SPEECH_GENRES } == true
@@ -136,13 +138,44 @@ data class Playlist(
     // Summaries (library overview, home) carry only these instead of the songs
     @SerialName("song_count") val songCount: Int? = null,
     @SerialName("song_ids") val songIds: List<String>? = null,
+    // Sharing (servers from v0.7.0; older servers: every playlist is the user's own)
+    /** "private" | "public" | "shared" */
+    val visibility: String? = null,
+    @SerialName("owner_username") val ownerUsername: String? = null,
+    /** "owner" | "editor" | "listener" | "public" */
+    val access: String? = null,
+    @SerialName("is_owner") val isOwnerFlag: Int? = null,
+    @SerialName("can_edit") val canEditFlag: Int? = null,
+    val saved: Int? = null,
+    @SerialName("member_count") val memberCount: Int? = null,
+    @SerialName("save_count") val saveCount: Int? = null,
+    val members: List<PlaylistMember> = emptyList(),
 ) {
     /** Playlists cumu generates itself cannot be edited. */
     val readOnly: Boolean get() = isGenerated == 1
+    val isOwn: Boolean get() = isOwnerFlag != 0
+    /** Own playlists, and shared ones the owner lets the user edit. */
+    val canEdit: Boolean get() = canEditFlag?.let { it == 1 } ?: !readOnly
+    val isSaved: Boolean get() = saved == 1
+    /** Invited by the owner (listener or editor). */
+    val isMember: Boolean get() = access == "editor" || access == "listener"
     val size: Int get() = songCount ?: songs.size
     val ids: List<String> get() = songIds ?: songs.map { it.id }
     val coverOrFirst: String? get() = cover ?: songs.firstOrNull { it.cover != null }?.cover
 }
+
+@Serializable
+data class PlaylistMember(
+    @SerialName("user_id") val userId: String,
+    val username: String = "",
+    @SerialName("can_edit") val canEdit: Int = 0,
+)
+
+@Serializable
+data class PlaylistUpdate(val playlist: Playlist? = null)
+
+@Serializable
+data class MembersAnswer(val members: List<PlaylistMember> = emptyList(), val visibility: String? = null)
 
 @Serializable
 data class HomeData(
@@ -158,6 +191,8 @@ data class HomeData(
     val artists: List<Artist>? = null,
     val cumuPlaylists: List<Playlist>? = null,
     val genres: GenreStats? = null,
+    /** Public playlists of other users (servers from v0.7.0). */
+    val publicPlaylists: List<Playlist>? = null,
     /** Servers from v0.7.0: started and new audiobooks. */
     val audiobooks: HomeAudiobooks? = null,
 )

@@ -293,6 +293,21 @@ private fun HomeContent(feed: HomeFeed) {
             }
         }
 
+        // Public playlists of other people on this server
+        val community = home.publicPlaylists.orEmpty()
+        if (community.isNotEmpty()) {
+            item { Reveal(shown, 5) { SectionTitle("Community-Playlists", subtitle = "Öffentlich auf diesem Server") } }
+            item {
+                Reveal(shown, 5) {
+                    LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                        items(community, key = { "pub-" + it.id }) { p ->
+                            CoverCard(p.name, listOfNotNull(p.ownerUsername?.let { "von $it" }, "${p.size} Titel").joinToString(" · "), p.coverOrFirst, onClick = { nav.playlist(p.id) })
+                        }
+                    }
+                }
+            }
+        }
+
         if (home.mostPlayed.isNotEmpty()) {
             item { Reveal(shown, 6) { SectionTitle("Am meisten gehört") } }
             itemsIndexed(home.mostPlayed.take(5), key = { _, s -> "mp-" + s.id }) { i, s ->

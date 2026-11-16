@@ -1,4 +1,4 @@
-# cumu v0.7.0-alpha — Quality of Life: Audiobooks, Crossfade & Sleep Timer
+# cumu v0.7.0-alpha — Quality of Life & Social: Audiobooks, Crossfade, Shared Playlists
 
 > ⚠️ **This is an alpha release.** cumu is still under active development. Expect bugs, back up your `data` folder before updating, and please report problems in the [issues](https://github.com/Wolfiku/cumu/issues).
 
@@ -42,6 +42,21 @@
 - **Swipe the mini player:** left for the next title, right for the previous title, down to stop and close it.
 - **Reorder the queue** by dragging the ≡ handle. The list scrolls along at the edges. Autoplay songs are marked in the queue.
 
+## 👥 Shared Playlists (web and Android)
+
+- **Three levels:** every playlist starts **private**. Afterwards the owner chooses in *Teilen* (web: button on the playlist page, app: share icon):
+  - **Privat:** only you.
+  - **Öffentlich:** everyone on this server can find it, add it to their library, download it and listen. On the start page as *Community Playlists*, and in the search.
+  - **Geteilt:** only people you invite by **user name**. Each one either listens or may also add and remove songs.
+- **Collaborating:** in playlists several people edit, every song shows who added it. Shared playlists appear in the library of the invited people with "von …".
+- **Your library:** public playlists can be saved with one tap; invited people can leave a playlist. Only the owner can delete it, rename it or change who has access.
+- "Add to playlist" offers only playlists you may edit.
+- Playlists cumu creates itself stay private.
+
+## 🔒 Security
+
+- Playlists are now checked on the server: before, any signed-in user could open or change any playlist by its id. Private playlists of other users now answer "not found".
+
 ## 🐛 Fixes
 
 - Settings no longer overwrite each other: `/api/sync` merges `extraSettings` instead of replacing them. Before, saving one setting could reset others, such as podcast search.
@@ -54,12 +69,16 @@
 - `/api/home` gains `audiobooks`, `/api/search` and `/api/artists/:id` gain `audiobooks`, `/api/library/overview` gains `audiobookCount`.
 - `/api/songs` lists music only; add `?audiobooks=1` to include the chapters.
 - `GET /api/radio?seeds=<ids>&exclude=<ids>&limit=20`: similar music for autoplay.
+- Playlists carry `visibility`, `owner_username`, `access` (`owner` / `editor` / `listener` / `public`), `can_edit`, `saved`, `member_count`, `save_count`; songs in playlists carry `added_by_username`.
+- `PUT /api/playlists/:id` `{ name?, description?, visibility? }`, `GET /api/playlists/discover?q=`, `PUT|DELETE /api/playlists/:id/save`.
+- `GET|POST /api/playlists/:id/members` `{ username, canEdit }`, `PUT|DELETE /api/playlists/:id/members/:userId` (`me` to leave).
+- `DELETE /api/playlists/:id` deletes for the owner and removes the playlist from the library for everyone else.
 - Songs carry `intro_silence_ms`, `outro_silence_ms`, `loudness_lufs`, `peak_db` and `loudness_gain_db` once analysed.
 
 ## ⬆️ Updating
 
 - **Docker / NAS:** Watchtower updates automatically, or use "Update installieren" in the admin panel.
 - **Linux / LXC / .deb:** `sudo cumu-update`
-- **Android:** install the new `cumu_0.7.0-alpha.apk` from this release for the sleep timer, audiobooks, crossfade, gestures and the new queue. Older app versions keep working, but they show no audiobook sections.
+- **Android:** install the new `cumu_0.7.0-alpha.apk` from this release for the sleep timer, audiobooks, crossfade, gestures, the new queue and shared playlists. Older app versions keep working, but they show no audiobook sections.
 
 After updating, reload the web app once (the offline cache is refreshed automatically).

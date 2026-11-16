@@ -265,6 +265,45 @@ class Repository(private val api: ApiClient, private val downloadedSongs: () -> 
         })
     }
 
+    // ── Sharing ──────────────────────────────────────────────────────────────
+
+    /** "private", "public" or "shared" (owner only). */
+    suspend fun setPlaylistVisibility(id: String, visibility: String): Playlist? {
+        val text = api.put("/api/playlists/$id", buildJsonObject { put("visibility", visibility) })
+        return runCatching { api.json.decodeFromString<PlaylistUpdate>(text).playlist }.getOrNull()
+    }
+
+    /** Invites a user of this server by name; answers the new member list. */
+    suspend fun addPlaylistMember(id: String, username: String, canEdit: Boolean): MembersAnswer {
+        val text = api.post("/api/playlists/$id/members", buildJsonObject { put("username", username); put("canEdit", canEdit) })
+        return api.json.decodeFromString(text)
+    }
+
+    suspend fun setPlaylistMemberEdit(id: String, userId: String, canEdit: Boolean): MembersAnswer {
+        val text = api.put("/api/playlists/$id/members/${enc(userId)}", buildJsonObject { put("canEdit", canEdit) })
+        return api.json.decodeFromString(text)
+    }
+
+    suspend fun removePlaylistMember(id: String, userId: String): MembersAnswer {
+        val text = api.delete("/api/playlists/$id/members/${enc(userId)}")
+        return api.json.decodeFromString(text)
+    }
+
+    /** Leaves a playlist someone shared with the user. */
+    suspend fun leavePlaylist(id: String) {
+        api.delete("/api/playlists/$id/members/me")
+        runCatching { api.delete("/api/playlists/$id/save") }
+    }
+
+    /** Adds a public playlist to the library (or removes it). */
+    suspend fun savePlaylist(id: String, save: Boolean) {
+        if (save) api.put("/api/playlists/$id/save") else api.delete("/api/playlists/$id/save")
+    }
+
+    /** Public playlists of other users on this server. */
+    suspend fun discoverPlaylists(q: String? = null): List<Playlist> =
+        api.get("/api/playlists/discover" + (q?.takeIf { it.isNotBlank() }?.let { "?q=${enc(it)}" } ?: ""))
+
     suspend fun deletePlaylist(id: String) {
         api.delete("/api/playlists/$id")
     }

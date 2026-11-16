@@ -51,6 +51,7 @@ curl -fsSL https://raw.githubusercontent.com/Wolfiku/cumu/main/scripts/install.s
 [+] Automatic Album Covers       — missing covers from MusicBrainz / Cover Art Archive, stored once in their own folder
 [+] Audio Seeking & Range Stream — HTTP Range requests for instant scrubbing
 [+] Playlists & Library          — manage playlists, favorite songs, albums, and artists
+[+] Shared Playlists            — private, public (whole server) or shared with chosen users, collaborative editing
 [+] Modern Theme Engine          — clean, minimalist Studio Environment design system
 [+] 100% Self-Hosted & Private   — SQLite backend, no cloud dependency, no telemetry
 ```

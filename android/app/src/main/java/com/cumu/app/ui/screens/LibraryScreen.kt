@@ -270,7 +270,13 @@ private fun PlaylistEntry(p: Playlist, pinned: Boolean, modifier: Modifier) {
     LibraryRow(
         p.name,
         (if (pinned) "Angeheftet · " else "") +
-            (if (p.readOnly) "Von cumu · " else "Playlist · ") + if (p.size == 1) "1 Titel" else "${p.size} Titel",
+            when {
+                p.readOnly -> "Von cumu · "
+                !p.isOwn && p.ownerUsername != null -> "von ${p.ownerUsername} · "
+                p.visibility == "public" -> "Öffentlich · "
+                p.visibility == "shared" -> "Geteilt · "
+                else -> "Playlist · "
+            } + if (p.size == 1) "1 Titel" else "${p.size} Titel",
         modifier,
         leading = {
             Box {

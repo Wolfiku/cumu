@@ -270,7 +270,7 @@ private fun Results(r: SearchResult, query: String, filter: Filter, setFilter: (
             items(r.playlists, key = { "pl-" + it.id }) { p ->
                 ListItem(
                     headlineContent = { Text(p.name, fontWeight = FontWeight.SemiBold) },
-                    supportingContent = { Text("Playlist · ${p.songs.size} Titel") },
+                    supportingContent = { Text((if (!p.isOwn && p.ownerUsername != null) "Playlist von ${p.ownerUsername}" else "Playlist") + " · ${p.songs.size} Titel") },
                     leadingContent = { Cover(p.songs.firstOrNull { it.cover != null }?.cover, 52.dp, seed = p.name, icon = Icons.AutoMirrored.Rounded.QueueMusic) },
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                     modifier = Modifier.animateItem().clickable { onAct(); nav.playlist(p.id) },
