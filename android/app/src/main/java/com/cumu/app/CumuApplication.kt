@@ -41,6 +41,8 @@ class CumuApplication : Application(), SingletonImageLoader.Factory {
         playback = com.cumu.app.data.PlaybackSettings(this)
         live = com.cumu.app.data.LiveClient(this, api, appScope) { repo.refreshInboxUnread() }
         player = PlayerConnection(this)
+        // Offline mode: ping the server at the start and while it is unreachable
+        api.startHealthMonitor(appScope)
         // Live playback (devices, parties) while signed in
         appScope.launch { sessions.session.collect { if (it != null) live.start() else live.stop() } }
         searchHistory = com.cumu.app.data.SearchHistory(this)

@@ -93,6 +93,14 @@
 
 - Settings no longer overwrite each other: `/api/sync` merges `extraSettings` instead of replacing them. Before, saving one setting could reset others, such as podcast search.
 
+## ✨ Design & Small Improvements
+
+- **Web on phones:** the tab bar is now **Home · Suche · Bibliothek**. The profile is at the top right, next to the inbox on the start page (with a counter for new items).
+- **"Mit dir geteilt" lives in the library** (web) instead of a page of its own; opening it marks everything as read.
+- **Now playing (web):** the heart stays in its place, "add to playlist" moved into the ⋮ menu. The 🎉 icon only shows while you are in a party; start one from ⋮ → "Listening Party starten".
+- **Android – artist pages:** the close button at the top left goes straight back to the last main tab (Start, Suche or Bibliothek), not to the player or another page.
+- **Android – offline mode:** when the server cannot be reached, or answers with a server error (5xx), the app switches to offline mode at once. A **red bar** says why ("Server nicht erreichbar", "Kein Internet", "Serverfehler (HTTP 502)"). The app checks the server at every start and every 3 seconds while offline, leaves the offline mode **as soon as the server answers**, and reloads the open page. Tapping the bar checks right away.
+
 ## 🔌 API
 
 - `GET /api/audiobooks`: all books with your progress, plus the started ones (`continue`).

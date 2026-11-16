@@ -77,6 +77,20 @@ import kotlinx.coroutines.launch
 
 /** Navigation actions available to every screen. */
 class Nav(private val c: NavHostController) {
+    /** Last main tab (home, search, library), kept up to date by the scaffold. */
+    var lastTab: String = "home"
+
+    /** Straight back to the last main tab, skipping player and detail pages. */
+    fun backToMain() {
+        if (!c.popBackStack(lastTab, inclusive = false)) {
+            c.navigate(lastTab) {
+                popUpTo(c.graph.findStartDestination().id) { saveState = true }
+                launchSingleTop = true
+                restoreState = true
+            }
+        }
+    }
+
     fun album(id: String) = c.navigate("album/$id")
     fun artist(id: String) = c.navigate("artist/$id")
     fun playlist(id: String) = c.navigate("playlist/$id")
@@ -159,6 +173,7 @@ fun CumuAppUi() {
     // Detail pages keep the tab they were opened from highlighted
     val lastTab = remember { mutableStateOf("home") }
     if (route != null && route in tabRoutes) lastTab.value = route
+    nav.lastTab = lastTab.value
     val player by app.player.state.collectAsState()
 
     val downloadError by app.downloads.errors.collectAsState()
@@ -168,6 +183,8 @@ fun CumuAppUi() {
     LaunchedEffect(Unit) { app.player.messages.collect { snackbarHost.showSnackbar(it) } }
     // Save the whole library for offline use (search, lists)
     LaunchedEffect(session?.serverUrl, session?.username) { app.appScope.launch { app.repo.prefetch() } }
+    // Every start of the app: is the server there? (leaves or enters the offline mode)
+    LaunchedEffect(Unit) { app.appScope.launch { app.api.ping() } }
     // "Mit dir geteilt" badge: check now and then while the app is open
     LaunchedEffect(session?.serverUrl, session?.username) {
         while (true) {
@@ -257,20 +274,24 @@ fun CumuAppUi() {
 @Composable
 private fun OfflineBar() {
     val app = CumuApplication.instance
+    val reason by app.api.offlineReason.collectAsState()
+    val scope = rememberCoroutineScope()
     androidx.compose.foundation.layout.Row(
         Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.onSurface)
-            .clickable { app.api.retrySoon() }
+            .background(androidx.compose.ui.graphics.Color(0xFFC62828))
+            // Tap: ask the server again right now
+            .clickable { app.api.retrySoon(); scope.launch { app.api.ping() } }
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
     ) {
-        Icon(Icons.Rounded.CloudOff, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.surface)
+        Icon(Icons.Rounded.CloudOff, null, Modifier.size(18.dp), tint = androidx.compose.ui.graphics.Color.White)
         androidx.compose.foundation.layout.Spacer(Modifier.width(10.dp))
         Text(
-            "Offline · Downloads sind abspielbar",
+            "${reason ?: "Server nicht erreichbar"} · Offline-Modus, Downloads spielbar",
             style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.surface,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+            color = androidx.compose.ui.graphics.Color.White,
             maxLines = 1,
             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
         )

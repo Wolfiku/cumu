@@ -1,6 +1,6 @@
 /**
  * public/js/mobile.js
- * Mobile shell for cumu: bottom tab bar (home / library / profile), mini player,
+ * Mobile shell for cumu: bottom tab bar (home / search / library), mini player,
  * browser-history based back navigation, touch queue reordering and long-press
  * song menus. Everything here is only visible below the md breakpoint (768px);
  * the history integration also gives desktop browsers a working back button.
@@ -16,6 +16,7 @@
   // keep whichever tab was active when they were opened.
   const TAB_FOR_PAGE = {
     discover: 'home',
+    search: 'search',
     genre: 'home',
     genrePlaylist: 'home',
     library: 'library',
@@ -26,10 +27,9 @@
     audiobooks: 'library',
     inbox: 'library',
     audiobook: 'library',
-    settings: 'profile',
-    admin: 'profile',
   };
-  const TAB_ROOT_PAGES = ['discover', 'library', 'settings'];
+  // Profile / settings is opened from the top bar and keeps the current tab
+  const TAB_ROOT_PAGES = ['discover', 'search', 'library'];
 
   let activeTab = 'home';
 
@@ -141,10 +141,14 @@
   }
 
   function openTab(tab) {
-    const target = { home: 'discover', library: 'library', profile: 'settings' }[tab];
+    const target = { home: 'discover', search: 'search', library: 'library' }[tab];
     if (!target) return;
     // Re-tapping the active tab while on its root scrolls back to the top.
     const state = CumuApp.getState();
+    if (state.currentPage === target && target === 'search') {
+      document.getElementById('searchInput')?.focus();
+      return;
+    }
     if (state.currentPage === target) {
       const main = document.getElementById('mainContent');
       if (main) main.scrollTo({ top: 0, behavior: 'smooth' });

@@ -658,6 +658,7 @@ function showToast(msg) {
     if (npBar) { if (!currentSong || page === 'nowplaying') hideNpBar(); else showNpBar(); }
 
     if      (page === 'discover')   renderDiscover();
+    else if (page === 'search')     { renderDiscover(); focusSearchSoon(); }
     else if (page === 'library')    renderLibrary();
     else if (page === 'playlists')  renderPlaylists();
     else if (page === 'favorites')  renderFavorites();
@@ -2037,6 +2038,17 @@ function showToast(msg) {
     });
   }
 
+  /** Mobile "Suche" tab: the discover page with the search field focused. */
+  function focusSearchSoon() {
+    let tries = 0;
+    const go = () => {
+      const input = document.getElementById('searchInput');
+      if (input) { input.focus(); return; }
+      if (++tries < 40) setTimeout(go, 50);
+    };
+    go();
+  }
+
   let searchTimeout;
   async function renderDiscover() {
     main.innerHTML = `
@@ -2793,18 +2805,6 @@ function showToast(msg) {
                   </div>
                 </div>` : ''}
 
-              <div class="group flex items-center justify-between p-sm rounded-lg hover:bg-surface-container-low cursor-pointer transition-colors" onclick="navigate('inbox')">
-                <div class="flex items-center gap-md">
-                  <div class="w-10 h-10 rounded-lg bg-primary/15 flex items-center justify-center text-primary">
-                    <span class="material-symbols-outlined text-[24px]">inbox</span>
-                  </div>
-                  <div>
-                    <h3 class="text-body-lg font-medium text-text-high-contrast">Mit dir geteilt</h3>
-                    <p class="text-body-sm text-text-muted">Was dir andere geschickt haben</p>
-                  </div>
-                </div>
-                <span class="inbox-badge ${inboxUnread ? '' : 'hidden'} min-w-[22px] h-[22px] px-1 rounded-full bg-primary text-on-primary text-[11px] font-bold flex items-center justify-center">${inboxUnread > 9 ? '9+' : inboxUnread}</span>
-              </div>
               <div class="group flex items-center justify-between p-sm rounded-lg hover:bg-surface-container-low cursor-pointer transition-colors" onclick="navigate('audiobooks')">
                 <div class="flex items-center gap-md">
                   <div class="w-10 h-10 rounded-lg bg-tertiary-container/40 flex items-center justify-center text-tertiary">
@@ -2820,6 +2820,9 @@ function showToast(msg) {
           </section>
         </div>
 
+        <!-- Mit dir geteilt (filled after render) -->
+        <section id="librarySharedSection" class="hidden bg-surface-bright border border-border-subtle rounded-xl p-lg"></section>
+
         <!-- Gespeicherte Songs Section -->
         <section class="bg-surface-bright border border-border-subtle rounded-xl p-lg">
           <h2 class="text-title-md font-title-md text-text-high-contrast font-bold mb-md">Saved Songs</h2>
@@ -2829,6 +2832,7 @@ function showToast(msg) {
         </section>
       </div>`;
     bindSongRows();
+    fillLibraryShared();
   }
 
   function renderContinueCard(progress) {
@@ -4948,18 +4952,13 @@ function showToast(msg) {
             <button class="live-devices-btn w-10 h-10 rounded-full bg-surface-container-low text-text-muted hover:text-text-high-contrast transition-colors flex items-center justify-center hover:scale-105 active:scale-95" style="${liveDevices.length > 1 || remote ? '' : 'display:none;'}${remote ? `color:${LIVE_GREEN};` : ''}" onclick="event.stopPropagation(); CumuApp.openDevicePicker(this)" title="Geräte">
               <span class="material-symbols-outlined text-[22px]">devices</span>
             </button>
-            <button class="live-party-btn w-10 h-10 rounded-full bg-surface-container-low text-text-muted hover:text-text-high-contrast transition-colors flex items-center justify-center hover:scale-105 active:scale-95" style="${party ? `color:${LIVE_PURPLE};` : ''}" onclick="CumuApp.openPartyPanel()" title="Listening Party">
+            <button class="live-party-btn w-10 h-10 rounded-full bg-surface-container-low text-text-muted hover:text-text-high-contrast transition-colors flex items-center justify-center hover:scale-105 active:scale-95" style="${party ? `color:${LIVE_PURPLE};` : 'display:none;'}" onclick="CumuApp.openPartyPanel()" title="Listening Party">
               <span class="material-symbols-outlined text-[22px]">celebration</span>
             </button>
 
             <!-- Queue (Warteschlange) -->
             <button class="w-10 h-10 rounded-full bg-surface-container-low text-text-muted hover:text-text-high-contrast transition-colors flex items-center justify-center hover:scale-105 active:scale-95" onclick="CumuApp.toggleQueue()" title="Warteschlange umschalten">
               <span class="material-symbols-outlined text-[22px]">queue_music</span>
-            </button>
-
-            <!-- Add to Playlist -->
-            <button class="w-10 h-10 rounded-full bg-surface-container-low text-text-muted hover:text-text-high-contrast transition-colors flex items-center justify-center hover:scale-105 active:scale-95" onclick="CumuApp.openAddToPlaylistModal('${currentSong.id}')" title="Zu Playlist hinzufügen">
-              <span class="material-symbols-outlined text-[22px]">playlist_add</span>
             </button>
 
             <!-- Download -->
@@ -5051,8 +5050,8 @@ function showToast(msg) {
       <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.playNextById('${currentSong.id}'); CumuApp.closeContextMenu()">
         <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('next')}</span> Play Next
       </button>
-      <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.addToQueueById('${currentSong.id}'); CumuApp.closeContextMenu()">
-        <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('queue')}</span> Add to Queue
+      <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.openPartyPanel(); CumuApp.closeContextMenu()">
+        <span class="text-text-muted flex items-center justify-center w-5 h-5"><span class="material-symbols-outlined text-[20px]">celebration</span></span> ${party ? 'Listening Party' : 'Listening Party starten'}
       </button>
       <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.openAddToPlaylistModal('${currentSong.id}'); CumuApp.closeContextMenu()">
         <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('playlist')}</span> Add to Playlist
@@ -5937,20 +5936,8 @@ function showToast(msg) {
     navigate(type, id);
   }
 
-  async function renderInbox() {
-    main.innerHTML = '<div class="p-margin-desktop text-center text-text-muted">Lade…</div>';
-    const data = await CumuApi.get('/api/shares/inbox');
-    if (currentPage !== 'inbox') return;
-    const items = (data && data.items) || [];
-    main.innerHTML = `
-      <div class="max-w-[900px] mx-auto">
-        <header class="mb-xl flex items-center justify-between gap-md flex-wrap">
-          <div>
-            <h1 class="text-headline-lg-mobile md:text-headline-lg font-bold text-text-high-contrast flex items-center gap-sm"><span class="material-symbols-outlined text-primary text-[34px]">inbox</span> Mit dir geteilt</h1>
-            <p class="text-body-md text-text-muted mt-xs">Songs, Alben und Playlists, die dir andere geschickt haben.</p>
-          </div>
-        </header>
-        ${items.length ? `<div class="flex flex-col gap-sm">${items.map(it => {
+  /** One "Mit dir geteilt" entry (song, album, playlist, party invitation ...). */
+  function inboxItemHtml(it) {
           const cover = it.cover ? (/^(https?:|\/)/.test(it.cover) ? it.cover : `/stream/cover/${it.cover}`) : null;
           return `
           <div class="inbox-item flex items-center gap-md p-md rounded-xl border ${it.read ? 'border-border-subtle bg-surface-bright' : 'border-primary/40 bg-primary/5'} ${it.available ? 'cursor-pointer hover:bg-surface-container-low' : 'opacity-60'} transition-colors" data-type="${esc(it.item_type)}" data-id="${esc(it.item_id)}" data-available="${it.available ? 1 : 0}">
@@ -5965,26 +5952,47 @@ function showToast(msg) {
             </div>
             <button class="inbox-del text-text-muted hover:text-error p-xs rounded-full" data-share="${esc(it.id)}" title="Entfernen"><span class="material-symbols-outlined">delete</span></button>
           </div>`;
-        }).join('')}</div>` : `
-          <div class="p-xl text-center text-text-muted border border-dashed border-border-subtle rounded-xl">
-            <span class="material-symbols-outlined text-[40px] block mb-sm">inbox</span>
-            Noch nichts. Wenn dir jemand etwas schickt, erscheint es hier.
-          </div>`}
-      </div>`;
-    main.querySelectorAll('.inbox-item').forEach(el => el.addEventListener('click', () => {
+        }
+
+  /**
+   * "Mit dir geteilt" lives in the library: what other people sent.
+   * Shown only when there is something; opening the library reads it all.
+   */
+  async function fillLibraryShared(scrollTo = false) {
+    const box = document.getElementById('librarySharedSection');
+    if (!box) return;
+    const data = await CumuApi.get('/api/shares/inbox').catch(() => null);
+    if (!document.getElementById('librarySharedSection')) return;
+    const items = (data && data.items) || [];
+    if (!items.length) { box.innerHTML = ''; box.classList.add('hidden'); return; }
+    box.classList.remove('hidden');
+    box.innerHTML = `
+      <div class="flex items-center justify-between mb-md">
+        <h2 class="text-title-md font-title-md text-text-high-contrast font-bold flex items-center gap-xs"><span class="material-symbols-outlined text-primary">inbox</span> Mit dir geteilt</h2>
+        ${data.unread ? `<span class="text-label-caps font-bold text-primary">${data.unread} neu</span>` : ''}
+      </div>
+      <div class="flex flex-col gap-sm">${items.map(inboxItemHtml).join('')}</div>`;
+    box.querySelectorAll('.inbox-item').forEach(el => el.addEventListener('click', () => {
       if (el.dataset.available === '1') openSharedItem(el.dataset.type, el.dataset.id);
     }));
-    main.querySelectorAll('.inbox-del').forEach(b => b.addEventListener('click', async (e) => {
+    box.querySelectorAll('.inbox-del').forEach(b => b.addEventListener('click', async (e) => {
       e.stopPropagation();
       const r = await CumuApi.del(`/api/shares/${b.dataset.share}`);
       if (r && typeof r.unread === 'number') setInboxBadge(r.unread);
-      renderInbox();
+      fillLibraryShared();
     }));
-    // Opening the inbox reads everything
-    if (data && data.unread) {
+    if (scrollTo) box.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // Seen in the library: everything is read
+    if (data.unread) {
       const r = await CumuApi.post('/api/shares/all/read', {}).catch(() => null);
       setInboxBadge(r && typeof r.unread === 'number' ? r.unread : 0);
     }
+  }
+
+  /** Old "inbox" page and the inbox icon: the shared section of the library. */
+  function renderInbox() {
+    currentPage = 'library';
+    renderLibrary().then(() => fillLibraryShared(true));
   }
 
   // ── Links: #/song/<id>, #/album/<id>, #/playlist/<id>, ... ────────────────
@@ -6466,7 +6474,8 @@ function showToast(msg) {
       b.style.display = (multi || remote) ? '' : 'none';
       b.style.color = remote ? LIVE_GREEN : '';
     });
-    document.querySelectorAll('.live-party-btn').forEach(b => { b.style.color = party ? LIVE_PURPLE : ''; });
+    // The party icon is only there while you are in a party (start it from ⋮)
+    document.querySelectorAll('.live-party-btn').forEach(b => { b.classList.remove('hidden'); b.style.display = party ? '' : 'none'; b.style.color = party ? LIVE_PURPLE : ''; });
     let strip = document.getElementById('liveStrip');
     let text = '';
     let icon = '';

@@ -117,7 +117,8 @@ fun ArtistScreen(id: String) {
         // Back button, always on top
         Box(Modifier.statusBarsPadding().padding(4.dp)) {
             FilledIconButton(
-                onClick = { nav.back() },
+                // Close: back to the last main tab (home, search, library)
+                onClick = { nav.backToMain() },
                 colors = IconButtonDefaults.filledIconButtonColors(
                     containerColor = if (collapsed) Color.Transparent else Color.Black.copy(alpha = 0.35f),
                     contentColor = if (collapsed) MaterialTheme.colorScheme.onSurface else Color.White,
