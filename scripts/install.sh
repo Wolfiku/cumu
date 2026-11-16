@@ -403,16 +403,16 @@ install_node() {
 
 install_node
 
-# Install git, curl, wget, rsync
+# Install git, curl, wget, rsync and ffmpeg (audio analysis: silence & loudness)
 case "$OS_ID" in
   ubuntu|debian|linuxmint|pop)
-    apt-get install -y --no-install-recommends git curl wget rsync
+    apt-get install -y --no-install-recommends git curl wget rsync ffmpeg
     ;;
   fedora|rhel|centos|rocky|almalinux)
-    dnf install -y git curl wget rsync || yum install -y git curl wget rsync
+    dnf install -y git curl wget rsync ffmpeg || dnf install -y git curl wget rsync || yum install -y git curl wget rsync
     ;;
   arch|manjaro)
-    pacman -Sy --noconfirm git curl wget rsync
+    pacman -Sy --noconfirm git curl wget rsync ffmpeg
     ;;
 esac
 

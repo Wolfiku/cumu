@@ -23,6 +23,7 @@ const streamRoutes = require('./routes/stream');
 const userRoutes  = require('./routes/user');
 const syncRoutes  = require('./routes/sync');
 const podcastRoutes = require('./routes/podcasts');
+const socialRoutes = require('./routes/social');
 
 const app = express();
 
@@ -113,6 +114,7 @@ app.use(express.static(path.join(__dirname, '../public')));
 
 app.use('/auth',   authRoutes);
 app.use('/oauth',  oauthRoutes);
+app.use('/api',    socialRoutes);
 app.use('/api',    apiRoutes);
 app.use('/api/sync', syncRoutes);
 app.use('/api/podcasts', podcastRoutes);
@@ -158,6 +160,11 @@ function startBackgroundScanner() {
     .then(() => {
       // Automatic correction once a day (only once the safety backup exists)
       if (getConfig().libraryCleanupBackup) adminRoutes.scheduleLibraryCorrection();
+      // Silence & loudness of every track (crossfade, void skipping, normalization)
+      require('./services/audioAnalysis').startAudioAnalysis({
+        isBusy: adminRoutes.isBusy,
+        findFile: adminRoutes.findSongFile,
+      });
       setInterval(() => {
         try {
           adminRoutes.checkLibrary().catch(err => console.error('[cumu] Library scan error:', err.message));

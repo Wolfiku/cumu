@@ -197,7 +197,8 @@ function rank(items, scoreFn, limit, minScore = MIN_SCORE) {
 }
 
 /**
- * Searches the library. Returns ranked arrays (each item carries `_score`)
+ * Searches the music library (audiobooks are searched separately, see
+ * services/audiobooks.js). Returns ranked arrays (each item carries `_score`)
  * plus `topResult` = the single best match across all types.
  */
 function searchLibrary(db, q, userId, opts = {}) {
@@ -215,6 +216,7 @@ function searchLibrary(db, q, userId, opts = {}) {
   const albumRows = db.prepare(`
     SELECT al.*, ar.name as artist_name
     FROM albums al LEFT JOIN artists ar ON ar.id = al.artist_id
+    WHERE COALESCE(al.is_audiobook, 0) = 0
   `).all();
   const albums = rank(albumRows, a => Math.max(
     scoreText(pq, a.title),
@@ -228,6 +230,7 @@ function searchLibrary(db, q, userId, opts = {}) {
     FROM songs s
     LEFT JOIN albums al ON al.id = s.album_id
     LEFT JOIN artists ar ON ar.id = s.artist_id
+    WHERE COALESCE(s.is_audiobook, 0) = 0
   `).all();
   const rankedSongs = rank(songRows, s => {
     const base = Math.max(
@@ -255,7 +258,8 @@ function searchLibrary(db, q, userId, opts = {}) {
   }
 
   // Own playlists
-  const playlistRows = userId ? db.prepare('SELECT * FROM playlists WHERE user_id = ?').all(userId) : [];
+  // Own, shared with the user, and every public playlist
+  const playlistRows = userId ? require('./playlistSharing').visiblePlaylistRows(db, userId) : [];
   const playlists = rank(playlistRows, p => scoreText(pq, p.name) * 0.95, 10);
 
   const out = {
@@ -281,7 +285,7 @@ function searchLibrary(db, q, userId, opts = {}) {
       FROM songs s
       LEFT JOIN albums al ON al.id = s.album_id
       LEFT JOIN artists ar ON ar.id = s.artist_id
-      WHERE s.artist_id = ?
+      WHERE s.artist_id = ? AND COALESCE(s.is_audiobook, 0) = 0
       ORDER BY s.play_count DESC, s.created_at DESC
       LIMIT 4
     `).all(out.topResult.item.id);

@@ -96,7 +96,13 @@ router.post('/', requireAuth, (req, res) => {
   const newLastSong    = lastSongId  !== undefined ? lastSongId  : current.last_song_id;
   const newLastPos     = lastPosition !== undefined ? lastPosition : current.last_position;
   const newTheme       = 'standard';
-  const newExtra       = extraSettings !== undefined ? JSON.stringify(extraSettings) : current.extra_settings;
+  // Settings are merged: a client that does not know a setting (older app,
+  // other page) must not delete it
+  let oldExtra = {};
+  try { oldExtra = JSON.parse(current.extra_settings || '{}') || {}; } catch {}
+  const newExtra       = extraSettings !== undefined && extraSettings !== null && typeof extraSettings === 'object'
+    ? JSON.stringify({ ...oldExtra, ...extraSettings })
+    : current.extra_settings;
   const newVersion     = current.version + 1;
 
   db.prepare(`

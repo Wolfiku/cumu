@@ -209,6 +209,8 @@ router.put('/users/:id', requireAdmin, async (req, res) => {
 
 router.delete('/users/:id', requireAdmin, (req, res) => {
   const db = getDB();
+  try { require('../services/playlistSharing').forgetUser(db, req.params.id); } catch (_) {}
+  try { require('../services/social').forgetUser(db, req.params.id); } catch (_) {}
   db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
   log('info', 'admin', `User deleted: ${req.params.id}`);
   res.json({ success: true });
@@ -328,6 +330,7 @@ async function processUpload(req, res) {
     // Anything not inserted is left to the regular scan
     for (const name of uploadedNames) pendingUploads.delete(name);
     activeUploads--;
+    try { require("../services/audioAnalysis").queueAnalysis(); } catch (_) {}
     try { runLibraryCorrection('upload'); } catch (err) { console.error('[cumu] Automatic correction error:', err.message); }
   }
 }
@@ -532,6 +535,7 @@ function runLibraryScan() {
       runningScan = null;
       // The lookup may have moved songs between albums: tidy up right away
       try { runLibraryCorrection('scan'); } catch (err) { console.error('[cumu] Automatic correction error:', err.message); }
+      try { require('../services/audioAnalysis').queueAnalysis(); } catch (_) {}
     });
   }
   return runningScan;
@@ -1028,6 +1032,8 @@ function runLibraryCorrection(trigger = 'daily') {
   // Albums split by collaborations are only merged once the database was
   // backed up before the first run of these rules (see server.js)
   const result = dedupeLibrary(getDB(), findSongFile, { splitAlbums: getConfig().albumMergeBackup === 2 });
+  // Merged albums keep their audiobook flag in line with their chapters
+  try { require('../services/audiobooks').syncAudiobookFlags(getDB()); } catch (_) {}
   const entry = { at: Date.now(), trigger, albums: result.albums, songs: result.songs };
   setConfig('lastLibraryCorrection', entry);
   if (result.albums || result.songs) {
@@ -1387,6 +1393,8 @@ router.getScanPath   = getScanPath;
 router.repairMergedAlbums = repairMergedAlbums;
 router.runLibraryCorrection = runLibraryCorrection;
 router.scheduleLibraryCorrection = scheduleLibraryCorrection;
+router.findSongFile  = findSongFile;
+router.isBusy        = () => !!runningScan || activeUploads > 0;
 router.handleUpload   = handleUpload;
 router.processUpload   = processUpload;
 
