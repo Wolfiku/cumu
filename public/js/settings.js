@@ -23,6 +23,21 @@ function renderSettingsPage(user, audioSettings = {}, autoLookupVal = false) {
   const crossfadeVal = audioSettings.crossfadeDuration !== undefined ? audioSettings.crossfadeDuration : 0;
   const gaplessVal = audioSettings.gaplessEnabled !== undefined ? audioSettings.gaplessEnabled : true;
   const podcastSearchVal = audioSettings.podcastSearchEnabled !== undefined ? audioSettings.podcastSearchEnabled : true;
+  const voidSkipVal = audioSettings.voidSkip !== false;
+  const normalizeVal = audioSettings.normalizeVolume !== false;
+  const autoplayVal = audioSettings.autoplay !== false;
+  const toggleRow = (id, title, text, on) => `
+      <div class="flex items-center justify-between gap-md p-md bg-background border border-border-subtle rounded-lg">
+        <div>
+          <div class="text-body-lg font-medium text-text-high-contrast">${title}</div>
+          <div class="text-body-sm text-text-muted mt-xs">${text}</div>
+        </div>
+        <label class="relative inline-block w-12 h-6 cursor-pointer flex-shrink-0">
+          <input type="checkbox" id="${id}" ${on ? 'checked' : ''} class="opacity-0 w-0 h-0 settings-audio-toggle">
+          <span class="toggle-bg absolute inset-0 ${on ? 'bg-text-high-contrast' : 'bg-border-subtle'} rounded-full transition-colors"></span>
+          <span class="toggle-knob absolute top-1 ${on ? 'left-7' : 'left-1'} w-4 h-4 bg-white rounded-full transition-all"></span>
+        </label>
+      </div>`;
 
   return `
 <div class="p-md md:p-margin-desktop max-w-[960px] mx-auto w-full">
@@ -84,6 +99,10 @@ function renderSettingsPage(user, audioSettings = {}, autoLookupVal = false) {
         </div>
         <input type="range" id="settingsCrossfadeRange" min="0" max="12" step="1" value="${crossfadeVal}" class="w-full accent-text-high-contrast cursor-pointer">
       </div>
+
+      ${toggleRow('settingsVoidSkipToggle', 'Skip silence', 'Skips the silent part at the start and end of a song. With crossfade, the silence counts towards the fade (3 s silence + 5 s crossfade = 2 s fade).', voidSkipVal)}
+      ${toggleRow('settingsNormalizeToggle', 'Normalize volume', 'Plays every song at the same loudness, so no track is much louder or quieter than the others.', normalizeVal)}
+      ${toggleRow('settingsAutoplayToggle', 'Autoplay', 'When the queue is over, cumu continues with similar music. Never with audiobooks or podcasts.', autoplayVal)}
 
       <!-- Audio Output Device (setSinkId) -->
       <div class="p-md bg-background border border-border-subtle rounded-lg">
@@ -271,6 +290,9 @@ async function initSettingsPage() {
       if (syncData.extraSettings.crossfadeDuration !== undefined) audioSettings.crossfadeDuration = syncData.extraSettings.crossfadeDuration;
       if (syncData.extraSettings.gaplessEnabled !== undefined) audioSettings.gaplessEnabled = syncData.extraSettings.gaplessEnabled;
       if (syncData.extraSettings.podcastSearchEnabled !== undefined) audioSettings.podcastSearchEnabled = syncData.extraSettings.podcastSearchEnabled;
+      for (const k of ['voidSkip', 'normalizeVolume', 'autoplay']) {
+        if (syncData.extraSettings[k] !== undefined) audioSettings[k] = syncData.extraSettings[k];
+      }
     }
     try {
       const cfg = await CumuApi.get('/admin/config');
@@ -383,6 +405,27 @@ async function initSettingsPage() {
       if (window.CumuApp?.setShowPodcasts) {
         window.CumuApp.setShowPodcasts(isEnabled);
       }
+    });
+  }
+
+  // ── Silence / normalization / autoplay toggles ─────────────────────
+  const audioToggles = {
+    settingsVoidSkipToggle: ['voidSkip', 'setVoidSkip'],
+    settingsNormalizeToggle: ['normalizeVolume', 'setNormalize'],
+    settingsAutoplayToggle: ['autoplay', 'setAutoplay'],
+  };
+  for (const [id, [key, setter]] of Object.entries(audioToggles)) {
+    const input = document.getElementById(id);
+    if (!input) continue;
+    input.addEventListener('change', async () => {
+      const on = input.checked;
+      const label = input.parentElement;
+      const bg = label.querySelector('.toggle-bg');
+      const knob = label.querySelector('.toggle-knob');
+      if (bg) { bg.classList.toggle('bg-text-high-contrast', on); bg.classList.toggle('bg-border-subtle', !on); }
+      if (knob) { knob.classList.toggle('left-7', on); knob.classList.toggle('left-1', !on); }
+      if (window.CumuAudioEngine && window.CumuAudioEngine[setter]) window.CumuAudioEngine[setter](on);
+      await saveAudioSettings({ [key]: on });
     });
   }
 

@@ -328,6 +328,7 @@ async function processUpload(req, res) {
     // Anything not inserted is left to the regular scan
     for (const name of uploadedNames) pendingUploads.delete(name);
     activeUploads--;
+    try { require("../services/audioAnalysis").queueAnalysis(); } catch (_) {}
     try { runLibraryCorrection('upload'); } catch (err) { console.error('[cumu] Automatic correction error:', err.message); }
   }
 }
@@ -532,6 +533,7 @@ function runLibraryScan() {
       runningScan = null;
       // The lookup may have moved songs between albums: tidy up right away
       try { runLibraryCorrection('scan'); } catch (err) { console.error('[cumu] Automatic correction error:', err.message); }
+      try { require('../services/audioAnalysis').queueAnalysis(); } catch (_) {}
     });
   }
   return runningScan;
@@ -1374,6 +1376,8 @@ router.getScanPath   = getScanPath;
 router.repairMergedAlbums = repairMergedAlbums;
 router.runLibraryCorrection = runLibraryCorrection;
 router.scheduleLibraryCorrection = scheduleLibraryCorrection;
+router.findSongFile  = findSongFile;
+router.isBusy        = () => !!runningScan || activeUploads > 0;
 router.handleUpload   = handleUpload;
 router.processUpload   = processUpload;
 

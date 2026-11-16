@@ -733,6 +733,69 @@ router.delete('/favorites/:songId', requireAuth, (req, res) => {
   res.json({ success: true, ids });
 });
 
+// ── Autoplay ───────────────────────────────────────────────────────────────
+// When the queue is over, the players continue with similar music.
+// GET /api/radio?seeds=<id,id,...>&exclude=<id,...>&limit=20
+// Music only: audiobook chapters are never chosen.
+router.get('/radio', requireAuth, (req, res) => {
+  const db = getDB();
+  const list = (v) => String(v || '').split(',').map(x => x.trim()).filter(Boolean).slice(0, 500);
+  const seedIds = list(req.query.seeds || req.query.seed).slice(-10);
+  const exclude = new Set([...list(req.query.exclude), ...seedIds]);
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 50);
+
+  const seedStmt = db.prepare('SELECT id, artist_id, album_id, genre, year FROM songs WHERE id = ?');
+  const seeds = seedIds.map(id => seedStmt.get(id)).filter(Boolean);
+  // Recent seeds weigh more
+  const artistW = new Map(), genreW = new Map(), albumW = new Map();
+  seeds.forEach((sd, i) => {
+    const w = 1 + i / Math.max(seeds.length, 1);
+    if (sd.artist_id) artistW.set(sd.artist_id, (artistW.get(sd.artist_id) || 0) + w);
+    if (sd.genre) genreW.set(sd.genre.trim().toLowerCase(), (genreW.get(sd.genre.trim().toLowerCase()) || 0) + w);
+    if (sd.album_id) albumW.set(sd.album_id, (albumW.get(sd.album_id) || 0) + w);
+  });
+  const years = seeds.map(sd => sd.year).filter(Boolean);
+  const avgYear = years.length ? years.reduce((a, b) => a + b, 0) / years.length : null;
+
+  // Songs the user heard recently are pushed back, so autoplay feels fresh
+  const recent = new Set(db.prepare(`SELECT DISTINCT song_id FROM play_history WHERE user_id = ? AND played_at >= ?`)
+    .all(req.user.id, Math.floor(Date.now() / 1000) - 3 * 3600).map(r => r.song_id));
+
+  const rows = db.prepare(`SELECT s.id, s.artist_id, s.album_id, s.genre, s.year, s.play_count FROM songs s WHERE ${musicOnly('s')}`).all();
+  const scored = [];
+  for (const r of rows) {
+    if (exclude.has(r.id)) continue;
+    let score = Math.random() * 2;
+    score += (artistW.get(r.artist_id) || 0) * 2.2;
+    score += (genreW.get((r.genre || '').trim().toLowerCase()) || 0) * 2;
+    score += (albumW.get(r.album_id) || 0) * 0.6;
+    if (avgYear && r.year) score += Math.max(0, 1 - Math.abs(r.year - avgYear) / 15);
+    score += Math.log10((r.play_count || 0) + 1) * 0.4;
+    if (recent.has(r.id)) score -= 3;
+    scored.push({ r, score });
+  }
+  scored.sort((a, b) => b.score - a.score);
+
+  // Variety: at most 3 songs per artist, 2 per album, no artist twice in a row
+  const perArtist = new Map(), perAlbum = new Map();
+  const picked = [];
+  for (const { r } of scored) {
+    if (picked.length >= limit) break;
+    const a = r.artist_id || r.id, al = r.album_id || r.id;
+    if ((perArtist.get(a) || 0) >= 3 || (perAlbum.get(al) || 0) >= 2) continue;
+    if (picked.length && picked[picked.length - 1].artist_id === r.artist_id && r.artist_id) continue;
+    perArtist.set(a, (perArtist.get(a) || 0) + 1);
+    perAlbum.set(al, (perAlbum.get(al) || 0) + 1);
+    picked.push(r);
+  }
+  if (!picked.length) return res.json({ songs: [] });
+  const full = db.prepare(`SELECT s.*, al.title as album_title, COALESCE(al.cover, s.cover) as cover, ar.name as artist_name
+    FROM songs s LEFT JOIN albums al ON al.id = s.album_id LEFT JOIN artists ar ON ar.id = s.artist_id
+    WHERE s.id IN (${picked.map(() => '?').join(',')})`).all(...picked.map(p => p.id));
+  const byId = new Map(full.map(x => [x.id, { ...x, autoplay: 1 }]));
+  res.json({ songs: picked.map(p => byId.get(p.id)).filter(Boolean) });
+});
+
 // ── Audiobooks ─────────────────────────────────────────────────────────────
 router.get('/audiobooks', requireAuth, (req, res) => {
   const db = getDB();

@@ -158,6 +158,11 @@ function startBackgroundScanner() {
     .then(() => {
       // Automatic correction once a day (only once the safety backup exists)
       if (getConfig().libraryCleanupBackup) adminRoutes.scheduleLibraryCorrection();
+      // Silence & loudness of every track (crossfade, void skipping, normalization)
+      require('./services/audioAnalysis').startAudioAnalysis({
+        isBusy: adminRoutes.isBusy,
+        findFile: adminRoutes.findSongFile,
+      });
       setInterval(() => {
         try {
           adminRoutes.checkLibrary().catch(err => console.error('[cumu] Library scan error:', err.message));

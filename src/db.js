@@ -265,6 +265,9 @@ function initDB() {
   cleanupOrphanedAlbums(db);
   mergeDuplicateArtists(db);
 
+  // Columns of the background audio analysis (silence, loudness)
+  try { require('./services/audioAnalysis').initAnalysisColumns(db); } catch (err) { console.error('[cumu] audio analysis columns error:', err.message); }
+
   // Speech tracks become audiobooks (triggers keep it that way for new songs)
   try { initAudiobooks(db); } catch (err) { console.error('[cumu] audiobook setup error:', err.message); }
 

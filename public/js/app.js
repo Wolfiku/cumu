@@ -254,6 +254,8 @@ function showToast(msg) {
   let audioCtx          = null;
   let gainNodeA         = null;
   let gainNodeB         = null;
+  let normNodeA         = null; // volume normalization per element (before the fade gain)
+  let normNodeB         = null;
 
   // Preferences
   let crossfadeDuration = 0;    // 0 = disabled, 1..12 seconds
@@ -305,14 +307,19 @@ function showToast(msg) {
       if (!AudioContextClass) return;
       audioCtx = new AudioContextClass();
 
+      // element → normalization gain → fade gain → output
       const sourceA = audioCtx.createMediaElementSource(audioA);
+      normNodeA = audioCtx.createGain();
       gainNodeA = audioCtx.createGain();
-      sourceA.connect(gainNodeA);
+      sourceA.connect(normNodeA);
+      normNodeA.connect(gainNodeA);
       gainNodeA.connect(audioCtx.destination);
 
       const sourceB = audioCtx.createMediaElementSource(audioB);
+      normNodeB = audioCtx.createGain();
       gainNodeB = audioCtx.createGain();
-      sourceB.connect(gainNodeB);
+      sourceB.connect(normNodeB);
+      normNodeB.connect(gainNodeB);
       gainNodeB.connect(audioCtx.destination);
 
       gainNodeA.gain.value = 1;
@@ -510,6 +517,9 @@ function showToast(msg) {
         if (state.extraSettings) {
           if (state.extraSettings.crossfadeDuration !== undefined) crossfadeDuration = state.extraSettings.crossfadeDuration;
           if (state.extraSettings.gaplessEnabled !== undefined) gaplessEnabled = state.extraSettings.gaplessEnabled;
+          if (state.extraSettings.voidSkip !== undefined) voidSkipEnabled = !!state.extraSettings.voidSkip;
+          if (state.extraSettings.normalizeVolume !== undefined) normalizeEnabled = !!state.extraSettings.normalizeVolume;
+          if (state.extraSettings.autoplay !== undefined) autoplayEnabled = !!state.extraSettings.autoplay;
           if (Array.isArray(state.extraSettings.pinnedItems)) {
             localStorage.setItem('cumu_pinned_items', JSON.stringify(state.extraSettings.pinnedItems));
           }
@@ -544,6 +554,9 @@ function showToast(msg) {
         extraSettings: {
           crossfadeDuration,
           gaplessEnabled,
+          voidSkip: voidSkipEnabled,
+          normalizeVolume: normalizeEnabled,
+          autoplay: autoplayEnabled,
           pinnedItems: getPinnedKeys(),
           favorites: Array.from(favorites),
           showFavorites: getShowFavorites(),
@@ -673,6 +686,9 @@ function showToast(msg) {
     isSpokenWord = isAudiobook || !!song.is_audiobook || !!song.isPodcast;
     isFading = false;
     preloadedNextId = null;
+    shuffleNextIndex = null;
+    // Void skipping: music starts where the sound starts
+    if (!startPosition && !isSpokenWord) startPosition = introSec(song);
 
     if (song.isPodcast) {
       audioA.pause();
@@ -700,8 +716,10 @@ function showToast(msg) {
     if (audioCtx) {
       const gAct = getActiveGain();
       const gStb = getStandbyGain();
-      if (gAct) gAct.gain.value = 1;
-      if (gStb) gStb.gain.value = 0;
+      const t = audioCtx.currentTime;
+      // Stop a crossfade that is still running
+      if (gAct) { gAct.gain.cancelScheduledValues(t); gAct.gain.setValueAtTime(1, t); }
+      if (gStb) { gStb.gain.cancelScheduledValues(t); gStb.gain.setValueAtTime(0, t); }
     }
 
     standbyAudio.pause();
@@ -723,7 +741,8 @@ function showToast(msg) {
 
     activeAudio.src = audioSrc;
     activeAudio.load();
-    applyPlaybackSpeed(); // audiobooks keep their speed, music always plays at 1×
+    applyPlaybackSpeed();
+    applyNormalization(activeAudio, song); // audiobooks keep their speed, music always plays at 1×
 
     if (startPosition > 0) {
       const applyPos = () => {
@@ -803,13 +822,10 @@ function showToast(msg) {
       playSong(currentSong, !!currentSong.isPodcast || !!currentSong.is_audiobook);
       return;
     }
-    if (isShuffle && queue.length > 1) {
-      let nextIdx = Math.floor(Math.random() * queue.length);
-      if (nextIdx === queueIndex) nextIdx = (queueIndex + 1) % queue.length;
-      queueIndex = nextIdx;
-    } else {
-      queueIndex = (queueIndex + 1) % queue.length;
-    }
+    // The same song the transition preloaded (fixed random pick in shuffle)
+    const n = peekNextIndex();
+    queueIndex = n !== null ? n : (queueIndex + 1) % queue.length;
+    shuffleNextIndex = null;
     playSong(queue[queueIndex]);
   }
 
@@ -931,6 +947,12 @@ function showToast(msg) {
           playSong(currentSong, !!currentSong.isPodcast || !!currentSong.is_audiobook);
         } else if (queue.length > 0 && (queueIndex + 1 < queue.length || repeatMode === 'all' || isShuffle)) {
           nextTrack();
+        } else if (autoplayEnabled && isMusic(currentSong)) {
+          // Queue over: continue with similar music
+          loadAutoplay().then(ok => {
+            if (ok && queueIndex + 1 < queue.length) nextTrack();
+            else { isPlaying = false; updatePlayerUI(); }
+          });
         } else {
           isPlaying = false;
           updatePlayerUI();
@@ -985,45 +1007,156 @@ function showToast(msg) {
       if (podCur)  podCur.textContent = formatTime(cur);
       if (podDur)  podDur.textContent = formatTime(dur);
 
-      const nextSong = queue[queueIndex + 1];
-      // Chapters of an audiobook never cross-fade
-      if (nextSong && gaplessEnabled && !isSpokenWord && !isAudiobookSong(nextSong) && rem < 6 && preloadedNextId !== nextSong.id) {
-        preloadedNextId = nextSong.id;
-        standbyAudio.src = nextSong.audioUrl ? nextSong.audioUrl : CumuApi.streamUrl(nextSong.id);
-        standbyAudio.load();
-      }
-
-      if (crossfadeDuration > 0 && nextSong && !isSpokenWord && !isAudiobookSong(nextSong) && rem <= crossfadeDuration && !isFading && cur > 1) {
-        isFading = true;
-        const now = audioCtx ? audioCtx.currentTime : 0;
-        const fadeTime = Math.max(rem, 0.5);
-
-        if (audioCtx) {
-          const gAct = getActiveGain();
-          const gStb = getStandbyGain();
-          if (gAct) {
-            gAct.gain.setValueAtTime(1, now);
-            gAct.gain.linearRampToValueAtTime(0, now + fadeTime);
-          }
-          if (gStb) {
-            gStb.gain.setValueAtTime(0, now);
-            gStb.gain.linearRampToValueAtTime(1, now + fadeTime);
-          }
-        }
-
-        standbyAudio.play().then(() => {
-          setTimeout(() => {
-            swapAudioElements();
-            queueIndex++;
-            currentSong = queue[queueIndex];
-            isFading = false;
-            preloadedNextId = null;
-            updatePlayerUI();
-          }, fadeTime * 1000);
-        }).catch(err => console.warn('[cumu] crossfade play failed:', err));
-      }
+      checkTransition();
     });
   }
+
+  // ── Transitions: crossfade, void skipping, autoplay ─────────────────────────
+  // Void skipping cuts the silence at the start and end of a song (measured by
+  // the server). Combined with crossfade, the silence counts towards the fade:
+  // 3 s of silence and a 5 s crossfade give a 2 s crossfade of real sound.
+  // Audiobooks and podcasts never fade, skip or autoplay.
+
+  let voidSkipEnabled  = true;
+  let normalizeEnabled = true;
+  let autoplayEnabled  = true;
+  let shuffleNextIndex = null;   // next song in shuffle, picked once so it can be preloaded
+  let autoplayPromise  = null;
+  let autoplayTriedFor = null;
+
+  function isMusic(s) { return !!s && !s.isPodcast && !s.audioUrl && !isAudiobookSong(s); }
+  function introSec(s) { return voidSkipEnabled && isMusic(s) && s.intro_silence_ms > 250 ? s.intro_silence_ms / 1000 : 0; }
+  function outroSec(s) { return voidSkipEnabled && isMusic(s) && s.outro_silence_ms > 250 ? s.outro_silence_ms / 1000 : 0; }
+
+  function normGainOf(s) {
+    if (!normalizeEnabled || !isMusic(s) || typeof s.loudness_gain_db !== 'number') return 1;
+    return Math.pow(10, s.loudness_gain_db / 20);
+  }
+  function applyNormalization(el, song) {
+    const node = el === audioA ? normNodeA : (el === audioB ? normNodeB : null);
+    if (node) node.gain.value = normGainOf(song);
+  }
+
+  /** Index of the song that plays after the current one, or null. */
+  function peekNextIndex() {
+    if (!queue.length || repeatMode === 'one') return null;
+    if (isShuffle && queue.length > 1) {
+      if (shuffleNextIndex === null || shuffleNextIndex === queueIndex || shuffleNextIndex >= queue.length) {
+        let n = Math.floor(Math.random() * queue.length);
+        if (n === queueIndex) n = (queueIndex + 1) % queue.length;
+        shuffleNextIndex = n;
+      }
+      return shuffleNextIndex;
+    }
+    if (queueIndex + 1 < queue.length) return queueIndex + 1;
+    return repeatMode === 'all' ? 0 : null;
+  }
+
+  /** Appends similar music to the queue. Resolves true when songs were added. */
+  function loadAutoplay() {
+    if (autoplayPromise) return autoplayPromise;
+    if (!autoplayEnabled || !isMusic(currentSong) || !navigator.onLine || autoplayTriedFor === currentSong.id) return Promise.resolve(false);
+    autoplayTriedFor = currentSong.id;
+    const played = queue.slice(0, queueIndex + 1).filter(isMusic);
+    const seeds = played.slice(-5).map(x => x.id);
+    const exclude = queue.filter(isMusic).slice(-100).map(x => x.id);
+    autoplayPromise = CumuApi.get(`/api/radio?seeds=${encodeURIComponent(seeds.join(','))}&exclude=${encodeURIComponent(exclude.join(','))}&limit=20`)
+      .then(res => {
+        const songs = ((res && res.songs) || []).filter(isMusic);
+        if (!songs.length) return false;
+        queue.push(...songs.map(x => ({ ...x, autoplay: 1 })));
+        updateQueueUI();
+        return true;
+      })
+      .catch(() => false)
+      .finally(() => { autoplayPromise = null; });
+    return autoplayPromise;
+  }
+
+  /** Called while a song plays: preloads the next song and starts the transition in time. */
+  function checkTransition() {
+    if (!isPlaying || isFading || !currentSong || activeAudio === audioPodcast || isSpokenWord) return;
+    if (!isMusic(currentSong)) return;
+    const el = activeAudio;
+    const dur = el.duration;
+    if (!dur || !isFinite(dur)) return;
+    const cur = el.currentTime;
+
+    // Autoplay: fetch early enough for a seamless crossfade into it
+    if (autoplayEnabled && peekNextIndex() === null && dur - cur < 30) loadAutoplay();
+
+    const ni = peekNextIndex();
+    const next = ni !== null ? queue[ni] : null;
+    if (!next || !isMusic(next) || ni === queueIndex) return;
+
+    const outro = Math.min(outroSec(currentSong), Math.max(0, dur - 2));
+    const endPoint = dur - outro;
+    const fade = crossfadeDuration > 0 ? Math.max(0, crossfadeDuration - outro) : 0;
+    const startAt = endPoint - fade;
+
+    if ((gaplessEnabled || fade > 0 || outro > 0) && startAt - cur < 8 && preloadedNextId !== next.id) {
+      preloadedNextId = next.id;
+      standbyAudio.src = CumuApi.streamUrl(next.id);
+      standbyAudio.load();
+    }
+    if (cur < 1) return;
+    if (fade > 0 && cur >= startAt) startTransition(ni, Math.min(fade, Math.max(0.3, endPoint - cur)));
+    else if (fade === 0 && outro > 0 && cur >= endPoint - 0.08) startTransition(ni, 0);
+    // No fade and no silence: the 'ended' event moves on as before
+  }
+
+  /** Starts the next song on the standby element and fades over [fadeTime] seconds (0 = cut). */
+  function startTransition(ni, fadeTime) {
+    const next = queue[ni];
+    if (!next) return;
+    isFading = true;
+    if (preloadedNextId !== next.id || !standbyAudio.src) {
+      preloadedNextId = next.id;
+      standbyAudio.src = CumuApi.streamUrl(next.id);
+      standbyAudio.load();
+    }
+    const intro = introSec(next);
+    if (intro > 0) {
+      const seek = () => { try { standbyAudio.currentTime = intro; } catch (_) {} };
+      if (standbyAudio.readyState >= 1) seek(); else standbyAudio.addEventListener('loadedmetadata', seek, { once: true });
+    }
+    standbyAudio.defaultPlaybackRate = 1;
+    standbyAudio.playbackRate = 1;
+    standbyAudio.volume = activeAudio.volume;
+    applyNormalization(standbyAudio, next);
+
+    const outgoing = activeAudio;
+    const ft = Math.max(fadeTime, 0.03);
+    const gAct = getActiveGain();
+    const gStb = getStandbyGain();
+    if (audioCtx) {
+      const now = audioCtx.currentTime;
+      if (gAct) { gAct.gain.cancelScheduledValues(now); gAct.gain.setValueAtTime(gAct.gain.value, now); gAct.gain.linearRampToValueAtTime(0, now + ft); }
+      if (gStb) { gStb.gain.cancelScheduledValues(now); gStb.gain.setValueAtTime(0, now); gStb.gain.linearRampToValueAtTime(1, now + ft); }
+    }
+    standbyAudio.play().then(() => {
+      // The new song is the current one from the start of the fade
+      swapAudioElements();
+      queueIndex = ni;
+      shuffleNextIndex = null;
+      currentSong = queue[queueIndex];
+      isSpokenWord = false;
+      preloadedNextId = null;
+      if (navigator.onLine) CumuApi.post(`/api/songs/${currentSong.id}/play`, {}).catch(() => {});
+      updatePlayerUI();
+      setTimeout(() => {
+        if (outgoing !== activeAudio) outgoing.pause();
+        isFading = false;
+      }, ft * 1000 + 60);
+    }).catch(err => {
+      isFading = false;
+      if (audioCtx && gAct) { const t = audioCtx.currentTime; gAct.gain.cancelScheduledValues(t); gAct.gain.setValueAtTime(1, t); }
+      console.warn('[cumu] transition failed:', err);
+    });
+  }
+
+  // timeupdate fires only every ~250 ms: check more often for exact cuts
+  setInterval(() => { try { checkTransition(); } catch (_) {} }, 100);
 
   setupAudioListeners(audioA, true);
   setupAudioListeners(audioB, false);
@@ -5449,6 +5582,10 @@ function showToast(msg) {
   window.CumuAudioEngine = {
     setCrossfade: (seconds) => { crossfadeDuration = seconds; },
     setGapless: (enabled) => { gaplessEnabled = enabled; },
+    setVoidSkip: (enabled) => { voidSkipEnabled = !!enabled; },
+    setNormalize: (enabled) => { normalizeEnabled = !!enabled; applyNormalization(activeAudio, currentSong); },
+    setAutoplay: (enabled) => { autoplayEnabled = !!enabled; autoplayTriedFor = null; },
+    getSettings: () => ({ voidSkip: voidSkipEnabled, normalizeVolume: normalizeEnabled, autoplay: autoplayEnabled }),
     setAudioOutputDevice: setAudioOutputDevice,
     getAudioOutputDevices: getAudioOutputDevices,
     getCurrentAudioDeviceId: () => currentAudioDeviceId,
