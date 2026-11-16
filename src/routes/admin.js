@@ -1139,13 +1139,14 @@ router.post('/update', requireAdmin, async (req, res) => {
   const isDocker = fs.existsSync('/.dockerenv');
   const pkgVersion = require('../../package.json').version;
 
+  // Updates follow published releases only (not every push to main)
   let latestCommit = 'unknown';
   try {
     const http = require('https');
     const options = {
       hostname: 'api.github.com',
-      path: '/repos/Wolfiku/cumu/commits/main',
-      headers: { 'User-Agent': 'cumu-server' }
+      path: '/repos/Wolfiku/cumu/releases/latest',
+      headers: { 'User-Agent': 'cumu-server', Accept: 'application/vnd.github+json' }
     };
     await new Promise((resolve) => {
       http.get(options, (response) => {
@@ -1154,7 +1155,7 @@ router.post('/update', requireAdmin, async (req, res) => {
         response.on('end', () => {
           try {
             const data = JSON.parse(body);
-            if (data.sha) latestCommit = data.sha.substring(0, 7);
+            if (data.tag_name) latestCommit = data.tag_name;
           } catch {}
           resolve();
         });
@@ -1229,6 +1230,19 @@ router.post('/update', requireAdmin, async (req, res) => {
   });
 });
 
+// Installations without Docker update with /usr/local/bin/cumu-update. Copies
+// installed before updates followed releases don't replace themselves and
+// would keep installing every push to main.
+function isUpdaterOutdated() {
+  const updater = '/usr/local/bin/cumu-update';
+  try {
+    if (fs.existsSync('/.dockerenv') || !fs.existsSync(updater)) return false;
+    return !fs.readFileSync(updater, 'utf8').includes('releases/latest');
+  } catch {
+    return false;
+  }
+}
+
 router.get('/stats', requireAdmin, (req, res) => {
   const db = getDB();
   const cfg = getConfig();
@@ -1242,6 +1256,7 @@ router.get('/stats', requireAdmin, (req, res) => {
     storageUsedBytes: totalSize.s || 0,
     maxStorageGb: cfg.maxStorageGb || 50,
     version: require('../../package.json').version,
+    updaterOutdated: isUpdaterOutdated(),
   });
 });
 

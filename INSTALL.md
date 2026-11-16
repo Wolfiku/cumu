@@ -24,7 +24,7 @@ curl -fsSL https://raw.githubusercontent.com/Wolfiku/cumu/main/scripts/install.s
 ### Managing the Service:
 - **Check Status**: `systemctl status cumu`
 - **View Logs**: `journalctl -u cumu -f`
-- **Update Manually**: `cumu-update`
+- **Update Manually**: `cumu-update` (installs the latest [release](https://github.com/Wolfiku/cumu/releases) when it is newer than the installed version)
 
 ---
 

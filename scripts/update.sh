@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
 # cumu — Update script
-# Updates cumu to the latest version while preserving data and config
+# Updates cumu to the latest release while preserving data and config.
+# Only published releases are installed (not every push to main), and only
+# when the release is newer than the installed version.
 #
 # Usage:
 #   cumu-update
-#   cumu-update --restart         # restart even if already up-to-date
+#   cumu-update --restart         # restart the service even if already up-to-date
 #   cumu-update --silent          # silent mode for background cronjobs
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
@@ -18,7 +20,6 @@ BOLD="\033[1m"
 
 INSTALL_DIR="/opt/cumu"
 REPO="https://github.com/Wolfiku/cumu"
-ARCHIVE_URL="${REPO}/archive/refs/heads/main.tar.gz"
 FORCE_RESTART=false
 SILENT_MODE=false
 
@@ -40,19 +41,46 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ── Check current version ─────────────────────────────────────────────────────
-CURRENT_SHA="unknown"
-if [[ -f "${INSTALL_DIR}/.installed_sha" ]]; then
-  CURRENT_SHA=$(cat "${INSTALL_DIR}/.installed_sha")
+CURRENT_VERSION=$(node -p "require('${INSTALL_DIR}/package.json').version" 2>/dev/null || echo "0.0.0")
+
+# The latest release: github.com/<repo>/releases/latest redirects to its tag
+# (no API call, so no API rate limit)
+LATEST_URL=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "${REPO}/releases/latest" || true)
+LATEST_TAG="${LATEST_URL##*/tag/}"
+if [[ -z "$LATEST_URL" || "$LATEST_TAG" == "$LATEST_URL" || -z "$LATEST_TAG" ]]; then
+  error "Keine Release gefunden (GitHub nicht erreichbar?). Es wurde nichts geändert."
 fi
+LATEST_VERSION="${LATEST_TAG#v}"
+ARCHIVE_URL="${REPO}/archive/refs/tags/${LATEST_TAG}.tar.gz"
+LATEST_SHA="$LATEST_TAG"
 
-LATEST_SHA=$(curl -fsSL "https://api.github.com/repos/Wolfiku/cumu/commits/main" \
-  | grep '"sha"' | head -1 | cut -d'"' -f4 | cut -c1-12 || echo "unknown")
+log "Installed: ${CURRENT_VERSION}"
+log "Latest release: ${LATEST_VERSION}"
 
-log "Current: ${CURRENT_SHA}"
-log "Latest:  ${LATEST_SHA}"
+# Semver comparison: is $1 newer than $2? (0.7.0 > 0.7.0-alpha > 0.6.1)
+version_newer() {
+  node -e '
+    const parse = v => { const [core, pre] = v.replace(/^v/, "").split("-"); return { core: core.split(".").map(Number), pre }; };
+    const a = parse(process.argv[1]), b = parse(process.argv[2]);
+    for (let i = 0; i < 3; i++) {
+      const x = a.core[i] || 0, y = b.core[i] || 0;
+      if (x !== y) process.exit(x > y ? 0 : 1);
+    }
+    if (a.pre === b.pre) process.exit(1);
+    if (!a.pre) process.exit(0);
+    if (!b.pre) process.exit(1);
+    process.exit(a.pre.localeCompare(b.pre, undefined, { numeric: true }) > 0 ? 0 : 1);
+  ' "$1" "$2"
+}
 
-if [[ "$CURRENT_SHA" == "$LATEST_SHA" ]] && [[ "$FORCE_RESTART" == false ]]; then
-  log "Already up-to-date. Use --restart to restart the service anyway."
+# Never install an older release over a newer installation
+if ! version_newer "$LATEST_VERSION" "$CURRENT_VERSION"; then
+  if [[ "$FORCE_RESTART" == true ]]; then
+    log "Already up-to-date (${CURRENT_VERSION}). Restarting the service..."
+    systemctl restart cumu
+  else
+    log "Already up-to-date (${CURRENT_VERSION}). Use --restart to restart the service anyway."
+  fi
   exit 0
 fi
 
@@ -103,8 +131,14 @@ MUSIC_DIR=$(grep MUSIC_PATH "${INSTALL_DIR}/.env" 2>/dev/null | cut -d= -f2 || e
 
 chown -R "${SERVICE_USER}:${SERVICE_USER}" "$INSTALL_DIR" "$DATA_DIR" "$MUSIC_DIR" 2>/dev/null || true
 
-# ── Save new SHA ──────────────────────────────────────────────────────────────
+# ── Save the installed release ────────────────────────────────────────────────
 echo "$LATEST_SHA" > "${INSTALL_DIR}/.installed_sha"
+
+# This script updates itself with the one of the installed release, unless
+# that one is from before updates followed releases (it would pull main again)
+if [[ -f "${INSTALL_DIR}/scripts/update.sh" ]] && grep -q 'releases/latest' "${INSTALL_DIR}/scripts/update.sh"; then
+  install -m 755 "${INSTALL_DIR}/scripts/update.sh" /usr/local/bin/cumu-update 2>/dev/null || true
+fi
 
 # ── Restart service ───────────────────────────────────────────────────────────
 log "Restarting cumu service..."
