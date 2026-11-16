@@ -7,8 +7,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.launch
 import java.io.File
 import java.security.MessageDigest
 import kotlinx.coroutines.withContext
@@ -237,67 +235,6 @@ class ApiClient(private val context: Context, private val sessions: SessionStore
     val offline: StateFlow<Boolean> = _offline.asStateFlow()
     @Volatile private var lastFailure = 0L
 
-    private val _offlineReason = MutableStateFlow<String?>(null)
-    /** Why the app is offline, for the red bar ("Kein Internet", "Server nicht erreichbar", ...). */
-    val offlineReason: StateFlow<String?> = _offlineReason.asStateFlow()
-
-    private fun goOffline(reason: String) {
-        _offlineReason.value = reason
-        _offline.value = true
-        lastFailure = System.currentTimeMillis()
-    }
-
-    private fun goOnline() {
-        lastFailure = 0
-        _offlineReason.value = null
-        _offline.value = false
-    }
-
-    /** Server errors that make the app unusable count as "not reachable" (with cached data). */
-    private fun isServerDown(e: ApiException) = e.status >= 500
-
-    private val pingHttp: OkHttpClient by lazy {
-        baseHttp.newBuilder().connectTimeout(3, TimeUnit.SECONDS).readTimeout(4, TimeUnit.SECONDS).callTimeout(5, TimeUnit.SECONDS).build()
-    }
-
-    /**
-     * Asks the server whether it is there (GET /health, no login needed).
-     * Leaves the offline mode at once when it answers.
-     */
-    suspend fun ping(): Boolean = withContext(Dispatchers.IO) {
-        val s = sessions.current ?: return@withContext false
-        if (noNetwork()) { goOffline("Kein Internet"); return@withContext false }
-        try {
-            pingHttp.newCall(Request.Builder().url(s.serverUrl + "/health").get().build()).execute().use { res ->
-                if (res.isSuccessful) { goOnline(); true }
-                else { goOffline(if (res.code >= 500) "Serverfehler (HTTP ${res.code})" else "Server antwortet nicht richtig (HTTP ${res.code})"); false }
-            }
-        } catch (e: IOException) {
-            goOffline("Server nicht erreichbar")
-            false
-        }
-    }
-
-    /**
-     * Pings at the start, and every 3 seconds while offline, so the app
-     * leaves the offline mode as soon as the server is back.
-     */
-    fun startHealthMonitor(scope: kotlinx.coroutines.CoroutineScope) {
-        scope.launch(Dispatchers.IO) {
-            ping()
-            offline.collectLatest { off ->
-                while (off) {
-                    kotlinx.coroutines.delay(3_000)
-                    if (ping()) break
-                }
-            }
-        }
-        // A network comes back: ask right away
-        healthScope = scope
-    }
-
-    @Volatile private var healthScope: kotlinx.coroutines.CoroutineScope? = null
-
     private fun cacheFile(path: String): File? {
         val s = sessions.current ?: return null
         val key = MessageDigest.getInstance("SHA-1")
@@ -326,13 +263,7 @@ class ApiClient(private val context: Context, private val sessions: SessionStore
         runCatching {
             val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
             cm.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
-                override fun onAvailable(network: android.net.Network) {
-                    retrySoon()
-                    healthScope?.launch { ping() }
-                }
-                override fun onLost(network: android.net.Network) {
-                    healthScope?.launch { if (noNetwork()) goOffline("Kein Internet") }
-                }
+                override fun onAvailable(network: android.net.Network) = retrySoon()
             })
         }
     }
@@ -343,35 +274,31 @@ class ApiClient(private val context: Context, private val sessions: SessionStore
         // waiting for a connection timeout on every screen
         val recentlyFailed = _offline.value && System.currentTimeMillis() - lastFailure < 20_000
         if (noNetwork() || recentlyFailed) {
-            if (noNetwork()) goOffline("Kein Internet") else _offline.value = true
+            _offline.value = true
             return@withContext cached?.readText() ?: throw OfflineException()
         }
         try {
             val text = execute(Request.Builder().url(url(path)).get().build())
-            if (_offline.value) goOnline()
+            _offline.value = false
             cacheFile(path)?.let { f -> runCatching { File(f.path + ".tmp").apply { writeText(text) }.renameTo(f) } }
             text
         } catch (e: ApiException) {
-            // 5xx: the server (or its proxy) is broken: like unreachable
-            if (isServerDown(e)) {
-                goOffline("Serverfehler (HTTP ${e.status})")
-                return@withContext cached?.readText() ?: throw OfflineException()
-            }
-            throw e // any other answer of the server: not an offline case
+            throw e // the server answered with an error: not an offline case
         } catch (e: IOException) {
-            goOffline(if (noNetwork()) "Kein Internet" else "Server nicht erreichbar")
+            _offline.value = true
+            lastFailure = System.currentTimeMillis()
             cached?.readText() ?: throw OfflineException()
         }
     }
 
     /** Write actions need the server; mark offline on connection errors. */
     private inline fun <T> online(block: () -> T): T = try {
-        block().also { if (_offline.value) goOnline() }
+        block().also { _offline.value = false }
     } catch (e: ApiException) {
-        if (isServerDown(e)) { goOffline("Serverfehler (HTTP ${e.status})"); throw OfflineException() }
         throw e
     } catch (e: IOException) {
-        goOffline(if (noNetwork()) "Kein Internet" else "Server nicht erreichbar")
+        _offline.value = true
+        lastFailure = System.currentTimeMillis()
         throw OfflineException()
     }
 

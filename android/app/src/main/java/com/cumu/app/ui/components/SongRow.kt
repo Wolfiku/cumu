@@ -16,13 +16,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
-import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Album
-import androidx.compose.material.icons.rounded.AutoStories
-import androidx.compose.material.icons.rounded.Bedtime
-import androidx.compose.material.icons.rounded.Celebration
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.Download
@@ -78,8 +74,6 @@ fun SongRow(
     onRemove: (() -> Unit)? = null,
     removeLabel: String = "Aus Playlist entfernen",
     onPlay: (() -> Unit)? = null,
-    /** Extra text after artist · album, e.g. "hinzugefügt von anna". */
-    extra: String? = null,
 ) {
     val app = CumuApplication.instance
     val player by app.player.state.collectAsState()
@@ -128,7 +122,7 @@ fun SongRow(
                 color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
             )
             Text(
-                listOfNotNull(song.artistName, song.albumTitle, extra).joinToString(" · ").ifEmpty { "Unbekannt" },
+                listOfNotNull(song.artistName, song.albumTitle).joinToString(" · ").ifEmpty { "Unbekannt" },
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -155,12 +149,8 @@ fun SongRow(
     }
 }
 
-/**
- * The ⋮ menu of a song. In the player, [onSleepTimer] adds the sleep timer
- * as first entry.
- */
 @Composable
-fun SongMenu(song: Song, onRemove: (() -> Unit)? = null, removeLabel: String = "Entfernen", onSleepTimer: (() -> Unit)? = null) {
+fun SongMenu(song: Song, onRemove: (() -> Unit)? = null, removeLabel: String = "Entfernen") {
     val app = CumuApplication.instance
     val nav = LocalNav.current
     val snackbar = LocalSnackbar.current
@@ -169,31 +159,10 @@ fun SongMenu(song: Song, onRemove: (() -> Unit)? = null, removeLabel: String = "
     val scope = rememberCoroutineScope()
     var open by remember { mutableStateOf(false) }
     var pickPlaylist by remember { mutableStateOf(false) }
-    var share by remember { mutableStateOf(false) }
 
     Box {
         IconButton(onClick = { open = true }) { Icon(Icons.Rounded.MoreVert, "Mehr") }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            if (onSleepTimer != null) {
-                val sleep by app.player.sleep.collectAsState()
-                DropdownMenuItem(
-                    text = {
-                        Column {
-                            Text("Sleep-Timer")
-                            sleep?.let { t ->
-                                Text(
-                                    sleepTimerLabel(t, song.isAudiobook),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.primary,
-                                )
-                            }
-                        }
-                    },
-                    leadingIcon = { Icon(Icons.Rounded.Bedtime, null, tint = if (sleep != null) MaterialTheme.colorScheme.primary else androidx.compose.ui.graphics.Color.Unspecified) },
-                    onClick = { open = false; onSleepTimer() },
-                )
-                HorizontalDivider()
-            }
             DropdownMenuItem(
                 text = { Text("Als Nächstes spielen") },
                 leadingIcon = { Icon(Icons.Rounded.PlaylistPlay, null) },
@@ -218,17 +187,6 @@ fun SongMenu(song: Song, onRemove: (() -> Unit)? = null, removeLabel: String = "
                     }
                 },
             )
-            val party by app.live.party.collectAsState()
-            if (party?.isHost == false) DropdownMenuItem(
-                text = { Text("Zur Party vorschlagen") },
-                leadingIcon = { Icon(Icons.Rounded.Celebration, null) },
-                onClick = { open = false; app.player.suggestToParty(song) },
-            )
-            DropdownMenuItem(
-                text = { Text("Teilen") },
-                leadingIcon = { Icon(Icons.AutoMirrored.Rounded.Send, null) },
-                onClick = { open = false; share = true },
-            )
             DropdownMenuItem(
                 text = { Text("Zu Playlist hinzufügen") },
                 leadingIcon = { Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, null) },
@@ -247,11 +205,7 @@ fun SongMenu(song: Song, onRemove: (() -> Unit)? = null, removeLabel: String = "
                     onClick = { open = false; app.downloads.download(listOf(song)) },
                 )
             }
-            if (song.isAudiobook) DropdownMenuItem(
-                text = { Text("Zum Hörbuch") },
-                leadingIcon = { Icon(Icons.Rounded.AutoStories, null) },
-                onClick = { open = false; nav.audiobook(song.audiobookId) },
-            ) else if (song.albumId != null) DropdownMenuItem(
+            if (song.albumId != null) DropdownMenuItem(
                 text = { Text("Zum Album") },
                 leadingIcon = { Icon(Icons.Rounded.Album, null) },
                 onClick = { open = false; nav.album(song.albumId) },
@@ -272,6 +226,5 @@ fun SongMenu(song: Song, onRemove: (() -> Unit)? = null, removeLabel: String = "
         }
     }
     if (pickPlaylist) PlaylistPicker(listOf(song)) { pickPlaylist = false }
-    if (share) ShareItemSheet(if (song.isAudiobook) "audiobook" else "song", if (song.isAudiobook) song.audiobookId else song.id, song.bookTitle ?: song.title) { share = false }
 }
 

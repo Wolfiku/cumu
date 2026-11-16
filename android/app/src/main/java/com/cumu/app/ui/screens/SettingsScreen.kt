@@ -12,16 +12,6 @@ import androidx.compose.material.icons.rounded.AccountCircle
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.SdStorage
-import androidx.compose.material.icons.rounded.AllInclusive
-import androidx.compose.material.icons.rounded.FastForward
-import androidx.compose.material.icons.rounded.GraphicEq
-import androidx.compose.material.icons.rounded.Tune
-import androidx.compose.material.icons.rounded.PrivacyTip
-import androidx.compose.material3.Slider
-import androidx.compose.material3.Switch
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.ui.unit.dp
-import kotlin.math.roundToInt
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -49,7 +39,6 @@ import kotlinx.coroutines.launch
 @Composable
 fun SettingsScreen() {
     val app = CumuApplication.instance
-    val nav = com.cumu.app.ui.LocalNav.current
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val session by app.sessions.session.collectAsState()
@@ -77,15 +66,6 @@ fun SettingsScreen() {
                 supportingContent = { Text("${downloads.size} Titel · ${formatBytes(downloads.values.sumOf { it.bytes })}") },
                 leadingContent = { Icon(Icons.Rounded.SdStorage, null) },
             )
-            ListItem(
-                headlineContent = { Text("Privatsphäre") },
-                supportingContent = { Text("Einladungen, Teilen, blockierte Nutzer, Hörverlauf") },
-                leadingContent = { Icon(Icons.Rounded.PrivacyTip, null) },
-                modifier = Modifier.clickable { nav.privacy() },
-            )
-            HorizontalDivider()
-            PlaybackSection()
-            HorizontalDivider()
             ListItem(
                 headlineContent = { Text("App-Version") },
                 supportingContent = { Text(version) },
@@ -119,63 +99,5 @@ fun SettingsScreen() {
             }) { Text("Abmelden") }
         },
         dismissButton = { TextButton(onClick = { confirmLogout = false }) { Text("Abbrechen") } },
-    )
-}
-
-
-/** Crossfade, void skipping, normalization and autoplay. */
-@Composable
-private fun PlaybackSection() {
-    val app = CumuApplication.instance
-    val st by app.playback.state.collectAsState()
-    Text(
-        "Wiedergabe",
-        Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp),
-        style = MaterialTheme.typography.titleSmall,
-        color = MaterialTheme.colorScheme.primary,
-    )
-    ListItem(
-        headlineContent = { Text("Crossfade") },
-        supportingContent = {
-            Column {
-                Text(if (st.crossfadeSec == 0) "Aus" else "${st.crossfadeSec} Sekunden")
-                // Local value while dragging, saved when the finger lifts
-                var drag by remember(st.crossfadeSec) { mutableFloatStateOf(st.crossfadeSec.toFloat()) }
-                Slider(
-                    value = drag,
-                    onValueChange = { drag = it },
-                    onValueChangeFinished = { app.playback.update { v -> v.copy(crossfadeSec = drag.roundToInt()) } },
-                    valueRange = 0f..12f,
-                    steps = 11,
-                )
-            }
-        },
-        leadingContent = { Icon(Icons.Rounded.Tune, null) },
-    )
-    SwitchRow(
-        "Stille überspringen",
-        "Überspringt leere Stellen am Anfang und Ende eines Songs. Mit Crossfade zählt die Stille zur Überblendung (3 s Stille + 5 s Crossfade = 2 s Überblendung).",
-        Icons.Rounded.FastForward, st.voidSkip,
-    ) { on -> app.playback.update { it.copy(voidSkip = on) } }
-    SwitchRow(
-        "Lautstärke angleichen",
-        "Alle Songs gleich laut, kein Song ist viel lauter oder leiser als die anderen.",
-        Icons.Rounded.GraphicEq, st.normalize,
-    ) { on -> app.playback.update { it.copy(normalize = on) } }
-    SwitchRow(
-        "Autoplay",
-        "Wenn die Warteschlange zu Ende ist, geht es mit ähnlicher Musik weiter. Nie mit Hörbüchern.",
-        Icons.Rounded.AllInclusive, st.autoplay,
-    ) { on -> app.playback.update { it.copy(autoplay = on) } }
-}
-
-@Composable
-private fun SwitchRow(title: String, text: String, icon: androidx.compose.ui.graphics.vector.ImageVector, checked: Boolean, onChange: (Boolean) -> Unit) {
-    ListItem(
-        headlineContent = { Text(title) },
-        supportingContent = { Text(text) },
-        leadingContent = { Icon(icon, null) },
-        trailingContent = { Switch(checked = checked, onCheckedChange = onChange) },
-        modifier = Modifier.clickable { onChange(!checked) },
     )
 }

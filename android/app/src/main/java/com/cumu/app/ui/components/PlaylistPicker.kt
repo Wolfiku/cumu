@@ -75,7 +75,7 @@ fun PlaylistPicker(songs: List<Song>, onDone: () -> Unit) {
     val snackbar = LocalSnackbar.current
     val scope = rememberCoroutineScope()
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val loader = rememberLoad { app.repo.playlists().filter { !it.readOnly && it.canEdit } }
+    val loader = rememberLoad { app.repo.playlists().filter { !it.readOnly } }
     var creating by remember { mutableStateOf(false) }
     var newName by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf<String?>(null) }   // playlist id being added to

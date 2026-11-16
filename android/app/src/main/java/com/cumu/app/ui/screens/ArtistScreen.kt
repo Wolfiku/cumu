@@ -84,7 +84,7 @@ fun ArtistScreen(id: String) {
                     val offset = if (list.firstVisibleItemIndex == 0) list.firstVisibleItemScrollOffset else 0
                     ArtistHeader(artist, songs, Modifier.graphicsLayer { translationY = offset * 0.45f; alpha = 1f - (offset / 900f).coerceIn(0f, 0.6f) })
                 }
-                item { ArtistActions(songs) { com.cumu.app.ui.components.ShareButton("artist", artist.id, artist.name) } }
+                item { ArtistActions(songs) }
                 if (popular.isNotEmpty()) {
                     item { SectionTitle("Beliebt") }
                     itemsIndexed(popular, key = { _, s -> "pop-" + s.id }) { i, s -> SongRow(s, popular, i, leading = "${i + 1}") }
@@ -93,15 +93,11 @@ fun ArtistScreen(id: String) {
                     item { SectionTitle("Alben", subtitle = if (artist.albums.size == 1) "1 Album" else "${artist.albums.size} Alben") }
                     item { AlbumCarousel(artist.albums.map { it.copy(artistName = null) }) { nav.album(it.id) } }
                 }
-                if (artist.audiobooks.isNotEmpty()) {
-                    item { SectionTitle("Hörbücher", subtitle = if (artist.audiobooks.size == 1) "1 Hörbuch" else "${artist.audiobooks.size} Hörbücher") }
-                    item { BookCarousel(artist.audiobooks) }
-                }
                 if (songs.size > popular.size) {
                     item { SectionTitle("Alle Titel", subtitle = totalLength(songs)) }
                     itemsIndexed(songs, key = { _, s -> "all-" + s.id }) { i, s -> SongRow(s, songs, i) }
                 }
-                if (songs.isEmpty() && artist.audiobooks.isEmpty()) item { EmptyBox(Icons.Rounded.Person, "Von diesem Künstler gibt es noch keine Titel.") }
+                if (songs.isEmpty()) item { EmptyBox(Icons.Rounded.Person, "Von diesem Künstler gibt es noch keine Titel.") }
             }
         }
 
@@ -117,8 +113,7 @@ fun ArtistScreen(id: String) {
         // Back button, always on top
         Box(Modifier.statusBarsPadding().padding(4.dp)) {
             FilledIconButton(
-                // Close: back to the last main tab (home, search, library)
-                onClick = { nav.backToMain() },
+                onClick = { nav.back() },
                 colors = IconButtonDefaults.filledIconButtonColors(
                     containerColor = if (collapsed) Color.Transparent else Color.Black.copy(alpha = 0.35f),
                     contentColor = if (collapsed) MaterialTheme.colorScheme.onSurface else Color.White,
@@ -171,7 +166,7 @@ private fun ArtistHeader(artist: Artist, songs: List<Song>, modifier: Modifier) 
 }
 
 @Composable
-private fun ArtistActions(songs: List<Song>, share: @Composable () -> Unit = {}) {
+private fun ArtistActions(songs: List<Song>) {
     val app = CumuApplication.instance
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
@@ -182,7 +177,6 @@ private fun ArtistActions(songs: List<Song>, share: @Composable () -> Unit = {})
             Icon(Icons.Rounded.Shuffle, "Zufällig")
         }
         DownloadAllButton(songs)
-        share()
         Spacer(Modifier.weight(1f))
         FilledIconButton(onClick = { app.player.play(songs) }, enabled = songs.isNotEmpty(), modifier = Modifier.size(60.dp)) {
             Icon(Icons.Rounded.PlayArrow, "Abspielen", Modifier.size(32.dp))

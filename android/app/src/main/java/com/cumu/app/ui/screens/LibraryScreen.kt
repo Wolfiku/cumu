@@ -23,8 +23,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
-import androidx.compose.material.icons.rounded.AutoStories
-import androidx.compose.material.icons.rounded.Inbox
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.AutoAwesome
@@ -121,24 +119,6 @@ fun LibraryScreen() {
                     if (filter == LibFilter.All || filter == LibFilter.Playlists) {
                         if (data.showFavorites || data.favorites.isNotEmpty()) {
                             item(key = "pin-favorites") { FavoritesEntry(Modifier.animateItem()) }
-                        }
-                    }
-                    if (filter == LibFilter.All && data.inboxUnread != null) {
-                        item(key = "pin-inbox") {
-                            val unread by app.repo.inboxUnread.collectAsState()
-                            PinnedEntry(
-                                "Mit dir geteilt", if (unread > 0) "$unread neu" else "Was dir andere geschickt haben",
-                                Icons.Rounded.Inbox, LocalAccents.current.gradients[1], Modifier.animateItem(),
-                            ) { nav.inbox() }
-                        }
-                    }
-                    if (filter == LibFilter.All && (data.audiobookCount ?: 0) > 0) {
-                        item(key = "pin-audiobooks") {
-                            val n = data.audiobookCount ?: 0
-                            PinnedEntry(
-                                "Hörbücher", if (n == 1) "1 Hörbuch · weiterhören, wo du warst" else "$n Hörbücher · weiterhören, wo du warst",
-                                Icons.Rounded.AutoStories, LocalAccents.current.gradients[0], Modifier.animateItem(),
-                            ) { nav.audiobooks() }
                         }
                     }
                     if (filter == LibFilter.All) {
@@ -280,13 +260,7 @@ private fun PlaylistEntry(p: Playlist, pinned: Boolean, modifier: Modifier) {
     LibraryRow(
         p.name,
         (if (pinned) "Angeheftet · " else "") +
-            when {
-                p.readOnly -> "Von cumu · "
-                !p.isOwn && p.ownerUsername != null -> "von ${p.ownerUsername} · "
-                p.visibility == "public" -> "Öffentlich · "
-                p.visibility == "shared" -> "Geteilt · "
-                else -> "Playlist · "
-            } + if (p.size == 1) "1 Titel" else "${p.size} Titel",
+            (if (p.readOnly) "Von cumu · " else "Playlist · ") + if (p.size == 1) "1 Titel" else "${p.size} Titel",
         modifier,
         leading = {
             Box {

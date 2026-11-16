@@ -14,11 +14,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.DownloadDone
-import androidx.compose.material.icons.rounded.LibraryAdd
-import androidx.compose.material.icons.rounded.LibraryAddCheck
-import androidx.compose.material.icons.rounded.Share
-import androidx.compose.material.icons.automirrored.rounded.Logout
-import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -115,13 +110,7 @@ fun AlbumScreen(id: String) {
     val app = CumuApplication.instance
     val nav = LocalNav.current
     val loader = rememberLoad(id) { app.repo.album(id) }
-    // An album of audiobook chapters opens as audiobook
-    val loaded = (loader.state as? com.cumu.app.ui.components.Load.Ok)?.value
-    if (loaded != null && loaded.songs.isNotEmpty() && loaded.songs.all { it.isAudiobook }) {
-        AudiobookScreen(loaded.id)
-        return
-    }
-    DetailScaffold("Album", actions = { loaded?.let { com.cumu.app.ui.components.ShareButton("album", it.id, it.title) } }) { padding ->
+    DetailScaffold("Album") { padding ->
         LoadContent(loader) { album ->
             // Album track lists come without album fields; fill them in for the player
             val songs = album.songs.map {
@@ -144,12 +133,6 @@ fun AlbumScreen(id: String) {
     }
 }
 
-internal fun visibilityLabel(v: String?): String? = when (v) {
-    "public" -> "Öffentlich"
-    "shared" -> "Geteilt"
-    else -> null
-}
-
 @Composable
 fun PlaylistScreen(id: String) {
     val app = CumuApplication.instance
@@ -158,37 +141,12 @@ fun PlaylistScreen(id: String) {
     val scope = rememberCoroutineScope()
     val loader = rememberLoad(id) { app.repo.playlist(id) }
     var confirmDelete by remember { mutableStateOf(false) }
-    var confirmLeave by remember { mutableStateOf(false) }
-    var share by remember { mutableStateOf(false) }
 
     val playlist = (loader.state as? com.cumu.app.ui.components.Load.Ok)?.value
     DetailScaffold(
         playlist?.name ?: "Playlist",
         actions = {
-            if (playlist != null) com.cumu.app.ui.components.ShareButton("playlist", playlist.id, playlist.name, ownPlaylist = playlist.isOwn)
-            if (playlist != null && playlist.isOwn && !playlist.readOnly) IconButton(onClick = { share = true }) {
-                Icon(Icons.Rounded.Share, "Teilen & Sichtbarkeit")
-            }
-            // Public playlists of others: save to / remove from the library
-            if (playlist != null && !playlist.isOwn && (playlist.access == "public" || playlist.isSaved)) IconButton(onClick = {
-                scope.launch {
-                    try {
-                        app.repo.savePlaylist(playlist.id, !playlist.isSaved)
-                        snackbar(if (playlist.isSaved) "Aus deiner Bibliothek entfernt" else "Zu deiner Bibliothek hinzugefügt")
-                        loader.reload()
-                    } catch (e: Exception) { snackbar(errorText(e)) }
-                }
-            }) {
-                Icon(
-                    if (playlist.isSaved) Icons.Rounded.LibraryAddCheck else Icons.Rounded.LibraryAdd,
-                    if (playlist.isSaved) "Aus Bibliothek entfernen" else "Zur Bibliothek hinzufügen",
-                    tint = if (playlist.isSaved) MaterialTheme.colorScheme.primary else LocalContentColor.current,
-                )
-            }
-            if (playlist != null && playlist.isMember) IconButton(onClick = { confirmLeave = true }) {
-                Icon(Icons.AutoMirrored.Rounded.Logout, "Playlist verlassen")
-            }
-            if (playlist != null && playlist.isOwn && !playlist.readOnly) IconButton(onClick = { confirmDelete = true }) {
+            if (playlist != null && !playlist.readOnly) IconButton(onClick = { confirmDelete = true }) {
                 Icon(Icons.Rounded.Delete, "Playlist löschen")
             }
         },
@@ -198,29 +156,18 @@ fun PlaylistScreen(id: String) {
                 item {
                     Header(
                         pl.songs.firstOrNull { it.cover != null }?.cover, pl.name,
-                        when {
-                            pl.readOnly -> "Von cumu erstellt"
-                            !pl.isOwn && pl.ownerUsername != null -> "von ${pl.ownerUsername}"
-                            else -> null
-                        },
-                        info = listOfNotNull(
-                            visibilityLabel(pl.visibility),
-                            pl.memberCount?.takeIf { it > 0 }?.let { if (it == 1) "1 Person eingeladen" else "$it Personen eingeladen" },
-                            if (!pl.isOwn && pl.canEdit) "du kannst bearbeiten" else null,
-                            totalLength(pl.songs),
-                        ).joinToString(" · "),
+                        if (pl.readOnly) "Von cumu erstellt" else null,
+                        info = totalLength(pl.songs),
                     )
                 }
                 item { PlayShuffleRow(pl.songs, Modifier.padding(16.dp)) { DownloadAllButton(pl.songs) } }
                 if (pl.songs.isEmpty()) item {
-                    EmptyBox(Icons.Rounded.Download, if (pl.canEdit) "Leer. Füge Songs über das Menü ⋮ bei einem Titel hinzu." else "Diese Playlist ist noch leer.")
+                    EmptyBox(Icons.Rounded.Download, "Leer. Füge Songs über das Menü ⋮ bei einem Titel hinzu.")
                 }
                 itemsIndexed(pl.songs, key = { _, s -> s.id }) { i, s ->
                     SongRow(
                         s, pl.songs, i,
-                        // Several people edit: who added the song
-                        extra = if ((pl.memberCount ?: 0) > 0) s.addedByUsername?.let { "hinzugefügt von $it" } else null,
-                        onRemove = if (pl.readOnly || !pl.canEdit) null else ({
+                        onRemove = if (pl.readOnly) null else ({
                             scope.launch {
                                 try { app.repo.removeFromPlaylist(pl.id, s.id); loader.reload() }
                                 catch (e: Exception) { snackbar(errorText(e)) }
@@ -231,24 +178,6 @@ fun PlaylistScreen(id: String) {
             }
         }
     }
-
-    if (share && playlist != null) com.cumu.app.ui.components.PlaylistShareSheet(playlist.id, onDismiss = { share = false; loader.reload() })
-
-    if (confirmLeave && playlist != null) AlertDialog(
-        onDismissRequest = { confirmLeave = false },
-        title = { Text("Playlist verlassen?") },
-        text = { Text("„${playlist.name}“ verschwindet aus deiner Bibliothek. ${playlist.ownerUsername ?: "Der Ersteller"} kann dich wieder einladen.") },
-        confirmButton = {
-            TextButton(onClick = {
-                confirmLeave = false
-                scope.launch {
-                    try { app.repo.leavePlaylist(playlist.id); nav.back(); snackbar("Playlist verlassen") }
-                    catch (e: Exception) { snackbar(errorText(e)) }
-                }
-            }) { Text("Verlassen") }
-        },
-        dismissButton = { TextButton(onClick = { confirmLeave = false }) { Text("Abbrechen") } },
-    )
 
     if (confirmDelete && playlist != null) AlertDialog(
         onDismissRequest = { confirmDelete = false },
