@@ -93,11 +93,15 @@ fun ArtistScreen(id: String) {
                     item { SectionTitle("Alben", subtitle = if (artist.albums.size == 1) "1 Album" else "${artist.albums.size} Alben") }
                     item { AlbumCarousel(artist.albums.map { it.copy(artistName = null) }) { nav.album(it.id) } }
                 }
+                if (artist.audiobooks.isNotEmpty()) {
+                    item { SectionTitle("Hörbücher", subtitle = if (artist.audiobooks.size == 1) "1 Hörbuch" else "${artist.audiobooks.size} Hörbücher") }
+                    item { BookCarousel(artist.audiobooks) }
+                }
                 if (songs.size > popular.size) {
                     item { SectionTitle("Alle Titel", subtitle = totalLength(songs)) }
                     itemsIndexed(songs, key = { _, s -> "all-" + s.id }) { i, s -> SongRow(s, songs, i) }
                 }
-                if (songs.isEmpty()) item { EmptyBox(Icons.Rounded.Person, "Von diesem Künstler gibt es noch keine Titel.") }
+                if (songs.isEmpty() && artist.audiobooks.isEmpty()) item { EmptyBox(Icons.Rounded.Person, "Von diesem Künstler gibt es noch keine Titel.") }
             }
         }
 

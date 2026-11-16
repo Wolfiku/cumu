@@ -1,6 +1,7 @@
 package com.cumu.app.playback
 
 import android.content.ComponentName
+import android.content.Context
 import android.net.Uri
 import android.os.Bundle
 import androidx.media3.common.MediaItem
@@ -9,8 +10,10 @@ import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.cumu.app.CumuApplication
+import com.cumu.app.data.Audiobook
 import com.cumu.app.data.Song
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,7 +37,15 @@ data class PlayerState(
     val shuffle: Boolean = false,
     val repeatMode: Int = Player.REPEAT_MODE_OFF,
     val error: String? = null,
+    /** Playback speed (audiobooks only, music always plays at 1×). */
+    val speed: Float = 1f,
 )
+
+/** Active sleep timer: pauses at [endsAt] (epoch ms) or at the end of the current title. */
+data class SleepTimer(val endsAt: Long? = null, val endOfTrack: Boolean = false)
+
+/** Speeds offered for audiobooks. */
+val AUDIOBOOK_SPEEDS = listOf(0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
 
 /**
  * The UI side of playback: a MediaController connected to PlaybackService,
@@ -56,13 +67,41 @@ class PlayerConnection(private val app: CumuApplication) {
             controller = c
             c.addListener(object : Player.Listener {
                 override fun onEvents(player: Player, events: Player.Events) = publish()
+
+                override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                    // Sleep timer "end of title": the title is over, stop here
+                    if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO && _sleep.value?.endOfTrack == true) {
+                        c.pause()
+                        fallAsleep(c)
+                    }
+                    applySpeed(c)
+                    // A new chapter: remember it at once
+                    saveAudiobookProgress(c, force = true)
+                }
+
+                override fun onIsPlayingChanged(isPlaying: Boolean) {
+                    if (!isPlaying) saveAudiobookProgress(c, force = true)
+                }
+
+                override fun onPlaybackStateChanged(playbackState: Int) {
+                    if (playbackState == Player.STATE_ENDED) {
+                        // Last chapter over: the server marks the book as finished
+                        saveAudiobookProgress(c, force = true)
+                        if (_sleep.value?.endOfTrack == true) fallAsleep(c)
+                    }
+                }
             })
             pending.forEach { it(c) }
             pending.clear()
+            applySpeed(c)
             publish()
             // Position ticks while playing
             while (isActive) {
-                if (c.isPlaying) publish()
+                if (c.isPlaying) {
+                    publish()
+                    saveAudiobookProgress(c)
+                    fadeBeforeEndOfTrack(c)
+                }
                 delay(500)
             }
         }
@@ -88,7 +127,158 @@ class PlayerConnection(private val app: CumuApplication) {
             shuffle = c.shuffleModeEnabled,
             repeatMode = c.repeatMode,
             error = c.playerError?.let { "Wiedergabe fehlgeschlagen: ${it.errorCodeName}" },
+            speed = c.playbackParameters.speed,
         )
+    }
+
+    // ── Sleep timer ──────────────────────────────────────────────────────────
+
+    private val _sleep = MutableStateFlow<SleepTimer?>(null)
+    val sleep: StateFlow<SleepTimer?> = _sleep.asStateFlow()
+    private var sleepJob: Job? = null
+
+    /** Pauses playback in [minutes]; the music fades out over the last 15 seconds. */
+    fun setSleepTimer(minutes: Int) = startSleepTimer(System.currentTimeMillis() + minutes * 60_000L)
+
+    /** Adds [minutes] to a running timer (or starts one). */
+    fun extendSleepTimer(minutes: Int) {
+        val endsAt = _sleep.value?.endsAt
+        if (endsAt == null) setSleepTimer(minutes) else startSleepTimer(endsAt + minutes * 60_000L)
+    }
+
+    private fun startSleepTimer(endsAt: Long) {
+        sleepJob?.cancel()
+        withController { it.volume = 1f }
+        _sleep.value = SleepTimer(endsAt = endsAt)
+        sleepJob = app.appScope.launch(Dispatchers.Main) {
+            // Cancelling the timer stops this loop inside delay()
+            while (true) {
+                val left = endsAt - System.currentTimeMillis()
+                if (left <= 0) break
+                val c = controller
+                if (c != null && left < FADE_MS) c.volume = (left.toFloat() / FADE_MS).coerceIn(0f, 1f)
+                delay(if (left < FADE_MS) 200L else (left - FADE_MS).coerceIn(200L, 1000L))
+            }
+            controller?.let { c ->
+                c.pause()
+                fallAsleep(c)
+            }
+        }
+    }
+
+    /** Pauses once the current title (or audiobook chapter) is over. */
+    fun sleepAtEndOfTrack() {
+        sleepJob?.cancel()
+        sleepJob = null
+        withController { it.volume = 1f }
+        _sleep.value = SleepTimer(endOfTrack = true)
+    }
+
+    fun cancelSleepTimer() {
+        sleepJob?.cancel()
+        sleepJob = null
+        _sleep.value = null
+        withController { it.volume = 1f }
+    }
+
+    private fun fallAsleep(c: MediaController) {
+        sleepJob = null
+        _sleep.value = null
+        saveAudiobookProgress(c, force = true)
+        // Back to full volume for the next time the user presses play
+        app.appScope.launch(Dispatchers.Main) { delay(300); c.volume = 1f }
+        _messages.tryEmit("Sleep-Timer: Wiedergabe pausiert")
+    }
+
+    /** "End of title": fade out over the last seconds of the title. */
+    private fun fadeBeforeEndOfTrack(c: MediaController) {
+        if (_sleep.value?.endOfTrack != true || c.duration <= 0) return
+        val left = ((c.duration - c.currentPosition) / c.playbackParameters.speed.coerceAtLeast(0.1f)).toLong()
+        c.volume = if (left < END_FADE_MS) (left.toFloat() / END_FADE_MS).coerceIn(0.05f, 1f) else 1f
+    }
+
+    // ── Audiobooks ───────────────────────────────────────────────────────────
+
+    private val prefs = app.getSharedPreferences("cumu_player", Context.MODE_PRIVATE)
+
+    /** Speed for audiobooks, kept for the next books. */
+    val audiobookSpeed: Float get() = prefs.getFloat(KEY_SPEED, 1f).takeIf { it in AUDIOBOOK_SPEEDS } ?: 1f
+
+    fun setAudiobookSpeed(speed: Float) {
+        prefs.edit().putFloat(KEY_SPEED, speed).apply()
+        withController { applySpeed(it) }
+    }
+
+    /** Audiobook chapters play at the chosen speed, music always at 1×. */
+    private fun applySpeed(c: MediaController) {
+        val book = c.currentMediaItem?.let(::songOf)?.isAudiobook == true
+        val want = if (book) audiobookSpeed else 1f
+        if (c.playbackParameters.speed != want) c.setPlaybackSpeed(want)
+    }
+
+    /**
+     * Starts a book: at the saved position, at [chapterIndex] (from its
+     * beginning) or, with [restart], from the very beginning.
+     */
+    fun playAudiobook(book: Audiobook, chapterIndex: Int? = null, restart: Boolean = false) {
+        val chapters = book.chapters.map {
+            it.copy(
+                audiobookFlag = 1, bookId = book.id, bookTitle = book.title,
+                cover = it.cover ?: book.cover, albumTitle = it.albumTitle ?: book.title,
+                artistName = it.artistName ?: book.artistName,
+            )
+        }
+        if (chapters.isEmpty()) return
+        val p = book.progress
+        var index = 0
+        var startMs = 0L
+        if (chapterIndex != null) {
+            index = chapterIndex.coerceIn(chapters.indices)
+        } else if (p != null && !p.finished && !restart) {
+            index = chapters.indexOfFirst { it.id == p.songId }.coerceAtLeast(0)
+            // A few seconds back, so the user finds back into the story
+            startMs = ((p.position - 3.0).coerceAtLeast(0.0) * 1000).toLong()
+        }
+        val (songs, start) = playable(chapters, index) ?: return
+        if (songs[start].id != chapters[index].id) startMs = 0
+        val items = songs.map(::itemOf)
+        withController { c ->
+            c.shuffleModeEnabled = false
+            c.repeatMode = Player.REPEAT_MODE_OFF
+            c.setMediaItems(items, start, startMs)
+            c.prepare()
+            applySpeed(c)
+            c.play()
+        }
+    }
+
+    /** All chapters of a book to the end of the queue (book info attached). */
+    fun enqueueAudiobook(book: Audiobook) {
+        enqueue(book.chapters.map {
+            it.copy(audiobookFlag = 1, bookId = book.id, bookTitle = book.title, cover = it.cover ?: book.cover, albumTitle = it.albumTitle ?: book.title)
+        })
+    }
+
+    /** Jumps [deltaMs] forward (or back when negative) in the current title. */
+    fun seekBy(deltaMs: Long) = withController { c ->
+        var target = c.currentPosition + deltaMs
+        if (c.duration > 0) target = target.coerceAtMost(c.duration - 500)
+        c.seekTo(target.coerceAtLeast(0))
+    }
+
+    private var lastProgressSave = 0L
+
+    /** Sends the position in the current audiobook to the server (at most every 15 s unless [force]). */
+    private fun saveAudiobookProgress(c: MediaController, force: Boolean = false) {
+        val song = c.currentMediaItem?.let(::songOf) ?: return
+        if (!song.isAudiobook) return
+        val now = System.currentTimeMillis()
+        if (!force && now - lastProgressSave < 15_000) return
+        lastProgressSave = now
+        val positionSec = c.currentPosition.coerceAtLeast(0) / 1000.0
+        app.appScope.launch {
+            runCatching { app.repo.saveAudiobookProgress(song.audiobookId, song.id, positionSec) }
+        }
     }
 
     // ── Commands ─────────────────────────────────────────────────────────────
@@ -211,5 +401,8 @@ class PlayerConnection(private val app: CumuApplication) {
 
     companion object {
         private const val KEY_SONG = "cumu_song"
+        private const val KEY_SPEED = "audiobook_speed"
+        private const val FADE_MS = 15_000L
+        private const val END_FADE_MS = 8_000L
     }
 }

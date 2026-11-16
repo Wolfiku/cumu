@@ -77,7 +77,7 @@ import com.cumu.app.ui.components.bounceClick
 import com.cumu.app.ui.components.errorText
 import kotlinx.coroutines.delay
 
-private enum class Filter(val label: String) { All("Alle"), Songs("Songs"), Albums("Alben"), Artists("Künstler"), Playlists("Playlists") }
+private enum class Filter(val label: String) { All("Alle"), Songs("Songs"), Albums("Alben"), Artists("Künstler"), Playlists("Playlists"), Audiobooks("Hörbücher") }
 
 @Composable
 fun SearchScreen() {
@@ -186,7 +186,7 @@ private fun SearchHistoryList(history: List<String>, onPick: (String) -> Unit) {
 private fun Results(r: SearchResult, query: String, filter: Filter, setFilter: (Filter) -> Unit, onAct: () -> Unit) {
     val app = CumuApplication.instance
     val nav = LocalNav.current
-    if (r.songs.isEmpty() && r.albums.isEmpty() && r.artists.isEmpty() && r.playlists.isEmpty()) {
+    if (r.songs.isEmpty() && r.albums.isEmpty() && r.artists.isEmpty() && r.playlists.isEmpty() && r.audiobooks.isEmpty()) {
         EmptyBox(Icons.Rounded.SearchOff, "Nichts gefunden für „$query“")
         return
     }
@@ -202,6 +202,7 @@ private fun Results(r: SearchResult, query: String, filter: Filter, setFilter: (
                         Filter.Albums -> r.albums.size
                         Filter.Artists -> r.artists.size
                         Filter.Playlists -> r.playlists.size
+                        Filter.Audiobooks -> r.audiobooks.size
                     }
                     if (count != 0) FilterChip(selected = filter == f, onClick = { setFilter(f) }, label = { Text(f.label) }, shape = CircleShape, colors = cumuChipColors())
                 }
@@ -255,6 +256,14 @@ private fun Results(r: SearchResult, query: String, filter: Filter, setFilter: (
         if (show(Filter.Albums) && r.albums.isNotEmpty()) {
             item { SectionTitle("Alben") }
             item { AlbumCarousel(r.albums) { onAct(); nav.album(it.id) } }
+        }
+        if (show(Filter.Audiobooks) && r.audiobooks.isNotEmpty()) {
+            item { SectionTitle("Hörbücher") }
+            item {
+                LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    items(r.audiobooks, key = { "ab-" + it.id }) { b -> BookCard(b) { onAct(); nav.audiobook(b.id) } }
+                }
+            }
         }
         if (show(Filter.Playlists) && r.playlists.isNotEmpty()) {
             item { SectionTitle("Playlists") }

@@ -41,6 +41,10 @@ import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.FormatListNumbered
+import androidx.compose.material.icons.rounded.Forward30
+import androidx.compose.material.icons.rounded.Replay
+import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -79,7 +83,10 @@ import androidx.media3.common.Player
 import com.cumu.app.CumuApplication
 import com.cumu.app.ui.LocalNav
 import com.cumu.app.ui.components.Cover
+import com.cumu.app.ui.components.SleepTimerChip
+import com.cumu.app.ui.components.SleepTimerSheet
 import com.cumu.app.ui.components.SongMenu
+import com.cumu.app.playback.AUDIOBOOK_SPEEDS
 import com.cumu.app.ui.components.formatMs
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -89,12 +96,15 @@ fun PlayerScreen() {
     val nav = LocalNav.current
     val s by app.player.state.collectAsState()
     var showQueue by remember { mutableStateOf(false) }
+    var showSleep by remember { mutableStateOf(false) }
     // Position while the user drags the slider
     var dragPos by remember { mutableStateOf<Float?>(null) }
 
     val song = s.current
     LaunchedEffect(song == null) { if (song == null) nav.back() }
     if (song == null) return
+    // Audiobook chapters get podcast-style controls instead of shuffle/repeat
+    val isBook = song.isAudiobook
 
     val coverScale by animateFloatAsState(
         if (s.isPlaying) 1f else 0.86f,
@@ -115,13 +125,19 @@ fun PlayerScreen() {
             Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = { nav.back() }) { Icon(Icons.Rounded.KeyboardArrowDown, "Schließen") }
                 Text(
-                    song.albumTitle ?: "",
-                    Modifier.weight(1f).then(if (song.albumId != null) Modifier.clickable { nav.album(song.albumId) } else Modifier),
+                    if (isBook) (song.bookTitle ?: song.albumTitle ?: "Hörbuch") else (song.albumTitle ?: ""),
+                    Modifier.weight(1f).then(
+                        when {
+                            isBook -> Modifier.clickable { nav.audiobook(song.audiobookId) }
+                            song.albumId != null -> Modifier.clickable { nav.album(song.albumId) }
+                            else -> Modifier
+                        },
+                    ),
                     textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                SongMenu(song)
+                SongMenu(song, onSleepTimer = { showSleep = true })
             }
 
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -185,7 +201,7 @@ fun PlayerScreen() {
                 Text(formatMs(s.durationMs), style = MaterialTheme.typography.bodySmall)
             }
 
-            Row(
+            if (isBook) AudiobookControls(s) else Row(
                 Modifier.fillMaxWidth().padding(vertical = 16.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
@@ -219,15 +235,94 @@ fun PlayerScreen() {
                     )
                 }
             }
-            Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.End) {
-                IconButton(onClick = { showQueue = true }) { Icon(Icons.AutoMirrored.Rounded.QueueMusic, "Warteschlange") }
+            Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (isBook) SpeedButton(s.speed)
+                Spacer(Modifier.width(4.dp))
+                SleepTimerChip(isBook) { showSleep = true }
+                Spacer(Modifier.weight(1f))
+                if (isBook) IconButton(onClick = { showQueue = true }) { Icon(Icons.Rounded.FormatListNumbered, "Kapitel") }
+                else IconButton(onClick = { showQueue = true }) { Icon(Icons.AutoMirrored.Rounded.QueueMusic, "Warteschlange") }
             }
         }
     }
 
     if (showQueue) ModalBottomSheet(onDismissRequest = { showQueue = false }) {
-        QueueList()
+        QueueList(if (isBook) "Kapitel" else "Warteschlange")
     }
+    if (showSleep) SleepTimerSheet(isBook) { showSleep = false }
+}
+
+/** Audiobook controls: previous/next chapter, 15 s back, 30 s forward. */
+@Composable
+private fun AudiobookControls(s: com.cumu.app.playback.PlayerState) {
+    val app = CumuApplication.instance
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 16.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = app.player::previous) { Icon(Icons.Rounded.SkipPrevious, "Vorheriges Kapitel", Modifier.size(30.dp)) }
+        IconButton(onClick = { app.player.seekBy(-15_000) }, Modifier.size(56.dp)) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(Icons.Rounded.Replay, "15 Sekunden zurück", Modifier.size(40.dp))
+                Text("15", Modifier.padding(top = 3.dp), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+            }
+        }
+        FilledIconButton(
+            onClick = app.player::togglePlay,
+            modifier = Modifier.size(76.dp),
+            colors = IconButtonDefaults.filledIconButtonColors(),
+        ) {
+            val mode = when { s.isBuffering && !s.isPlaying -> 0; s.isPlaying -> 1; else -> 2 }
+            AnimatedContent(mode, transitionSpec = { (scaleIn(initialScale = 0.6f) + fadeIn()) togetherWith (scaleOut(targetScale = 0.6f) + fadeOut()) }, label = "play") { m ->
+                when (m) {
+                    0 -> CircularProgressIndicator(Modifier.size(32.dp), strokeWidth = 3.dp, color = MaterialTheme.colorScheme.onPrimary)
+                    1 -> Icon(Icons.Rounded.Pause, "Pause", Modifier.size(40.dp))
+                    else -> Icon(Icons.Rounded.PlayArrow, "Abspielen", Modifier.size(40.dp))
+                }
+            }
+        }
+        IconButton(onClick = { app.player.seekBy(30_000) }, Modifier.size(56.dp)) {
+            Icon(Icons.Rounded.Forward30, "30 Sekunden vor", Modifier.size(40.dp))
+        }
+        IconButton(onClick = app.player::next, enabled = s.index + 1 < s.queue.size) {
+            Icon(Icons.Rounded.SkipNext, "Nächstes Kapitel", Modifier.size(30.dp))
+        }
+    }
+}
+
+/** Playback speed of audiobooks, e.g. "1,25×"; tap for the choices. */
+@Composable
+private fun SpeedButton(speed: Float) {
+    val app = CumuApplication.instance
+    var open by remember { mutableStateOf(false) }
+    Box {
+        androidx.compose.material3.AssistChip(
+            onClick = { open = true },
+            label = { Text(formatSpeed(speed)) },
+            leadingIcon = { Icon(Icons.Rounded.Speed, null, Modifier.size(18.dp)) },
+            shape = androidx.compose.foundation.shape.CircleShape,
+        )
+        androidx.compose.material3.DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            AUDIOBOOK_SPEEDS.forEach { v ->
+                androidx.compose.material3.DropdownMenuItem(
+                    text = {
+                        Text(
+                            formatSpeed(v),
+                            fontWeight = if (v == speed) FontWeight.Bold else FontWeight.Normal,
+                            color = if (v == speed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                        )
+                    },
+                    onClick = { open = false; app.player.setAudiobookSpeed(v) },
+                )
+            }
+        }
+    }
+}
+
+private fun formatSpeed(v: Float): String {
+    val text = if (v == v.toInt().toFloat()) v.toInt().toString() else v.toString().trimEnd('0')
+    return text.replace('.', ',') + "×"
 }
 
 /** Heart next to the title: favourite songs, shared with the web app. */
@@ -259,13 +354,13 @@ private fun FavoriteButton(songId: String) {
 }
 
 @Composable
-private fun QueueList() {
+private fun QueueList(title: String = "Warteschlange") {
     val app = CumuApplication.instance
     val s by app.player.state.collectAsState()
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = (s.index - 1).coerceAtLeast(0))
     Column(Modifier.fillMaxWidth()) {
         Text(
-            "Warteschlange · ${s.queue.size} Titel",
+            "$title · ${s.queue.size} Titel",
             Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
             style = MaterialTheme.typography.titleMedium,
         )

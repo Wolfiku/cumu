@@ -85,6 +85,8 @@ class Nav(private val c: NavHostController) {
     fun downloads() = c.navigate("downloads") { launchSingleTop = true }
     fun songs() = c.navigate("songs") { launchSingleTop = true }
     fun favorites() = c.navigate("favorites") { launchSingleTop = true }
+    fun audiobooks() = c.navigate("audiobooks") { launchSingleTop = true }
+    fun audiobook(id: String) = c.navigate("audiobook/${android.net.Uri.encode(id)}")
     fun search() = c.navigate("search") {
         popUpTo(c.graph.findStartDestination().id) { saveState = true }
         launchSingleTop = true
@@ -232,6 +234,8 @@ fun CumuAppUi() {
                     composable("album/{id}") { AlbumScreen(it.arguments?.getString("id")!!) }
                     composable("artist/{id}") { ArtistScreen(it.arguments?.getString("id")!!) }
                     composable("playlist/{id}") { PlaylistScreen(it.arguments?.getString("id")!!) }
+                    composable("audiobooks") { com.cumu.app.ui.screens.AudiobooksScreen() }
+                    composable("audiobook/{id}") { com.cumu.app.ui.screens.AudiobookScreen(it.arguments?.getString("id")!!) }
                 }
             }
         }

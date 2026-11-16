@@ -273,6 +273,40 @@ class Repository(private val api: ApiClient, private val downloadedSongs: () -> 
         api.post("/api/library/song", buildJsonObject { put("songId", songId) })
     }
 
+    // ── Audiobooks ───────────────────────────────────────────────────────────
+
+    suspend fun audiobooks(): AudiobookList = api.get("/api/audiobooks")
+    suspend fun cachedAudiobooks(): AudiobookList? = api.cached("/api/audiobooks")
+
+    suspend fun audiobook(id: String): Audiobook = try {
+        api.get("/api/audiobooks/${enc(id)}")
+    } catch (e: OfflineException) {
+        // Offline: rebuild the book from the downloaded chapters
+        val chapters = downloadedSongs().filter { it.isAudiobook && it.audiobookId == id }.sortedBy { it.trackNumber ?: Int.MAX_VALUE }
+        if (chapters.isEmpty()) throw e
+        Audiobook(
+            id = id, title = chapters.first().albumTitle ?: chapters.first().title,
+            artistId = chapters.first().artistId, artistName = chapters.first().artistName,
+            cover = chapters.firstNotNullOfOrNull { it.cover }, chapterCount = chapters.size,
+            duration = chapters.sumOf { it.duration ?: 0.0 }, chapters = chapters,
+        )
+    }
+
+    /** Saves where the user is in a book (shared with the web app). */
+    suspend fun saveAudiobookProgress(bookId: String, songId: String, positionSec: Double, finished: Boolean = false) {
+        api.put("/api/audiobooks/${enc(bookId)}/progress", buildJsonObject {
+            put("songId", songId)
+            put("position", positionSec)
+            if (finished) put("finished", true)
+        })
+    }
+
+    suspend fun clearAudiobookProgress(bookId: String) {
+        api.delete("/api/audiobooks/${enc(bookId)}/progress")
+    }
+
+    private fun enc(s: String) = URLEncoder.encode(s, "UTF-8").replace("+", "%20")
+
     /** Counts a play (history, "most played"); fire and forget. */
     suspend fun reportPlay(songId: String) {
         runCatching { api.post("/api/songs/$songId/play") }

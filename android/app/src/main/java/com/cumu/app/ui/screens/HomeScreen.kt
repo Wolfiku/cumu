@@ -39,6 +39,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -148,7 +149,8 @@ private fun HomeContent(feed: HomeFeed) {
     var shown by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { shown = true }
 
-    if (home.recentlyPlayed.isEmpty() && home.newSongs.isEmpty() && feed.albums.isEmpty()) {
+    val books = home.audiobooks
+    if (home.recentlyPlayed.isEmpty() && home.newSongs.isEmpty() && feed.albums.isEmpty() && (books?.total ?: 0) == 0) {
         Column(Modifier.statusBarsPadding()) {
             HomeHeader()
             EmptyBox(Icons.Rounded.LibraryMusic, "Noch keine Musik auf dem Server. Ein Admin kann im Web unter Admin → Bibliothek scannen Musik hinzufügen.")
@@ -166,7 +168,8 @@ private fun HomeContent(feed: HomeFeed) {
     fun playMix(load: suspend () -> List<Song>, empty: String) {
         scope.launch {
             try {
-                val songs = load()
+                // Mixes are music only: audiobooks never play at random
+                val songs = load().filter { !it.isAudiobook }
                 if (songs.isEmpty()) snackbar(empty) else app.player.play(songs.shuffled().take(200))
             } catch (e: Exception) { snackbar(errorText(e)) }
         }
@@ -211,6 +214,19 @@ private fun HomeContent(feed: HomeFeed) {
             }
         }
 
+        // Audiobooks the user started: right at the top, like a bookmark
+        val continueBooks = books?.continueListening.orEmpty()
+        if (continueBooks.isNotEmpty()) {
+            item { Reveal(shown, 2) { SectionTitle("Weiterhören", subtitle = "Hörbücher", action = { TextButton(onClick = { nav.audiobooks() }) { Text("Alle") } }) } }
+            item {
+                Reveal(shown, 2) {
+                    LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        items(continueBooks, key = { "cb-" + it.id }) { b -> ContinueBookCard(b) }
+                    }
+                }
+            }
+        }
+
         if (freshSongs.isNotEmpty()) {
             item { Reveal(shown, 2) { SectionTitle("Neue Songs für dich", subtitle = "Empfohlen") } }
             item { Reveal(shown, 2) { SongCarousel(freshSongs) } }
@@ -228,7 +244,7 @@ private fun HomeContent(feed: HomeFeed) {
                     }
                     if (home.mostPlayed.isNotEmpty()) item {
                         MixCard("Top-Hits", "Am meisten gehört", Icons.Rounded.LocalFireDepartment, accents[3], onClick = {
-                            app.player.play(home.mostPlayed)
+                            app.player.play(home.mostPlayed.filter { !it.isAudiobook })
                         })
                     }
                     items(feed.genres.topGenres, key = { "g-" + it.genre }) { g ->
@@ -256,6 +272,12 @@ private fun HomeContent(feed: HomeFeed) {
         if (feed.albums.size > 1) {
             item { Reveal(shown, 4) { SectionTitle("Neue Alben") } }
             item { Reveal(shown, 4) { AlbumCarousel(feed.albums.drop(1).take(12)) { nav.album(it.id) } } }
+        }
+
+        val newBooks = books?.recent.orEmpty()
+        if (newBooks.isNotEmpty()) {
+            item { Reveal(shown, 5) { SectionTitle("Hörbücher", subtitle = "Neu für dich", action = { TextButton(onClick = { nav.audiobooks() }) { Text("Alle") } }) } }
+            item { Reveal(shown, 5) { BookCarousel(newBooks) } }
         }
 
         if (cumuLists.isNotEmpty()) {

@@ -110,6 +110,12 @@ fun AlbumScreen(id: String) {
     val app = CumuApplication.instance
     val nav = LocalNav.current
     val loader = rememberLoad(id) { app.repo.album(id) }
+    // An album of audiobook chapters opens as audiobook
+    val loaded = (loader.state as? com.cumu.app.ui.components.Load.Ok)?.value
+    if (loaded != null && loaded.songs.isNotEmpty() && loaded.songs.all { it.isAudiobook }) {
+        AudiobookScreen(loaded.id)
+        return
+    }
     DetailScaffold("Album") { padding ->
         LoadContent(loader) { album ->
             // Album track lists come without album fields; fill them in for the player

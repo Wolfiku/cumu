@@ -22,6 +22,69 @@ data class Song(
     val year: Int? = null,
     @SerialName("file_size") val fileSize: Long? = null,
     @SerialName("play_count") val playCount: Int? = null,
+    /** 1 for audiobook chapters (the server marks every speech track). */
+    @SerialName("is_audiobook") val audiobookFlag: Int? = null,
+    /** Book of an audiobook chapter, set by the app when it starts a book. */
+    @SerialName("book_id") val bookId: String? = null,
+    @SerialName("book_title") val bookTitle: String? = null,
+) {
+    /** Audiobook chapters never play between music, only when started explicitly. */
+    val isAudiobook: Boolean get() = audiobookFlag == 1 || genre?.trim()?.lowercase()?.let { it in SPEECH_GENRES } == true
+    /** The book this chapter belongs to: its album, or the chapter alone. */
+    val audiobookId: String get() = bookId ?: albumId ?: "s-$id"
+}
+
+/** Genres that make a track an audiobook chapter (same list as the server). */
+val SPEECH_GENRES = setOf(
+    "speech", "spoken word", "spoken", "spokenword",
+    "audiobook", "audiobooks", "audio book", "audio books",
+    "hörbuch", "hörbücher", "hoerbuch", "hoerbuecher",
+)
+
+@Serializable
+data class AudiobookProgress(
+    val songId: String = "",
+    val chapterIndex: Int = 0,
+    /** Seconds into the chapter. */
+    val position: Double = 0.0,
+    val finished: Boolean = false,
+    val updatedAt: Long? = null,
+    val percent: Int = 0,
+    /** Seconds left in the whole book. */
+    val remaining: Double = 0.0,
+)
+
+/** An audiobook: an album of chapters (or a single chapter without album). */
+@Serializable
+data class Audiobook(
+    val id: String,
+    val title: String = "",
+    @SerialName("artist_id") val artistId: String? = null,
+    @SerialName("artist_name") val artistName: String? = null,
+    val cover: String? = null,
+    val year: Int? = null,
+    @SerialName("created_at") val createdAt: Long? = null,
+    @SerialName("chapter_count") val chapterCount: Int = 0,
+    /** Seconds, all chapters together. */
+    val duration: Double = 0.0,
+    val progress: AudiobookProgress? = null,
+    /** Only on the book's own page. */
+    val chapters: List<Song> = emptyList(),
+) {
+    val started: Boolean get() = progress != null && !progress.finished
+}
+
+@Serializable
+data class AudiobookList(
+    val books: List<Audiobook> = emptyList(),
+    @SerialName("continue") val continueListening: List<Audiobook> = emptyList(),
+)
+
+@Serializable
+data class HomeAudiobooks(
+    @SerialName("continue") val continueListening: List<Audiobook> = emptyList(),
+    val recent: List<Audiobook> = emptyList(),
+    val total: Int = 0,
 )
 
 @Serializable
@@ -50,6 +113,7 @@ data class Artist(
     @SerialName("last_played") val lastPlayed: Long? = null,
     val albums: List<Album> = emptyList(),
     val songs: List<Song> = emptyList(),
+    val audiobooks: List<Audiobook> = emptyList(),
 )
 
 @Serializable
@@ -85,6 +149,8 @@ data class HomeData(
     val artists: List<Artist>? = null,
     val cumuPlaylists: List<Playlist>? = null,
     val genres: GenreStats? = null,
+    /** Servers from v0.7.0: started and new audiobooks. */
+    val audiobooks: HomeAudiobooks? = null,
 )
 
 /** Library tab in one request (servers newer than v0.5.1). */
@@ -100,6 +166,8 @@ data class LibraryOverview(
     val showFavorites: Boolean = true,
     /** Items pinned in the web app: "playlist:<id>", "favorites", "podcasts". */
     val pinned: List<String> = emptyList(),
+    /** Number of audiobooks (servers from v0.7.0, else null). */
+    val audiobookCount: Int? = null,
 )
 
 @Serializable
@@ -114,6 +182,7 @@ data class SearchResult(
     val albums: List<Album> = emptyList(),
     val artists: List<Artist> = emptyList(),
     val playlists: List<Playlist> = emptyList(),
+    val audiobooks: List<Audiobook> = emptyList(),
 )
 
 @Serializable

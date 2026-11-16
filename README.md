@@ -38,6 +38,8 @@ curl -fsSL https://raw.githubusercontent.com/Wolfiku/cumu/main/scripts/install.s
 [+] Instant Drag & Drop Import   — drop audio files or full folders into browser UI or ./music
 [+] Recursive Library Scanner    — auto-scans nested subdirectories (Artist/Album/Song.mp3)
 [+] Podcast Search & Player      — search millions of shows/episodes, manage feeds & progress
+[+] Audiobooks                   — speech tracks become audiobooks: chapters, speed, resume on every device
+[+] Sleep Timer (Android)        — pause after a set time or at the end of the title, with fade-out
 [+] PWA & Offline Mode           — save playlists offline for playback without internet
 [+] Native Android App           — streaming, background playback, offline library & downloads (APK in Releases)
 [+] Login Brute-Force Protection — failed logins are rate-limited per account and IP
