@@ -254,8 +254,6 @@ function showToast(msg) {
   let audioCtx          = null;
   let gainNodeA         = null;
   let gainNodeB         = null;
-  let normNodeA         = null; // volume normalization per element (before the fade gain)
-  let normNodeB         = null;
 
   // Preferences
   let crossfadeDuration = 0;    // 0 = disabled, 1..12 seconds
@@ -307,19 +305,14 @@ function showToast(msg) {
       if (!AudioContextClass) return;
       audioCtx = new AudioContextClass();
 
-      // element → normalization gain → fade gain → output
       const sourceA = audioCtx.createMediaElementSource(audioA);
-      normNodeA = audioCtx.createGain();
       gainNodeA = audioCtx.createGain();
-      sourceA.connect(normNodeA);
-      normNodeA.connect(gainNodeA);
+      sourceA.connect(gainNodeA);
       gainNodeA.connect(audioCtx.destination);
 
       const sourceB = audioCtx.createMediaElementSource(audioB);
-      normNodeB = audioCtx.createGain();
       gainNodeB = audioCtx.createGain();
-      sourceB.connect(normNodeB);
-      normNodeB.connect(gainNodeB);
+      sourceB.connect(gainNodeB);
       gainNodeB.connect(audioCtx.destination);
 
       gainNodeA.gain.value = 1;
@@ -443,8 +436,7 @@ function showToast(msg) {
     await loadPlaylists();
     updateLeftNavPinned();
     updateQueueUI();
-    refreshInboxBadge();
-    openStartPage();
+    navigate('discover');
   }
 
   document.getElementById('loginForm')?.addEventListener('submit', async (e) => {
@@ -518,9 +510,6 @@ function showToast(msg) {
         if (state.extraSettings) {
           if (state.extraSettings.crossfadeDuration !== undefined) crossfadeDuration = state.extraSettings.crossfadeDuration;
           if (state.extraSettings.gaplessEnabled !== undefined) gaplessEnabled = state.extraSettings.gaplessEnabled;
-          if (state.extraSettings.voidSkip !== undefined) voidSkipEnabled = !!state.extraSettings.voidSkip;
-          if (state.extraSettings.normalizeVolume !== undefined) normalizeEnabled = !!state.extraSettings.normalizeVolume;
-          if (state.extraSettings.autoplay !== undefined) autoplayEnabled = !!state.extraSettings.autoplay;
           if (Array.isArray(state.extraSettings.pinnedItems)) {
             localStorage.setItem('cumu_pinned_items', JSON.stringify(state.extraSettings.pinnedItems));
           }
@@ -555,9 +544,6 @@ function showToast(msg) {
         extraSettings: {
           crossfadeDuration,
           gaplessEnabled,
-          voidSkip: voidSkipEnabled,
-          normalizeVolume: normalizeEnabled,
-          autoplay: autoplayEnabled,
           pinnedItems: getPinnedKeys(),
           favorites: Array.from(favorites),
           showFavorites: getShowFavorites(),
@@ -582,19 +568,6 @@ function showToast(msg) {
   }
 
   function handleWsMessage(msg) {
-    if (handleLiveMessage(msg)) return;
-    // A playlist someone sent: it is in the library now
-    if (msg.type === 'playlist_received' && msg.share) {
-      showToast(`${msg.share.from_username || 'Jemand'} hat dir die Playlist „${msg.share.title || ''}“ geschickt – sie ist jetzt in deiner Bibliothek`);
-      loadPlaylists().then(() => { if (currentPage === 'library' || currentPage === 'playlists') navigate(currentPage); });
-      return;
-    }
-    if (msg.type === 'share_received' && msg.share) {
-      setInboxBadge(msg.unread);
-      showToast(`${msg.share.from_username || 'Jemand'} hat dir „${msg.share.title || 'etwas'}“ geschickt`);
-      if (currentPage === 'inbox') renderInbox();
-      return;
-    }
     if (msg.type === 'state_update' && msg.state) {
       const s = msg.state;
       if (s.theme && s.theme !== currentTheme) applyTheme(s.theme);
@@ -664,7 +637,6 @@ function showToast(msg) {
     if (npBar) { if (!currentSong || page === 'nowplaying') hideNpBar(); else showNpBar(); }
 
     if      (page === 'discover')   renderDiscover();
-    else if (page === 'search')     { renderDiscover(); focusSearchSoon(); }
     else if (page === 'library')    renderLibrary();
     else if (page === 'playlists')  renderPlaylists();
     else if (page === 'favorites')  renderFavorites();
@@ -672,9 +644,6 @@ function showToast(msg) {
       if (currentUser?.enablePodcasts === false) { navigate('discover'); return; }
       renderPodcasts();
     }
-    else if (page === 'audiobooks') renderAudiobooks();
-    else if (page === 'inbox')      renderInbox();
-    else if (page === 'audiobook')  renderAudiobook(params);
     else if (page === 'genre')          renderGenre(params);
     else if (page === 'genrePlaylist')  renderGenrePlaylist(params);
     else if (page === 'admin')      renderAdmin();
@@ -691,25 +660,14 @@ function showToast(msg) {
 
   // ── Advanced Audio Engine (Crossfade & Gapless) ─────────────────────────────
 
-  let partyApplying = false; // the guest follows the host: not a click of the user
   async function playSong(song, isAudiobook = false, startPosition = 0) {
     if (!song || !song.id) { showToast('Song-Daten fehlen'); return; }
-    // Another device plays: start the song there
-    if (isRemote()) { sendCommand(remote.deviceId, 'play_songs', { songs: [songSummary(song)], index: 0 }); return; }
-    // Party guest: a click suggests the song to the host
-    if (isPartyGuest() && !partyApplying) { suggestToParty(song); return; }
     initWebAudio();
-
-    // Leaving an audiobook chapter: remember where the user was
-    if (currentSong && currentSong.id !== song.id && isAudiobookSong(currentSong)) saveAudiobookProgress(true);
 
     currentSong = song;
     isSpokenWord = isAudiobook || !!song.is_audiobook || !!song.isPodcast;
     isFading = false;
     preloadedNextId = null;
-    shuffleNextIndex = null;
-    // Void skipping: music starts where the sound starts
-    if (!startPosition && !isSpokenWord) startPosition = introSec(song);
 
     if (song.isPodcast) {
       audioA.pause();
@@ -737,10 +695,8 @@ function showToast(msg) {
     if (audioCtx) {
       const gAct = getActiveGain();
       const gStb = getStandbyGain();
-      const t = audioCtx.currentTime;
-      // Stop a crossfade that is still running
-      if (gAct) { gAct.gain.cancelScheduledValues(t); gAct.gain.setValueAtTime(1, t); }
-      if (gStb) { gStb.gain.cancelScheduledValues(t); gStb.gain.setValueAtTime(0, t); }
+      if (gAct) gAct.gain.value = 1;
+      if (gStb) gStb.gain.value = 0;
     }
 
     standbyAudio.pause();
@@ -762,8 +718,6 @@ function showToast(msg) {
 
     activeAudio.src = audioSrc;
     activeAudio.load();
-    applyPlaybackSpeed();
-    applyNormalization(activeAudio, song); // audiobooks keep their speed, music always plays at 1×
 
     if (startPosition > 0) {
       const applyPos = () => {
@@ -783,7 +737,6 @@ function showToast(msg) {
         if (startPosition > 0) {
           try { activeAudio.currentTime = startPosition; } catch (_) {}
         }
-        if (isAudiobookSong(song)) setTimeout(() => saveAudiobookProgress(true), 1500);
         updatePlayerUI();
         if (navigator.onLine) {
           CumuApi.post(`/api/songs/${song.id}/play`, {}).catch(() => {});
@@ -805,12 +758,6 @@ function showToast(msg) {
   }
 
   function playQueue(songs, startIndex = 0, isAudiobook = false) {
-    if (isRemote() && songs && songs.length) {
-      const from = Math.max(0, startIndex - 50);
-      sendCommand(remote.deviceId, 'play_songs', { songs: songs.slice(from, startIndex + 250).map(songSummary), index: startIndex - from });
-      return;
-    }
-    if (isPartyGuest() && songs && songs[startIndex]) { suggestToParty(songs[startIndex]); return; }
     queue = songs || [];
     queueIndex = startIndex;
     if (queue[queueIndex]) {
@@ -820,14 +767,6 @@ function showToast(msg) {
 
   function togglePlay() {
     if (!currentSong) return;
-    if (isPartyGuest()) { partyGuestNotice(); return; }
-    if (isRemote()) {
-      sendCommand(remote.deviceId, 'toggle');
-      remote.state = { ...remote.state, isPlaying: !remote.state.isPlaying, position: remotePosition() };
-      remote.receivedAt = Date.now();
-      applyRemoteState();
-      return;
-    }
     initWebAudio();
     if (isPlaying) {
       activeAudio.pause();
@@ -852,23 +791,22 @@ function showToast(msg) {
   }
 
   function nextTrack() {
-    if (isPartyGuest()) { partyGuestNotice(); return; }
-    if (isRemote()) { sendCommand(remote.deviceId, 'next'); return; }
     if (!queue.length) return;
     if (repeatMode === 'one' && currentSong) {
       playSong(currentSong, !!currentSong.isPodcast || !!currentSong.is_audiobook);
       return;
     }
-    // The same song the transition preloaded (fixed random pick in shuffle)
-    const n = peekNextIndex();
-    queueIndex = n !== null ? n : (queueIndex + 1) % queue.length;
-    shuffleNextIndex = null;
+    if (isShuffle && queue.length > 1) {
+      let nextIdx = Math.floor(Math.random() * queue.length);
+      if (nextIdx === queueIndex) nextIdx = (queueIndex + 1) % queue.length;
+      queueIndex = nextIdx;
+    } else {
+      queueIndex = (queueIndex + 1) % queue.length;
+    }
     playSong(queue[queueIndex]);
   }
 
   function prevTrack() {
-    if (isPartyGuest()) { partyGuestNotice(); return; }
-    if (isRemote()) { sendCommand(remote.deviceId, 'prev'); return; }
     if (!queue.length) return;
     if (isShuffle && queue.length > 1) {
       let prevIdx = Math.floor(Math.random() * queue.length);
@@ -974,25 +912,16 @@ function showToast(msg) {
         if (currentSong && currentSong.isPodcast) {
           savePodcastProgress(true);
         }
-        saveAudiobookProgress(true);
         updatePlayerUI();
       }
     });
 
     audioEl.addEventListener('ended', () => {
       if (audioEl === activeAudio) {
-        if (isPartyGuest()) { isPlaying = false; updatePlayerUI(); return; } // the host's next song comes by sync
-        saveAudiobookProgress(true); // the end of the last chapter finishes the book
         if (repeatMode === 'one') {
           playSong(currentSong, !!currentSong.isPodcast || !!currentSong.is_audiobook);
         } else if (queue.length > 0 && (queueIndex + 1 < queue.length || repeatMode === 'all' || isShuffle)) {
           nextTrack();
-        } else if (autoplayEnabled && isMusic(currentSong)) {
-          // Queue over: continue with similar music
-          loadAutoplay().then(ok => {
-            if (ok && queueIndex + 1 < queue.length) nextTrack();
-            else { isPlaying = false; updatePlayerUI(); }
-          });
         } else {
           isPlaying = false;
           updatePlayerUI();
@@ -1007,7 +936,6 @@ function showToast(msg) {
       if (currentSong && currentSong.isPodcast) {
         savePodcastProgress(false);
       }
-      saveAudiobookProgress(false);
 
       const cur = activeAudio.currentTime;
       const dur = activeAudio.duration;
@@ -1047,157 +975,44 @@ function showToast(msg) {
       if (podCur)  podCur.textContent = formatTime(cur);
       if (podDur)  podDur.textContent = formatTime(dur);
 
-      checkTransition();
-    });
-  }
-
-  // ── Transitions: crossfade, void skipping, autoplay ─────────────────────────
-  // Void skipping cuts the silence at the start and end of a song (measured by
-  // the server). Combined with crossfade, the silence counts towards the fade:
-  // 3 s of silence and a 5 s crossfade give a 2 s crossfade of real sound.
-  // Audiobooks and podcasts never fade, skip or autoplay.
-
-  let voidSkipEnabled  = true;
-  let normalizeEnabled = true;
-  let autoplayEnabled  = true;
-  let shuffleNextIndex = null;   // next song in shuffle, picked once so it can be preloaded
-  let autoplayPromise  = null;
-  let autoplayTriedFor = null;
-
-  function isMusic(s) { return !!s && !s.isPodcast && !s.audioUrl && !isAudiobookSong(s); }
-  function introSec(s) { return voidSkipEnabled && isMusic(s) && s.intro_silence_ms > 250 ? s.intro_silence_ms / 1000 : 0; }
-  function outroSec(s) { return voidSkipEnabled && isMusic(s) && s.outro_silence_ms > 250 ? s.outro_silence_ms / 1000 : 0; }
-
-  function normGainOf(s) {
-    if (!normalizeEnabled || !isMusic(s) || typeof s.loudness_gain_db !== 'number') return 1;
-    return Math.pow(10, s.loudness_gain_db / 20);
-  }
-  function applyNormalization(el, song) {
-    const node = el === audioA ? normNodeA : (el === audioB ? normNodeB : null);
-    if (node) node.gain.value = normGainOf(song);
-  }
-
-  /** Index of the song that plays after the current one, or null. */
-  function peekNextIndex() {
-    if (!queue.length || repeatMode === 'one') return null;
-    if (isShuffle && queue.length > 1) {
-      if (shuffleNextIndex === null || shuffleNextIndex === queueIndex || shuffleNextIndex >= queue.length) {
-        let n = Math.floor(Math.random() * queue.length);
-        if (n === queueIndex) n = (queueIndex + 1) % queue.length;
-        shuffleNextIndex = n;
+      const nextSong = queue[queueIndex + 1];
+      if (nextSong && gaplessEnabled && rem < 6 && preloadedNextId !== nextSong.id) {
+        preloadedNextId = nextSong.id;
+        standbyAudio.src = nextSong.audioUrl ? nextSong.audioUrl : CumuApi.streamUrl(nextSong.id);
+        standbyAudio.load();
       }
-      return shuffleNextIndex;
-    }
-    if (queueIndex + 1 < queue.length) return queueIndex + 1;
-    return repeatMode === 'all' ? 0 : null;
-  }
 
-  /** Appends similar music to the queue. Resolves true when songs were added. */
-  function loadAutoplay() {
-    if (autoplayPromise) return autoplayPromise;
-    if (!autoplayEnabled || !isMusic(currentSong) || !navigator.onLine || autoplayTriedFor === currentSong.id) return Promise.resolve(false);
-    autoplayTriedFor = currentSong.id;
-    const played = queue.slice(0, queueIndex + 1).filter(isMusic);
-    const seeds = played.slice(-5).map(x => x.id);
-    const exclude = queue.filter(isMusic).slice(-100).map(x => x.id);
-    autoplayPromise = CumuApi.get(`/api/radio?seeds=${encodeURIComponent(seeds.join(','))}&exclude=${encodeURIComponent(exclude.join(','))}&limit=20`)
-      .then(res => {
-        const songs = ((res && res.songs) || []).filter(isMusic);
-        if (!songs.length) return false;
-        queue.push(...songs.map(x => ({ ...x, autoplay: 1 })));
-        updateQueueUI();
-        return true;
-      })
-      .catch(() => false)
-      .finally(() => { autoplayPromise = null; });
-    return autoplayPromise;
-  }
+      if (crossfadeDuration > 0 && nextSong && rem <= crossfadeDuration && !isFading && cur > 1) {
+        isFading = true;
+        const now = audioCtx ? audioCtx.currentTime : 0;
+        const fadeTime = Math.max(rem, 0.5);
 
-  /** Called while a song plays: preloads the next song and starts the transition in time. */
-  function checkTransition() {
-    if (isRemote() || isPartyGuest()) return; // nothing plays here / the host decides
-    if (!isPlaying || isFading || !currentSong || activeAudio === audioPodcast || isSpokenWord) return;
-    if (!isMusic(currentSong)) return;
-    const el = activeAudio;
-    const dur = el.duration;
-    if (!dur || !isFinite(dur)) return;
-    const cur = el.currentTime;
+        if (audioCtx) {
+          const gAct = getActiveGain();
+          const gStb = getStandbyGain();
+          if (gAct) {
+            gAct.gain.setValueAtTime(1, now);
+            gAct.gain.linearRampToValueAtTime(0, now + fadeTime);
+          }
+          if (gStb) {
+            gStb.gain.setValueAtTime(0, now);
+            gStb.gain.linearRampToValueAtTime(1, now + fadeTime);
+          }
+        }
 
-    // Autoplay: fetch early enough for a seamless crossfade into it
-    if (autoplayEnabled && peekNextIndex() === null && dur - cur < 30) loadAutoplay();
-
-    const ni = peekNextIndex();
-    const next = ni !== null ? queue[ni] : null;
-    if (!next || !isMusic(next) || ni === queueIndex) return;
-
-    const outro = Math.min(outroSec(currentSong), Math.max(0, dur - 2));
-    const endPoint = dur - outro;
-    const fade = crossfadeDuration > 0 ? Math.max(0, crossfadeDuration - outro) : 0;
-    const startAt = endPoint - fade;
-
-    if ((gaplessEnabled || fade > 0 || outro > 0) && startAt - cur < 8 && preloadedNextId !== next.id) {
-      preloadedNextId = next.id;
-      standbyAudio.src = CumuApi.streamUrl(next.id);
-      standbyAudio.load();
-    }
-    if (cur < 1) return;
-    if (fade > 0 && cur >= startAt) startTransition(ni, Math.min(fade, Math.max(0.3, endPoint - cur)));
-    else if (fade === 0 && outro > 0 && cur >= endPoint - 0.08) startTransition(ni, 0);
-    // No fade and no silence: the 'ended' event moves on as before
-  }
-
-  /** Starts the next song on the standby element and fades over [fadeTime] seconds (0 = cut). */
-  function startTransition(ni, fadeTime) {
-    const next = queue[ni];
-    if (!next) return;
-    isFading = true;
-    if (preloadedNextId !== next.id || !standbyAudio.src) {
-      preloadedNextId = next.id;
-      standbyAudio.src = CumuApi.streamUrl(next.id);
-      standbyAudio.load();
-    }
-    const intro = introSec(next);
-    if (intro > 0) {
-      const seek = () => { try { standbyAudio.currentTime = intro; } catch (_) {} };
-      if (standbyAudio.readyState >= 1) seek(); else standbyAudio.addEventListener('loadedmetadata', seek, { once: true });
-    }
-    standbyAudio.defaultPlaybackRate = 1;
-    standbyAudio.playbackRate = 1;
-    standbyAudio.volume = activeAudio.volume;
-    applyNormalization(standbyAudio, next);
-
-    const outgoing = activeAudio;
-    const ft = Math.max(fadeTime, 0.03);
-    const gAct = getActiveGain();
-    const gStb = getStandbyGain();
-    if (audioCtx) {
-      const now = audioCtx.currentTime;
-      if (gAct) { gAct.gain.cancelScheduledValues(now); gAct.gain.setValueAtTime(gAct.gain.value, now); gAct.gain.linearRampToValueAtTime(0, now + ft); }
-      if (gStb) { gStb.gain.cancelScheduledValues(now); gStb.gain.setValueAtTime(0, now); gStb.gain.linearRampToValueAtTime(1, now + ft); }
-    }
-    standbyAudio.play().then(() => {
-      // The new song is the current one from the start of the fade
-      swapAudioElements();
-      queueIndex = ni;
-      shuffleNextIndex = null;
-      currentSong = queue[queueIndex];
-      isSpokenWord = false;
-      preloadedNextId = null;
-      if (navigator.onLine) CumuApi.post(`/api/songs/${currentSong.id}/play`, {}).catch(() => {});
-      updatePlayerUI();
-      setTimeout(() => {
-        if (outgoing !== activeAudio) outgoing.pause();
-        isFading = false;
-      }, ft * 1000 + 60);
-    }).catch(err => {
-      isFading = false;
-      if (audioCtx && gAct) { const t = audioCtx.currentTime; gAct.gain.cancelScheduledValues(t); gAct.gain.setValueAtTime(1, t); }
-      console.warn('[cumu] transition failed:', err);
+        standbyAudio.play().then(() => {
+          setTimeout(() => {
+            swapAudioElements();
+            queueIndex++;
+            currentSong = queue[queueIndex];
+            isFading = false;
+            preloadedNextId = null;
+            updatePlayerUI();
+          }, fadeTime * 1000);
+        }).catch(err => console.warn('[cumu] crossfade play failed:', err));
+      }
     });
   }
-
-  // timeupdate fires only every ~250 ms: check more often for exact cuts
-  setInterval(() => { try { checkTransition(); } catch (_) {} }, 100);
 
   setupAudioListeners(audioA, true);
   setupAudioListeners(audioB, false);
@@ -1418,19 +1233,15 @@ function showToast(msg) {
   }
 
   function toggleShuffle() {
-    if (isPartyGuest()) { partyGuestNotice(); return; }
-    if (isRemote()) { sendCommand(remote.deviceId, 'shuffle', { value: !isShuffle }); }
     isShuffle = !isShuffle;
     showToast(isShuffle ? 'Shuffle enabled' : 'Shuffle disabled');
     updatePlayerUI();
   }
 
   function toggleRepeat() {
-    if (isPartyGuest()) { partyGuestNotice(); return; }
     if (repeatMode === 'none') repeatMode = 'all';
     else if (repeatMode === 'all') repeatMode = 'one';
     else repeatMode = 'none';
-    if (isRemote()) sendCommand(remote.deviceId, 'repeat', { value: repeatMode });
 
     const modeLabels = { none: 'Repeat off', all: 'Repeat all', one: 'Repeat track' };
     showToast(modeLabels[repeatMode]);
@@ -1439,7 +1250,6 @@ function showToast(msg) {
 
   function setVolume(val) {
     const v = Math.max(0, Math.min(1, parseFloat(val)));
-    if (isRemote()) sendCommand(remote.deviceId, 'volume', { value: v });
     activeAudio.volume = v;
     standbyAudio.volume = v;
     audioPodcast.volume = v;
@@ -1593,7 +1403,6 @@ function showToast(msg) {
       renderNowPlaying();
     }
     updateQueueUI();
-    reportState();
     document.dispatchEvent(new CustomEvent('cumu:player', { detail: { song: currentSong, isPlaying, isFavorite: favorites.has(currentSong.id) } }));
   }
 
@@ -1982,7 +1791,7 @@ function showToast(msg) {
         </div>
         <div class="flex-1 min-w-0">
           <div class="text-body-lg font-body-lg text-text-high-contrast truncate group-hover:text-interactive-hover transition-colors font-medium">${esc(s.title)}</div>
-          <div class="text-body-sm font-body-sm text-text-muted truncate mt-xs">${esc(s.artist_name || 'Unknown artist')} ${s.album_title ? '&middot; ' + esc(s.album_title) : ''}${s._addedBy ? ` &middot; <span class="text-primary/80">hinzugefügt von ${esc(s._addedBy)}</span>` : ''}</div>
+          <div class="text-body-sm font-body-sm text-text-muted truncate mt-xs">${esc(s.artist_name || 'Unknown artist')} ${s.album_title ? '&middot; ' + esc(s.album_title) : ''}</div>
         </div>
         <div class="text-label-caps font-label-caps text-text-muted mr-md">${formatTime(s.duration)}</div>
         <button class="text-text-muted hover:text-text-high-contrast p-xs rounded-full hover:bg-surface-container transition-colors song-menu-btn" onclick="event.stopPropagation(); CumuApp.openSongMenu(event, this, '${s.id}')">
@@ -2042,17 +1851,6 @@ function showToast(msg) {
         playSong(song);
       });
     });
-  }
-
-  /** Mobile "Suche" tab: the discover page with the search field focused. */
-  function focusSearchSoon() {
-    let tries = 0;
-    const go = () => {
-      const input = document.getElementById('searchInput');
-      if (input) { input.focus(); return; }
-      if (++tries < 40) setTimeout(go, 50);
-    };
-    go();
   }
 
   let searchTimeout;
@@ -2129,7 +1927,6 @@ function showToast(msg) {
           ${getPlaylistCoverHtml(pl, 'medium')}
         </div>
         <span class="text-body-lg font-bold text-text-high-contrast truncate mt-xs">${esc(pl.name)}</span>
-        ${!isOwnPlaylist(pl) && pl.owner_username ? `<span class="text-body-sm text-text-muted truncate">von ${esc(pl.owner_username)}</span>` : ''}
       </div>`;
   }
 
@@ -2235,12 +2032,6 @@ function showToast(msg) {
       sections.push({ score: best(playlists), html: `
         <section class="mb-xl"><h2 class="text-title-md font-title-md font-bold mb-md">Playlists</h2>
           <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-md">${playlists.map(renderSearchPlaylistCard).join('')}</div></section>` });
-    }
-    const books = res.audiobooks || [];
-    if (books.length) {
-      sections.push({ score: best(books), html: `
-        <section class="mb-xl"><h2 class="text-title-md font-title-md font-bold mb-md flex items-center gap-xs"><span class="material-symbols-outlined text-tertiary">auto_stories</span> Audiobooks</h2>
-          ${renderBookGrid(books)}</section>` });
     }
     sections.sort((a, b) => b.score - a.score);
 
@@ -2428,44 +2219,6 @@ function showToast(msg) {
           </div>
         </section>
       `;
-    }
-
-    // Audiobooks: their own section, never mixed into the music above
-    const ab = homeData.audiobooks;
-    if (ab && ((ab.continue && ab.continue.length) || (ab.recent && ab.recent.length))) {
-      const books = [...(ab.continue || []), ...(ab.recent || [])].slice(0, 5);
-      const hasCont = ab.continue && ab.continue.length;
-      html += `
-        <section class="mb-xl">
-          <div class="flex items-center justify-between mb-md gap-md">
-            <div class="min-w-0">
-              <h2 class="text-headline-lg-mobile md:text-headline-lg font-headline-lg font-bold text-text-high-contrast flex items-center gap-xs">
-                <span class="material-symbols-outlined text-tertiary text-[28px]">auto_stories</span> ${hasCont ? 'Continue listening' : 'Audiobooks'}
-              </h2>
-              <p class="text-body-sm text-text-muted mt-xs">${hasCont ? 'Your audiobooks, right where you stopped' : 'New in your audiobooks'}</p>
-            </div>
-            <button onclick="navigate('audiobooks')" class="flex-shrink-0 text-body-sm font-bold text-primary hover:text-interactive-hover flex items-center gap-xs cursor-pointer transition-colors bg-surface-container-low/60 hover:bg-surface-container-low px-md py-xs rounded-full">
-              All audiobooks${ab.total ? ` (${ab.total})` : ''} <span class="material-symbols-outlined text-[18px]">chevron_right</span>
-            </button>
-          </div>
-          ${renderBookGrid(books)}
-        </section>
-      `;
-    }
-
-    // Public playlists of other people on this server
-    if (homeData.publicPlaylists && homeData.publicPlaylists.length) {
-      const pls = homeData.publicPlaylists.slice(0, 10).map(p => ({ ...p, cover: p.cover ? `/stream/cover/${p.cover}` : null }));
-      html += `
-        <section class="mb-xl">
-          <div class="mb-md">
-            <h2 class="text-headline-lg-mobile md:text-headline-lg font-headline-lg font-bold text-text-high-contrast flex items-center gap-xs">
-              <span class="material-symbols-outlined text-secondary text-[28px]">public</span> Community Playlists
-            </h2>
-            <p class="text-body-sm text-text-muted mt-xs">Public playlists of other people on this server</p>
-          </div>
-          <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-md">${pls.map(renderSearchPlaylistCard).join('')}</div>
-        </section>`;
     }
 
     window._currentPageSongs = allPageSongs;
@@ -2772,7 +2525,7 @@ function showToast(msg) {
                         <h3 class="text-body-sm font-body-sm text-text-high-contrast font-medium truncate flex-1">${esc(p.name)}</h3>
                         ${pPinned ? `<span class="material-symbols-outlined text-primary text-[14px]" style="font-variation-settings: 'FILL' 1;" title="Pinned">push_pin</span>` : ''}
                       </div>
-                      <p class="text-body-sm font-body-sm text-text-muted truncate">${playlistSubtitle(p)}</p>
+                      <p class="text-body-sm font-body-sm text-text-muted truncate">${esc((p.description || 'Playlist').replace(/\s*\[dynamic:[^\]]+\]/, ''))}</p>
                     </div>
                   </div>`;
               }).join('') || '<p class="text-body-sm text-text-muted col-span-full">No playlists available.</p>'}
@@ -2811,29 +2564,9 @@ function showToast(msg) {
                   </div>
                 </div>` : ''}
 
-              <div class="group flex items-center justify-between p-sm rounded-lg hover:bg-surface-container-low cursor-pointer transition-colors" onclick="navigate('inbox')">
-                <div class="flex items-center gap-md">
-                  <div class="w-10 h-10 rounded-lg bg-primary/15 flex items-center justify-center text-primary">
-                    <span class="material-symbols-outlined text-[24px]">inbox</span>
-                  </div>
-                  <div>
-                    <h3 class="text-body-lg font-medium text-text-high-contrast">Mit dir geteilt</h3>
-                    <p class="text-body-sm text-text-muted">Was dir andere geschickt haben</p>
-                  </div>
-                </div>
-                <span class="inbox-badge ${inboxUnread ? '' : 'hidden'} min-w-[22px] h-[22px] px-1 rounded-full bg-primary text-on-primary text-[11px] font-bold flex items-center justify-center">${inboxUnread > 9 ? '9+' : inboxUnread}</span>
-              </div>
-              <div class="group flex items-center justify-between p-sm rounded-lg hover:bg-surface-container-low cursor-pointer transition-colors" onclick="navigate('audiobooks')">
-                <div class="flex items-center gap-md">
-                  <div class="w-10 h-10 rounded-lg bg-tertiary-container/40 flex items-center justify-center text-tertiary">
-                    <span class="material-symbols-outlined text-[24px]">auto_stories</span>
-                  </div>
-                  <div>
-                    <h3 class="text-body-lg font-medium text-text-high-contrast">Audiobooks</h3>
-                    <p class="text-body-sm text-text-muted">Continue where you stopped</p>
-                  </div>
-                </div>
-              </div>
+              ${(!getShowFavorites() && (!getShowPodcasts() || currentUser?.enablePodcasts === false)) ? `
+                <p class="text-body-sm text-text-muted py-md">No elements enabled. Enable them in settings.</p>
+              ` : ''}
             </div>
           </section>
         </div>
@@ -3148,135 +2881,6 @@ function showToast(msg) {
     return false;
   }
 
-  // ── Playlist sharing ───────────────────────────────────────────────────────
-  // Servers before 0.7.0 send no sharing fields: every playlist is the user's own.
-  // CumuApi answers errors as { error }: turn them into exceptions
-  const okOrThrow = (r) => { if (r && r.error) throw new Error(r.error); return r; };
-  const isOwnPlaylist = (pl) => !!pl && pl.is_owner !== 0;
-  const canEditPlaylist = (pl) => !!pl && (pl.can_edit !== undefined ? pl.can_edit === 1 : !isGeneratedPlaylist(pl));
-  const VISIBILITY_INFO = {
-    private: { icon: 'lock', label: 'Privat', text: 'Nur du siehst diese Playlist.' },
-    public: { icon: 'public', label: 'Öffentlich', text: 'Jeder auf diesem Server kann sie finden, speichern, herunterladen und hören.' },
-    shared: { icon: 'group', label: 'Geteilt', text: 'Nur Personen, die du per Benutzername einlädst.' },
-  };
-  function visibilityBadge(pl) {
-    const v = VISIBILITY_INFO[pl.visibility];
-    if (!v || pl.visibility === 'private') return '';
-    return `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-surface-container-high text-text-high-contrast border border-border-subtle"><span class="material-symbols-outlined text-[13px]">${v.icon}</span> ${v.label}</span>`;
-  }
-  /** "von anna" for playlists of other people, else the description. */
-  function playlistSubtitle(p) {
-    if (!isOwnPlaylist(p) && p.owner_username) return `von ${esc(p.owner_username)}${p.access === 'editor' ? ' · du kannst bearbeiten' : ''}`;
-    return esc((p.description || (isGeneratedPlaylist(p) ? 'Automatisch von Cumu erstellt' : 'Playlist')).replace(/\s*\[dynamic:[^\]]+\]/, ''));
-  }
-
-  async function togglePlaylistSave(playlistId, save) {
-    try {
-      if (save) okOrThrow(await CumuApi.put(`/api/playlists/${playlistId}/save`, {}));
-      else okOrThrow(await CumuApi.del(`/api/playlists/${playlistId}/save`));
-      showToast(save ? 'Zu deiner Bibliothek hinzugefügt' : 'Aus deiner Bibliothek entfernt');
-      await loadPlaylists();
-      if (currentPage === 'playlist') renderPlaylist(playlistId);
-    } catch (e) { showToast(e.message || 'Fehler'); }
-  }
-
-  async function leavePlaylist(playlistId) {
-    if (!confirm('Diese geteilte Playlist verlassen? Sie verschwindet aus deiner Bibliothek.')) return;
-    try {
-      okOrThrow(await CumuApi.del(`/api/playlists/${playlistId}/members/me`));
-      await CumuApi.del(`/api/playlists/${playlistId}/save`).catch(() => {});
-      await loadPlaylists();
-      showToast('Playlist verlassen');
-      navigate('library');
-    } catch (e) { showToast(e.message || 'Fehler'); }
-  }
-
-  /** Share dialog: visibility and invited people (owner only). */
-  async function openShareModal(playlistId) {
-    let modal = document.getElementById('sharePlaylistModal');
-    if (!modal) {
-      modal = document.createElement('div');
-      modal.id = 'sharePlaylistModal';
-      modal.className = 'fixed inset-0 bg-background/80 backdrop-blur-sm z-[9999] flex items-center justify-center p-md';
-      modal.addEventListener('click', (e) => { if (e.target === modal) closeShare(); });
-      document.body.appendChild(modal);
-    }
-    const closeShare = () => { modal.style.display = 'none'; if (currentPage === 'playlist') renderPlaylist(playlistId); };
-    let pl;
-    try { pl = okOrThrow(await CumuApi.get(`/api/playlists/${playlistId}`)); } catch (e) { showToast(e.message || 'Playlist nicht gefunden'); return; }
-    let errorText = '';
-
-    const draw = () => {
-      const members = pl.members || [];
-      modal.innerHTML = `
-        <div class="w-full max-w-[520px] max-h-[88vh] overflow-y-auto bg-surface-container rounded-xl shadow-2xl border border-border-subtle p-lg flex flex-col gap-md">
-          <div class="flex items-center justify-between pb-sm border-b border-border-subtle">
-            <h2 class="text-title-md font-bold text-on-surface m-0 flex items-center gap-xs"><span class="material-symbols-outlined">share</span> „${esc(pl.name)}“ teilen</h2>
-            <button class="share-close text-text-muted hover:text-on-surface rounded-full p-xs hover:bg-surface-bright"><span class="material-symbols-outlined text-[20px]">close</span></button>
-          </div>
-          <div class="flex flex-col gap-sm">
-            ${['private', 'public', 'shared'].map(v => `
-              <button class="share-vis flex items-start gap-md text-left p-md rounded-lg border ${pl.visibility === v ? 'border-primary bg-primary/10' : 'border-border-subtle hover:bg-surface-bright'}" data-vis="${v}">
-                <span class="material-symbols-outlined ${pl.visibility === v ? 'text-primary' : 'text-text-muted'}">${VISIBILITY_INFO[v].icon}</span>
-                <span class="flex-1"><span class="block font-bold text-on-surface">${VISIBILITY_INFO[v].label}</span><span class="block text-body-sm text-text-muted">${VISIBILITY_INFO[v].text}</span></span>
-                ${pl.visibility === v ? '<span class="material-symbols-outlined text-primary">check_circle</span>' : ''}
-              </button>`).join('')}
-          </div>
-          ${pl.visibility !== 'private' ? `
-          <div class="flex flex-col gap-sm pt-sm border-t border-border-subtle">
-            <h3 class="font-bold text-on-surface m-0">${pl.visibility === 'shared' ? 'Personen mit Zugriff' : 'Personen, die mitbearbeiten'}</h3>
-            <form class="share-add flex gap-sm items-center flex-wrap">
-              <input name="username" autocomplete="off" placeholder="Benutzername" class="flex-1 min-w-[140px] bg-surface-container-low border border-border-subtle rounded-lg px-md py-sm text-on-surface focus:border-primary outline-none" />
-              <label class="flex items-center gap-xs text-body-sm text-on-surface cursor-pointer select-none"><input type="checkbox" name="canEdit" ${pl.visibility === 'public' ? 'checked' : ''} class="accent-primary"> darf bearbeiten</label>
-              <button class="px-md py-sm rounded-lg bg-text-high-contrast text-background font-bold">Einladen</button>
-            </form>
-            ${errorText ? `<p class="text-body-sm text-error m-0">${esc(errorText)}</p>` : ''}
-            ${members.length ? members.map(m => `
-              <div class="flex items-center gap-md p-sm rounded-lg bg-surface-container-low">
-                <div class="w-8 h-8 rounded-full bg-primary/20 text-primary flex items-center justify-center font-bold">${esc((m.username || '?')[0].toUpperCase())}</div>
-                <span class="flex-1 min-w-0 truncate font-medium text-on-surface">${esc(m.username)}</span>
-                <label class="flex items-center gap-xs text-body-sm text-text-muted cursor-pointer select-none"><input type="checkbox" class="share-edit accent-primary" data-user="${esc(m.user_id)}" ${m.can_edit ? 'checked' : ''}> bearbeiten</label>
-                <button class="share-remove text-text-muted hover:text-error p-xs rounded-full" data-user="${esc(m.user_id)}" title="Entfernen"><span class="material-symbols-outlined text-[20px]">person_remove</span></button>
-              </div>`).join('') : `<p class="text-body-sm text-text-muted m-0">${pl.visibility === 'shared' ? 'Noch niemand eingeladen.' : 'Jeder kann zuhören. Lade Leute ein, die auch Songs hinzufügen dürfen.'}</p>`}
-          </div>` : ''}
-        </div>`;
-      modal.querySelector('.share-close').onclick = closeShare;
-      modal.querySelectorAll('.share-vis').forEach(b => b.onclick = async () => {
-        try {
-          const r = okOrThrow(await CumuApi.put(`/api/playlists/${playlistId}`, { visibility: b.dataset.vis }));
-          pl = { ...pl, ...r.playlist };
-          errorText = '';
-        } catch (e) { errorText = e.message; }
-        draw();
-      });
-      const form = modal.querySelector('.share-add');
-      if (form) form.onsubmit = async (e) => {
-        e.preventDefault();
-        const username = form.username.value.trim();
-        if (!username) return;
-        try {
-          const r = okOrThrow(await CumuApi.post(`/api/playlists/${playlistId}/members`, { username, canEdit: form.canEdit.checked }));
-          pl.members = r.members;
-          pl.visibility = r.visibility;
-          errorText = '';
-          showToast(`${username} eingeladen`);
-        } catch (err) { errorText = err.message || 'Einladen fehlgeschlagen'; }
-        draw();
-        modal.querySelector('.share-add input[name=username]')?.focus();
-      };
-      modal.querySelectorAll('.share-edit').forEach(c => c.onchange = async () => {
-        try { pl.members = okOrThrow(await CumuApi.put(`/api/playlists/${playlistId}/members/${c.dataset.user}`, { canEdit: c.checked })).members; } catch (e) { errorText = e.message; }
-        draw();
-      });
-      modal.querySelectorAll('.share-remove').forEach(b => b.onclick = async () => {
-        try { pl.members = okOrThrow(await CumuApi.del(`/api/playlists/${playlistId}/members/${b.dataset.user}`)).members; } catch (e) { errorText = e.message; }
-        draw();
-      });
-    };
-    draw();
-    modal.style.display = 'flex';
-  }
-
   async function renderPlaylists() {
     await loadPlaylists();
     const pinnedKeys = getPinnedKeys();
@@ -3285,7 +2889,7 @@ function showToast(msg) {
         <div class="flex items-center justify-between mb-xl flex-wrap gap-md">
           <div>
             <h1 class="text-headline-lg font-headline-lg text-text-high-contrast font-bold mb-xs">Playlists</h1>
-            <p class="text-body-sm text-text-muted">Your playlists, playlists shared with you and public playlists you saved</p>
+            <p class="text-body-sm text-text-muted">Your personal music collections & automatically created Cumu playlists</p>
           </div>
           <div class="flex items-center gap-md flex-wrap">
             ${playlists.length > 3 ? `
@@ -3319,7 +2923,7 @@ function showToast(msg) {
                     ${isGen ? `<span class="material-symbols-outlined text-primary text-[15px]" title="Von Cumu automatisch erstellt">auto_awesome</span>` : ''}
                     ${pPinned ? `<span class="material-symbols-outlined text-primary text-[16px]" style="font-variation-settings: 'FILL' 1;" title="Pinned">push_pin</span>` : ''}
                   </div>
-                  <p class="text-body-sm text-text-muted truncate mt-xs flex items-center gap-1">${p.visibility && p.visibility !== 'private' ? `<span class="material-symbols-outlined text-[14px]">${VISIBILITY_INFO[p.visibility]?.icon || ''}</span>` : ''}${playlistSubtitle(p)}</p>
+                  <p class="text-body-sm text-text-muted truncate mt-xs">${esc((p.description || (isGen ? 'Automatisch von Cumu erstellt' : 'Playlist')).replace(/\s*\[dynamic:[^\]]+\]/, ''))}</p>
                 </div>`;
             }).join('')}
           </div>`
@@ -4027,12 +3631,6 @@ function showToast(msg) {
       main.innerHTML = '<div class="page-section"><div class="card p-xl text-center">Album not found</div></div>';
       return;
     }
-    // Albums of audiobook chapters open as audiobook
-    if (album.is_audiobook && (album.songs || []).length && album.songs.every(isAudiobookSong)) {
-      currentPage = 'audiobook';
-      window._lastNavParams = album.id;
-      return renderAudiobook(album.id);
-    }
     const coverSrc = album.cover ? `/stream/cover/${album.cover}` : null;
 
     const totalDur = (album.songs || []).reduce((s, t) => s + (t.duration || 0), 0);
@@ -4053,7 +3651,6 @@ function showToast(msg) {
             <button class="btn-secondary" onclick="CumuApp.playNextPlaylist(window._currentAlbumSongs)">${CumuIcons.get('next')} Play Next</button>
             <button class="btn-secondary" onclick="navigate('artist','${album.artist_id}')">Go to Artist</button>
             <button class="btn-secondary" onclick="navigate('album','edit:${album.id}')">${CumuIcons.get('edit')} Edit</button>
-            ${shareButton('album', album.id, album.title)}
           </div>
         </div>
       </div>
@@ -4156,7 +3753,6 @@ function showToast(msg) {
               <button class="bg-text-high-contrast text-on-primary px-6 py-2 rounded font-label-caps text-label-caps tracking-wider hover:scale-105 transition-transform duration-200 active:scale-95 flex items-center gap-2" onclick="CumuApp.playArtist('${artist.id}')">
                 <span class="material-symbols-outlined text-[18px]">play_arrow</span> play all
               </button>
-              ${shareButton('artist', artist.id, artist.name, 'bg-surface-container-high text-text-high-contrast px-4 py-2 rounded font-label-caps text-label-caps tracking-wider hover:scale-105 transition-transform flex items-center gap-2', 'share')}
             </div>
           </div>
         </section>
@@ -4170,11 +3766,6 @@ function showToast(msg) {
                 <div class="flex flex-col gap-xs">
                   ${artist.songs.slice(0, 25).map((s, i) => renderSongRow(s, i + 1)).join('')}
                 </div>
-              </section>` : ''}
-            ${artist.audiobooks?.length ? `
-              <section>
-                <h3 class="font-title-md text-title-md text-on-surface mb-lg font-bold flex items-center gap-xs"><span class="material-symbols-outlined text-tertiary">auto_stories</span> Audiobooks</h3>
-                ${renderBookGrid(artist.audiobooks)}
               </section>` : ''}
           </div>
           <div>
@@ -4194,21 +3785,13 @@ function showToast(msg) {
   async function renderPlaylist(playlistId) {
     main.innerHTML = '<div class="page-section"><div class="spinner">Lade Playlist…</div></div>';
     let pl = await CumuApi.get(`/api/playlists/${playlistId}`);
-    if (!pl || pl.error) {
-      main.innerHTML = `<div class="p-xl text-center text-text-muted"><span class="material-symbols-outlined text-[40px] block mb-sm">lock</span>${esc((pl && pl.error) || 'Playlist nicht gefunden')}<p class="text-body-sm mt-xs">Vielleicht ist sie privat oder wurde gelöscht.</p></div>`;
-      return;
-    }
-    // Only the owner keeps cumu's own (dynamic) playlists up to date
-    if (isOwnPlaylist(pl)) pl = await syncDynamicPlaylist(pl);
+    if (!pl) return;
+    pl = await syncDynamicPlaylist(pl);
 
     const isGen = isGeneratedPlaylist(pl);
-    const own = isOwnPlaylist(pl);
-    const canEdit = canEditPlaylist(pl);
     window._currentPlaylistIsGenerated = isGen;
-    window._currentPlaylistCanEdit = canEdit;
 
-    // Several people edit: show who added each song
-    const songs = (pl.songs || []).map(s => (pl.member_count > 0 && s.added_by_username) ? { ...s, _addedBy: s.added_by_username } : s);
+    const songs = pl.songs || [];
     window._currentPlaylistSongs = songs;
     const totalDur = songs.reduce((acc, t) => acc + (t.duration || 0), 0);
     const durStr = formatTotalDuration(totalDur);
@@ -4248,7 +3831,6 @@ function showToast(msg) {
           </div>
 
           <h1 class="text-3xl md:text-4xl font-extrabold text-text-high-contrast tracking-tight mb-2 truncate">${esc(pl.name)}</h1>
-          ${pl.visibility && pl.visibility !== 'private' ? `<div class="mb-2 flex items-center gap-2 flex-wrap">${visibilityBadge(pl)}${pl.member_count ? `<span class="text-body-sm text-text-muted">${pl.member_count} ${pl.member_count === 1 ? 'Person' : 'Personen'} eingeladen</span>` : ''}${pl.save_count ? `<span class="text-body-sm text-text-muted">· ${pl.save_count}× gespeichert</span>` : ''}</div>` : ''}
           ${cleanDesc ? `<p class="text-body-md text-text-muted mb-3 line-clamp-2 max-w-2xl">${esc(cleanDesc)}</p>` : ''}
 
           <!-- Playlist Details (Ersteller, Songs, Gesamtlänge) -->
@@ -4280,21 +3862,7 @@ function showToast(msg) {
               </button>
             ` : ''}
 
-            ${own && !isGen ? `
-              <button class="h-10 px-md rounded-full bg-surface-container-high hover:bg-surface-bright hover:border-primary/50 text-text-high-contrast flex items-center gap-xs hover:scale-105 active:scale-95 transition-all duration-200 border border-border-subtle shadow-sm cursor-pointer font-bold text-body-sm"
-                      onclick="CumuApp.openShareModal('${pl.id}')" title="Teilen & Sichtbarkeit">
-                <span class="material-symbols-outlined text-[20px]">${(VISIBILITY_INFO[pl.visibility] || VISIBILITY_INFO.private).icon}</span> Teilen
-              </button>
-            ` : ''}
-            ${shareButton('playlist', pl.id, pl.name, 'w-10 h-10 rounded-full bg-surface-container-high hover:bg-surface-bright text-text-high-contrast flex items-center justify-center hover:scale-110 active:scale-95 transition-all border border-border-subtle shadow-sm cursor-pointer', '')}
-            ${!own && (pl.access === 'public' || pl.saved) ? `
-              <button class="h-10 px-md rounded-full ${pl.saved ? 'bg-primary/20 text-primary border-primary/40' : 'bg-surface-container-high text-text-high-contrast border-border-subtle hover:bg-surface-bright'} flex items-center gap-xs hover:scale-105 active:scale-95 transition-all border shadow-sm cursor-pointer font-bold text-body-sm"
-                      onclick="CumuApp.togglePlaylistSave('${pl.id}', ${pl.saved ? 'false' : 'true'})">
-                <span class="material-symbols-outlined text-[20px]" style="${pl.saved ? "font-variation-settings: 'FILL' 1;" : ''}">${pl.saved ? 'library_add_check' : 'library_add'}</span> ${pl.saved ? 'In deiner Bibliothek' : 'Zur Bibliothek'}
-              </button>
-            ` : ''}
-
-            ${canEdit && !isGen ? `
+            ${!isGen ? `
               <button id="plAddSongsBtn_${pl.id}"
                       class="w-10 h-10 rounded-full bg-surface-container-high hover:bg-surface-bright hover:border-primary/50 text-text-high-contrast flex items-center justify-center hover:scale-110 active:scale-95 transition-all duration-200 border border-border-subtle shadow-sm cursor-pointer"
                       onclick="CumuApp.openAddSongsModal('${pl.id}')"
@@ -4318,17 +3886,12 @@ function showToast(msg) {
               <span class="material-symbols-outlined text-[20px]" style="${pPinned ? "font-variation-settings: 'FILL' 1;" : ''}">push_pin</span>
             </button>
 
-            ${own ? `
             <button id="plDeleteBtn_${pl.id}"
                     class="w-10 h-10 rounded-full bg-surface-container-high hover:bg-red-500/15 hover:text-red-400 hover:border-red-500/30 text-text-muted flex items-center justify-center hover:scale-110 active:scale-95 transition-all duration-200 border border-border-subtle shadow-sm cursor-pointer"
                     onclick="CumuApp.deletePlaylist('${pl.id}')"
                     title="Playlist löschen">
               <span class="material-symbols-outlined text-[20px]">delete</span>
-            </button>` : (pl.access === 'editor' || pl.access === 'listener') ? `
-            <button class="w-10 h-10 rounded-full bg-surface-container-high hover:bg-red-500/15 hover:text-red-400 text-text-muted flex items-center justify-center hover:scale-110 active:scale-95 transition-all border border-border-subtle shadow-sm cursor-pointer"
-                    onclick="CumuApp.leavePlaylist('${pl.id}')" title="Playlist verlassen">
-              <span class="material-symbols-outlined text-[20px]">logout</span>
-            </button>` : ''}
+            </button>
           </div>
         </div>
       </div>
@@ -4349,7 +3912,7 @@ function showToast(msg) {
               <div style="margin-bottom:12px;display:flex;justify-content:center">${renderCoverPlaceholder('playlist', 'medium')}</div>
               <h3 style="margin:0 0 6px 0">${isGen ? 'Noch keine Songs in dieser automatischen Playlist' : 'This playlist is empty'}</h3>
               <p class="mute caption" style="margin-bottom:20px">${isGen ? 'Cumu wird hier automatisch passende Songs einfügen.' : 'Add songs to fill your playlist!'}</p>
-              ${canEdit && !isGen ? `<button class="btn-primary" onclick="CumuApp.openAddSongsModal('${pl.id}')">Search & add songs</button>` : ''}
+              ${!isGen ? `<button class="btn-primary" onclick="CumuApp.openAddSongsModal('${pl.id}')">Search & add songs</button>` : ''}
             </div>`
         }
       </div>`;
@@ -4868,7 +4431,6 @@ function showToast(msg) {
 
   function renderNowPlaying() {
     if (!currentSong) { navigate('discover'); return; }
-    if (isAudiobookSong(currentSong)) { renderAudiobookPlayer(); return; }
     if (isSpokenWord || currentSong.isPodcast) { renderPodcastPlayer(); return; }
     hideNpBar();
     let coverSrc = '';
@@ -4893,7 +4455,7 @@ function showToast(msg) {
               <div class="np-equalizer ${isPlaying ? 'playing' : ''}">
                 <span></span><span></span><span></span><span></span>
               </div>
-              <span>${party ? (party.role === 'host' ? 'DEINE PARTY' : 'PARTY VON ' + esc(party.party.host.username).toUpperCase()) : remote ? 'AUF ' + esc(remote.name).toUpperCase() : 'NOW PLAYING'}</span>
+              <span>NOW PLAYING</span>
             </div>
             <button class="w-10 h-10 rounded-full bg-surface-container-low text-text-high-contrast flex items-center justify-center hover:scale-105 active:scale-95 transition-transform" onclick="CumuApp.openNowPlayingMenu(event, this)" title="Optionen">
               <span class="material-symbols-outlined">more_vert</span>
@@ -4915,7 +4477,6 @@ function showToast(msg) {
               ${currentSong.artist_name ? `<a class="hover:underline cursor-pointer text-text-high-contrast" onclick="navigate('artist','${currentSong.artist_id}')">${esc(currentSong.artist_name)}</a>` : 'Unbekannter Künstler'}
               ${currentSong.album_title ? ` &middot; <a class="hover:underline cursor-pointer opacity-80" onclick="navigate('album','${currentSong.album_id}')">${esc(currentSong.album_title)}</a>` : ''}
             </h2>
-            ${livePillHtml()}
           </div>
 
           <!-- 2. Slider (Progress Bar) -->
@@ -4962,14 +4523,6 @@ function showToast(msg) {
               <span class="material-symbols-outlined text-[22px]" style="${isFav ? "font-variation-settings: 'FILL' 1;" : ""}">${isFav ? 'favorite' : 'favorite'}</span>
             </button>
 
-            <!-- Devices (only with more than one device online) and listening party -->
-            <button class="live-devices-btn w-10 h-10 rounded-full bg-surface-container-low text-text-muted hover:text-text-high-contrast transition-colors flex items-center justify-center hover:scale-105 active:scale-95" style="${liveDevices.length > 1 || remote ? '' : 'display:none;'}${remote ? `color:${LIVE_GREEN};` : ''}" onclick="event.stopPropagation(); CumuApp.openDevicePicker(this)" title="Geräte">
-              <span class="material-symbols-outlined text-[22px]">devices</span>
-            </button>
-            <button class="live-party-btn w-10 h-10 rounded-full bg-surface-container-low text-text-muted hover:text-text-high-contrast transition-colors flex items-center justify-center hover:scale-105 active:scale-95" style="${party ? `color:${LIVE_PURPLE};` : 'display:none;'}" onclick="CumuApp.openPartyPanel()" title="Listening Party">
-              <span class="material-symbols-outlined text-[22px]">celebration</span>
-            </button>
-
             <!-- Queue (Warteschlange) -->
             <button class="w-10 h-10 rounded-full bg-surface-container-low text-text-muted hover:text-text-high-contrast transition-colors flex items-center justify-center hover:scale-105 active:scale-95" onclick="CumuApp.toggleQueue()" title="Warteschlange umschalten">
               <span class="material-symbols-outlined text-[22px]">queue_music</span>
@@ -4991,9 +4544,11 @@ function showToast(msg) {
     const fullSeek = document.getElementById('fullNpSeek');
     if (fullSeek) {
       fullSeek.addEventListener('input', () => {
-        // Local, or on the device that plays
-        seekPercent(parseFloat(fullSeek.value));
-        fullSeek.style.setProperty('--progress-percent', `${fullSeek.value}%`);
+        if (activeAudio && activeAudio.duration) {
+          const val = (fullSeek.value / 100) * activeAudio.duration;
+          activeAudio.currentTime = val;
+          fullSeek.style.setProperty('--progress-percent', `${fullSeek.value}%`);
+        }
       });
     }
   }
@@ -5047,8 +4602,6 @@ function showToast(msg) {
     }
     const targetEl = btnEl || (event ? event.currentTarget : null);
     if (!currentSong) return;
-    const song = currentSong;
-    window._menuSong = song;
 
     const ctxMenu = document.getElementById('contextMenu');
     if (!ctxMenu) return;
@@ -5072,18 +4625,8 @@ function showToast(msg) {
       <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.addToQueueById('${currentSong.id}'); CumuApp.closeContextMenu()">
         <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('queue')}</span> Add to Queue
       </button>
-      <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.openPartyPanel(); CumuApp.closeContextMenu()">
-        <span class="text-text-muted flex items-center justify-center w-5 h-5"><span class="material-symbols-outlined text-[20px]">celebration</span></span> ${party ? 'Listening Party' : 'Listening Party starten'}
-      </button>
       <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.openAddToPlaylistModal('${currentSong.id}'); CumuApp.closeContextMenu()">
         <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('playlist')}</span> Add to Playlist
-      </button>
-      ${party && party.role === 'guest' ? `
-      <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-primary hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.suggestToParty(window._menuSong); CumuApp.closeContextMenu()">
-        <span class="flex items-center justify-center w-5 h-5"><span class="material-symbols-outlined text-[20px]">celebration</span></span> Zur Party vorschlagen
-      </button>` : ''}
-      <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" data-share-type="song" data-share-id="${esc(song.id)}" data-share-title="${esc(song.title)}">
-        <span class="text-text-muted flex items-center justify-center w-5 h-5"><span class="material-symbols-outlined text-[20px]">share</span></span> Teilen
       </button>
     `;
 
@@ -5099,7 +4642,6 @@ function showToast(msg) {
 
     const song = await CumuApi.get(`/api/songs/${songId}`);
     if (!song) return;
-    window._menuSong = song;
 
     const ctxMenu = document.getElementById('contextMenu');
     if (!ctxMenu) return;
@@ -5121,20 +4663,13 @@ function showToast(msg) {
       <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.openAddToPlaylistModal('${song.id}'); CumuApp.closeContextMenu()">
         <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('playlist')}</span> Add to Playlist
       </button>
-      ${party && party.role === 'guest' ? `
-      <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-primary hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.suggestToParty(window._menuSong); CumuApp.closeContextMenu()">
-        <span class="flex items-center justify-center w-5 h-5"><span class="material-symbols-outlined text-[20px]">celebration</span></span> Zur Party vorschlagen
-      </button>` : ''}
-      <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" data-share-type="song" data-share-id="${esc(song.id)}" data-share-title="${esc(song.title)}">
-        <span class="text-text-muted flex items-center justify-center w-5 h-5"><span class="material-symbols-outlined text-[20px]">share</span></span> Teilen
-      </button>
       <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="navigate('song','edit:${song.id}'); CumuApp.closeContextMenu()">
         <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('edit')}</span> Edit
       </button>
       <a class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" href="${CumuApi.downloadUrl(song.id)}" download onclick="CumuApp.closeContextMenu()">
         <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('download')}</span> Download
       </a>
-      ${isPlaylistView && currentPlaylistId && !isCurrentPlGen && window._currentPlaylistCanEdit !== false ? `
+      ${isPlaylistView && currentPlaylistId && !isCurrentPlGen ? `
         <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-red-400 hover:bg-surface-bright hover:text-red-300 transition-colors active:scale-95" onclick="CumuApp.removeFromPlaylist('${currentPlaylistId}', '${song.id}'); CumuApp.closeContextMenu()">
           <span class="text-red-400 flex items-center justify-center w-5 h-5">${CumuIcons.get('trash')}</span> Remove from Playlist
         </button>
@@ -5165,15 +4700,9 @@ function showToast(msg) {
 
     const ctxMenu = document.getElementById('contextMenu');
     if (!ctxMenu) return;
-    const own = isOwnPlaylist(pl);
 
     ctxMenu.innerHTML = `
-      ${own && !isGen ? `
-        <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.openShareModal('${pl.id}'); CumuApp.closeContextMenu()">
-          <span class="text-text-muted flex items-center justify-center w-5 h-5"><span class="material-symbols-outlined text-[20px]">share</span></span> Teilen & Sichtbarkeit
-        </button>
-      ` : ''}
-      ${!isGen && canEditPlaylist(pl) ? `
+      ${!isGen ? `
         <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.openAddSongsModal('${pl.id}'); CumuApp.closeContextMenu()">
           <span class="text-text-muted flex items-center justify-center w-5 h-5"><span class="material-symbols-outlined text-[20px]">playlist_add</span></span> Search & add songs
         </button>
@@ -5197,20 +4726,10 @@ function showToast(msg) {
       <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.togglePin('${pKey}', event); CumuApp.closeContextMenu()">
         <span class="text-text-muted flex items-center justify-center w-5 h-5"><span class="material-symbols-outlined text-[20px]" style="${pPinned ? "font-variation-settings: 'FILL' 1;" : ''}">push_pin</span></span> ${pPinned ? 'Unpin from sidebar' : 'Pin to sidebar'}
       </button>
-      <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" data-share-type="playlist" data-share-id="${esc(pl.id)}" data-share-title="${esc(pl.name)}">
-        <span class="text-text-muted flex items-center justify-center w-5 h-5"><span class="material-symbols-outlined text-[20px]">send</span></span> An jemanden senden / Link
-      </button>
       <div class="my-xs border-t border-border-subtle"></div>
-      ${own ? `
       <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-red-400 hover:bg-surface-bright hover:text-red-300 transition-colors active:scale-95" onclick="CumuApp.deletePlaylist('${pl.id}'); CumuApp.closeContextMenu()">
         <span class="text-red-400 flex items-center justify-center w-5 h-5">${CumuIcons.get('trash')}</span> Delete Playlist
-      </button>` : (pl.access === 'editor' || pl.access === 'listener') ? `
-      <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-red-400 hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.leavePlaylist('${pl.id}'); CumuApp.closeContextMenu()">
-        <span class="text-red-400 flex items-center justify-center w-5 h-5"><span class="material-symbols-outlined text-[20px]">logout</span></span> Playlist verlassen
-      </button>` : `
-      <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.togglePlaylistSave('${pl.id}', ${pl.saved ? 'false' : 'true'}); CumuApp.closeContextMenu()">
-        <span class="text-text-muted flex items-center justify-center w-5 h-5"><span class="material-symbols-outlined text-[20px]">${pl.saved ? 'library_add_check' : 'library_add'}</span></span> ${pl.saved ? 'Aus Bibliothek entfernen' : 'Zur Bibliothek hinzufügen'}
-      </button>`}
+      </button>
     `;
 
     positionDropdownMenu(ctxMenu, targetEl, event);
@@ -5235,8 +4754,7 @@ function showToast(msg) {
   async function openAddToPlaylistModal(songId) {
     await loadPlaylists();
     const song = await CumuApi.get(`/api/songs/${songId}`);
-    // Own playlists and shared ones the user may edit
-    const availablePlaylists = playlists.filter(p => !isGeneratedPlaylist(p) && canEditPlaylist(p));
+    const availablePlaylists = playlists.filter(p => !isGeneratedPlaylist(p));
     
     let modal = document.getElementById('addToPlaylistModal');
     if (!modal) {
@@ -5411,1150 +4929,12 @@ function showToast(msg) {
 
   async function playPlaylist(playlistId) {
     let pl = await CumuApi.get(`/api/playlists/${playlistId}`);
-    if (!pl || pl.error) {
-      main.innerHTML = `<div class="p-xl text-center text-text-muted"><span class="material-symbols-outlined text-[40px] block mb-sm">lock</span>${esc((pl && pl.error) || 'Playlist nicht gefunden')}<p class="text-body-sm mt-xs">Vielleicht ist sie privat oder wurde gelöscht.</p></div>`;
-      return;
-    }
-    // Only the owner keeps cumu's own (dynamic) playlists up to date
-    if (isOwnPlaylist(pl)) pl = await syncDynamicPlaylist(pl);
+    if (!pl) return;
+    pl = await syncDynamicPlaylist(pl);
     if (pl.songs?.length) playQueue(pl.songs, 0);
   }
 
-  // ── Audiobooks ─────────────────────────────────────────────────────────────
-  // Songs in a speech genre are audiobook chapters; an album of chapters is a
-  // book. Books never play between music: only when started or queued here.
-  // The listening position is saved on the server, so every device (and the
-  // Android app) continues where the user stopped.
-
-  const AB_SPEEDS = [0.75, 1, 1.25, 1.5, 1.75, 2];
-  const isAudiobookSong = (s) => !!(s && !s.isPodcast && (s.is_audiobook === 1 || s.is_audiobook === true));
-  const bookIdOfSong = (s) => s.book_id || (s.album_id ? s.album_id : `s-${s.id}`);
-
-  function getAudiobookSpeed() {
-    let v = 1;
-    try { v = parseFloat(localStorage.getItem('cumu_audiobook_speed')); } catch (_) {}
-    return AB_SPEEDS.includes(v) ? v : 1;
-  }
-
-  function applyPlaybackSpeed() {
-    if (!activeAudio) return;
-    const rate = isAudiobookSong(currentSong) ? getAudiobookSpeed() : 1;
-    activeAudio.defaultPlaybackRate = rate;
-    activeAudio.playbackRate = rate;
-  }
-
-  function cycleAudiobookSpeed() {
-    const cur = getAudiobookSpeed();
-    const next = AB_SPEEDS[(AB_SPEEDS.indexOf(cur) + 1) % AB_SPEEDS.length];
-    try { localStorage.setItem('cumu_audiobook_speed', String(next)); } catch (_) {}
-    applyPlaybackSpeed();
-    const btn = document.getElementById('abSpeedBtn');
-    if (btn) btn.textContent = formatSpeed(next);
-  }
-
-  const formatSpeed = (v) => `${String(v).replace('.', ',')}×`;
-
-  function formatLong(sec) {
-    sec = Math.max(0, Math.round(sec || 0));
-    const h = Math.floor(sec / 3600);
-    const m = Math.round((sec % 3600) / 60);
-    if (h && m) return `${h} h ${m} min`;
-    if (h) return `${h} h`;
-    return `${Math.max(m, sec > 0 ? 1 : 0)} min`;
-  }
-
-  function bookCoverSrc(cover) {
-    if (!cover) return null;
-    return /^(https?:|data:|\/)/.test(cover) ? cover : `/stream/cover/${cover}`;
-  }
-
-  function bookSubtitle(b) {
-    const p = b.progress;
-    if (p && p.finished) return 'Finished';
-    if (p) return `${p.percent}% · ${formatLong(p.remaining)} left`;
-    return `${b.chapter_count} ${b.chapter_count === 1 ? 'chapter' : 'chapters'} · ${formatLong(b.duration)}`;
-  }
-
-  function renderBookCard(b) {
-    const cover = bookCoverSrc(b.cover);
-    const pct = b.progress ? (b.progress.finished ? 100 : b.progress.percent) : 0;
-    return `
-      <div class="group relative bg-surface-bright border border-border-subtle p-md rounded-xl cursor-pointer hover:bg-surface-container-low transition-all min-w-0 shadow-sm hover:shadow-md" onclick="navigate('audiobook','${esc(b.id)}')">
-        <div class="relative w-full aspect-square bg-surface-container rounded-lg overflow-hidden mb-md flex items-center justify-center">
-          ${cover ? `<img src="${cover}" class="w-full h-full object-cover" alt="${esc(b.title)}" loading="lazy">`
-                  : `<span class="material-symbols-outlined text-[48px] text-text-muted">auto_stories</span>`}
-          <span class="absolute top-xs left-xs bg-black/60 text-white text-[10px] font-bold uppercase tracking-wider px-xs py-[2px] rounded">Audiobook</span>
-          <button class="absolute bottom-sm right-sm w-11 h-11 rounded-full bg-primary text-on-primary flex items-center justify-center shadow-lg opacity-0 group-hover:opacity-100 translate-y-2 group-hover:translate-y-0 transition-all"
-                  onclick="event.stopPropagation(); CumuApp.playAudiobook('${esc(b.id)}')" title="${b.progress && !b.progress.finished ? 'Continue listening' : 'Play'}">
-            <span class="material-symbols-outlined text-[26px]" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
-          </button>
-          ${pct > 0 ? `<div class="absolute left-0 right-0 bottom-0 h-1 bg-black/30"><div class="h-full bg-primary" style="width:${pct}%"></div></div>` : ''}
-        </div>
-        <h3 class="text-title-md font-title-md text-text-high-contrast font-bold truncate">${esc(b.title)}</h3>
-        <p class="text-body-sm text-text-muted truncate mt-xs">${esc(b.artist_name || 'Unknown author')}</p>
-        <p class="text-body-xs text-text-muted/80 truncate">${esc(bookSubtitle(b))}</p>
-      </div>`;
-  }
-
-  function renderBookGrid(books) {
-    return `<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-md">${books.map(renderBookCard).join('')}</div>`;
-  }
-
-  /**
-   * Starts a book. Without a chapter it continues at the saved position
-   * (a finished book starts over); with a chapter it starts that chapter.
-   */
-  async function playAudiobook(bookId, chapterIndex = null, opts = {}) {
-    let book;
-    try { book = await CumuApi.get(`/api/audiobooks/${encodeURIComponent(bookId)}`); }
-    catch (e) { showToast('Audiobook could not be loaded'); return; }
-    if (!book || !book.chapters || !book.chapters.length) { showToast('Audiobook not found'); return; }
-    const chapters = book.chapters.map(c => ({ ...c, is_audiobook: 1, book_id: book.id, book_title: book.title, cover: c.cover || book.cover }));
-    let idx = 0;
-    let pos = 0;
-    if (chapterIndex !== null && chapterIndex !== undefined) {
-      idx = Math.min(Math.max(0, chapterIndex), chapters.length - 1);
-    } else if (book.progress && !book.progress.finished && !opts.restart) {
-      idx = Math.max(0, chapters.findIndex(c => c.id === book.progress.songId));
-      pos = Math.max(0, (book.progress.position || 0) - 3); // a few seconds back for context
-    }
-    // A book plays in order
-    isShuffle = false;
-    repeatMode = 'none';
-    queue = chapters;
-    queueIndex = idx;
-    playSong(queue[idx], true, pos);
-  }
-
-  async function addAudiobookToQueue(bookId) {
-    try {
-      const book = await CumuApi.get(`/api/audiobooks/${encodeURIComponent(bookId)}`);
-      const chapters = (book.chapters || []).map(c => ({ ...c, is_audiobook: 1, book_id: book.id, book_title: book.title, cover: c.cover || book.cover }));
-      if (!chapters.length) return;
-      if (!currentSong) { queue = chapters; queueIndex = 0; playSong(queue[0], true); return; }
-      ensureCurrentSongInQueue();
-      queue.push(...chapters);
-      updateQueueUI();
-      showToast(`"${book.title}" added to the queue`);
-    } catch (e) { showToast('Audiobook could not be loaded'); }
-  }
-
-  async function restartAudiobook(bookId) {
-    try { await CumuApi.del(`/api/audiobooks/${encodeURIComponent(bookId)}/progress`); } catch (_) {}
-    playAudiobook(bookId, 0);
-  }
-
-  async function markAudiobookFinished(bookId) {
-    try {
-      const book = await CumuApi.get(`/api/audiobooks/${encodeURIComponent(bookId)}`);
-      const last = book.chapters[book.chapters.length - 1];
-      await CumuApi.put(`/api/audiobooks/${encodeURIComponent(bookId)}/progress`, { songId: last.id, position: last.duration || 0, finished: true });
-      showToast('Marked as finished');
-      if (currentPage === 'audiobook') renderAudiobook(bookId);
-    } catch (_) { showToast('Could not save'); }
-  }
-
-  let lastAudiobookSave = 0;
-  function saveAudiobookProgress(force = false, finished = false) {
-    if (isRemote()) return; // the playing device saves it
-    if (!isAudiobookSong(currentSong) || !activeAudio || !navigator.onLine) return;
-    const now = Date.now();
-    if (!force && now - lastAudiobookSave < 10000) return;
-    const position = activeAudio.currentTime || 0;
-    if (!force && position < 1) return;
-    lastAudiobookSave = now;
-    const bookId = bookIdOfSong(currentSong);
-    CumuApi.put(`/api/audiobooks/${encodeURIComponent(bookId)}/progress`, {
-      songId: currentSong.id, position, ...(finished ? { finished: true } : {}),
-    }).catch(() => {});
-  }
-  window.addEventListener('beforeunload', () => saveAudiobookProgress(true));
-  window.addEventListener('pagehide', () => saveAudiobookProgress(true));
-  document.addEventListener('visibilitychange', () => { if (document.hidden) saveAudiobookProgress(true); });
-
-  async function renderAudiobooks() {
-    main.innerHTML = '<div class="p-margin-desktop text-center text-text-muted">Loading audiobooks…</div>';
-    const data = await CumuApi.get('/api/audiobooks');
-    if (currentPage !== 'audiobooks') return;
-    const books = data.books || [];
-    const cont = data.continue || [];
-    const sort = window._audiobookSort || 'new';
-    const sorted = [...books].sort((a, b) => sort === 'title'
-      ? String(a.title).localeCompare(String(b.title), undefined, { sensitivity: 'base' })
-      : sort === 'author'
-        ? String(a.artist_name || '').localeCompare(String(b.artist_name || ''), undefined, { sensitivity: 'base' }) || String(a.title).localeCompare(String(b.title))
-        : (b.created_at || 0) - (a.created_at || 0));
-    const sortBtn = (key, label) => `<button onclick="CumuApp.setAudiobookSort('${key}')" class="px-md py-xs rounded-full text-body-sm font-bold transition-colors ${sort === key ? 'bg-text-high-contrast text-background' : 'bg-surface-container-low text-text-muted hover:text-text-high-contrast'}">${label}</button>`;
-
-    main.innerHTML = `
-      <div class="max-w-[1280px] mx-auto">
-        <header class="mb-xl">
-          <h1 class="text-headline-lg-mobile md:text-headline-lg font-headline-lg-mobile md:font-headline-lg text-text-high-contrast font-bold flex items-center gap-sm">
-            <span class="material-symbols-outlined text-primary text-[36px]">auto_stories</span> Audiobooks
-          </h1>
-          <p class="text-body-md text-text-muted mt-xs">Every track in the genre "Speech" shows up here. Audiobooks never play in shuffle or mixes, only when you start them.</p>
-        </header>
-        ${cont.length ? `
-          <section class="mb-xl">
-            <h2 class="text-title-md font-title-md font-bold text-text-high-contrast mb-md flex items-center gap-xs">
-              <span class="material-symbols-outlined text-primary">resume</span> Continue listening
-            </h2>
-            ${renderBookGrid(cont)}
-          </section>` : ''}
-        <section class="mb-xl">
-          <div class="flex flex-wrap items-center justify-between gap-md mb-md">
-            <h2 class="text-title-md font-title-md font-bold text-text-high-contrast">All audiobooks (${books.length})</h2>
-            ${books.length > 1 ? `<div class="flex gap-xs">${sortBtn('new', 'Newest')}${sortBtn('title', 'Title')}${sortBtn('author', 'Author')}</div>` : ''}
-          </div>
-          ${books.length ? renderBookGrid(sorted) : `
-            <div class="p-xl text-center text-text-muted border border-dashed border-border-subtle rounded-xl">
-              <span class="material-symbols-outlined text-[40px] block mb-sm">auto_stories</span>
-              No audiobooks yet. Tracks with the genre "Speech" become audiobooks automatically.
-            </div>`}
-        </section>
-      </div>`;
-  }
-
-  async function renderAudiobook(bookId) {
-    main.innerHTML = '<div class="p-margin-desktop text-center text-text-muted">Loading audiobook…</div>';
-    const book = await CumuApi.get(`/api/audiobooks/${encodeURIComponent(bookId)}`);
-    if (currentPage !== 'audiobook') return;
-    if (!book || book.error) {
-      main.innerHTML = '<div class="p-xl text-center text-text-muted">Audiobook not found</div>';
-      return;
-    }
-    const cover = bookCoverSrc(book.cover);
-    const p = book.progress;
-    const started = p && !p.finished;
-    const playingBook = isAudiobookSong(currentSong) && bookIdOfSong(currentSong) === book.id;
-    window._bookChapters = book.chapters;
-
-    main.innerHTML = `
-      <div class="max-w-[1100px] mx-auto">
-        <section class="flex flex-col md:flex-row gap-lg md:gap-xl items-center md:items-end mb-xl">
-          <div class="w-56 h-56 md:w-64 md:h-64 flex-shrink-0 rounded-2xl overflow-hidden bg-surface-container shadow-elevation-2 border border-border-subtle flex items-center justify-center">
-            ${cover ? `<img src="${cover}" class="w-full h-full object-cover" alt="">` : `<span class="material-symbols-outlined text-[72px] text-text-muted">auto_stories</span>`}
-          </div>
-          <div class="min-w-0 flex-1 text-center md:text-left">
-            <span class="text-label-caps font-label-caps text-text-muted uppercase tracking-wider">Audiobook</span>
-            <h1 class="text-headline-lg-mobile md:text-headline-lg font-bold text-text-high-contrast mt-xs break-words">${esc(book.title)}</h1>
-            <p class="text-title-md text-primary mt-xs ${book.artist_id ? 'cursor-pointer hover:underline' : ''}" ${book.artist_id ? `onclick="navigate('artist','${esc(book.artist_id)}')"` : ''}>${esc(book.artist_name || 'Unknown author')}</p>
-            <p class="text-body-sm text-text-muted mt-xs">${book.chapter_count} ${book.chapter_count === 1 ? 'chapter' : 'chapters'} · ${formatLong(book.duration)}${book.year ? ' · ' + book.year : ''}</p>
-            ${p ? `
-              <div class="mt-md max-w-md mx-auto md:mx-0">
-                <div class="h-1.5 rounded-full bg-surface-container overflow-hidden"><div class="h-full bg-primary" style="width:${p.finished ? 100 : p.percent}%"></div></div>
-                <p class="text-body-xs text-text-muted mt-xs">${p.finished ? 'Finished' : `${p.percent}% · ${formatLong(p.remaining)} left · chapter ${p.chapterIndex + 1}`}</p>
-              </div>` : ''}
-            <div class="flex flex-wrap gap-sm mt-lg justify-center md:justify-start">
-              <button class="bg-text-high-contrast text-background px-lg py-sm rounded-full font-bold flex items-center gap-xs hover:scale-105 active:scale-95 transition-transform" onclick="CumuApp.playAudiobook('${esc(book.id)}')">
-                <span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">play_arrow</span> ${started ? 'Continue listening' : (p && p.finished ? 'Listen again' : 'Play')}
-              </button>
-              ${started ? `
-              <button class="bg-surface-container-low text-text-high-contrast px-lg py-sm rounded-full font-bold flex items-center gap-xs hover:bg-surface-container transition-colors" onclick="CumuApp.restartAudiobook('${esc(book.id)}')">
-                <span class="material-symbols-outlined">restart_alt</span> Start over
-              </button>` : ''}
-              ${shareButton('audiobook', book.id, book.title, 'bg-surface-container-low text-text-high-contrast px-lg py-sm rounded-full font-bold flex items-center gap-xs hover:bg-surface-container transition-colors')}
-              <button class="bg-surface-container-low text-text-high-contrast px-lg py-sm rounded-full font-bold flex items-center gap-xs hover:bg-surface-container transition-colors" onclick="CumuApp.addAudiobookToQueue('${esc(book.id)}')">
-                <span class="material-symbols-outlined">queue</span> Add to queue
-              </button>
-              ${!(p && p.finished) ? `
-              <button class="bg-surface-container-low text-text-muted px-md py-sm rounded-full font-bold flex items-center gap-xs hover:text-text-high-contrast transition-colors" onclick="CumuApp.markAudiobookFinished('${esc(book.id)}')" title="Mark as finished">
-                <span class="material-symbols-outlined">done_all</span>
-              </button>` : ''}
-            </div>
-          </div>
-        </section>
-
-        <section>
-          <h2 class="text-title-md font-title-md font-bold text-text-high-contrast mb-md">Chapters</h2>
-          <div class="flex flex-col gap-xs rounded-xl border border-border-subtle bg-surface-bright/50 p-sm">
-            ${book.chapters.map((c, i) => {
-              const isCurrent = playingBook ? currentSong.id === c.id : (started && p.songId === c.id);
-              const done = p && (p.finished || i < p.chapterIndex);
-              return `
-                <div class="ab-chapter flex items-center gap-md py-sm px-sm rounded-lg hover:bg-surface-container-low transition-colors cursor-pointer group" data-index="${i}">
-                  <div class="w-8 text-center text-label-caps font-label-caps ${isCurrent ? 'text-primary' : 'text-text-muted'}">
-                    ${isCurrent ? `<span class="material-symbols-outlined text-[20px]">${playingBook && isPlaying ? 'graphic_eq' : 'play_arrow'}</span>` : (done ? '<span class="material-symbols-outlined text-[18px]">check</span>' : i + 1)}
-                  </div>
-                  <div class="flex-1 min-w-0">
-                    <div class="text-body-lg truncate ${isCurrent ? 'text-primary font-semibold' : 'text-text-high-contrast'} ${done && !isCurrent ? 'opacity-60' : ''}">${esc(c.title)}</div>
-                    ${isCurrent && !playingBook && p ? `<div class="text-body-xs text-text-muted">Stopped at ${formatTime(p.position)}</div>` : ''}
-                  </div>
-                  <div class="text-label-caps font-label-caps text-text-muted">${formatTime(c.duration)}</div>
-                  <button class="text-text-muted hover:text-text-high-contrast p-xs rounded-full hover:bg-surface-container transition-colors song-menu-btn" onclick="event.stopPropagation(); CumuApp.openSongMenu(event, this, '${c.id}')">
-                    <span class="material-symbols-outlined text-[20px]">more_vert</span>
-                  </button>
-                </div>`;
-            }).join('')}
-          </div>
-        </section>
-      </div>`;
-
-    main.querySelectorAll('.ab-chapter').forEach(row => {
-      row.addEventListener('click', () => {
-        const i = parseInt(row.dataset.index, 10);
-        // The saved chapter continues at its position, any other starts at 0
-        if (started && book.chapters[i] && book.chapters[i].id === p.songId) playAudiobook(book.id);
-        else playAudiobook(book.id, i);
-      });
-    });
-  }
-
-  function renderAudiobookPlayer() {
-    if (!currentSong) { navigate('discover'); return; }
-    hideNpBar();
-    const cover = bookCoverSrc(currentSong.cover);
-    const bookId = bookIdOfSong(currentSong);
-    const bookTitle = currentSong.book_title || currentSong.album_title || currentSong.title;
-    // Chapters of this book in the queue, in queue order
-    const chapters = queue.map((s, i) => ({ s, i })).filter(x => isAudiobookSong(x.s) && bookIdOfSong(x.s) === bookId);
-    const chapterPos = chapters.findIndex(x => x.i === queueIndex);
-    const hasPrev = queueIndex > 0;
-    const hasNext = queueIndex + 1 < queue.length;
-    const pct = activeAudio && activeAudio.duration ? (activeAudio.currentTime / activeAudio.duration) * 100 : 0;
-    const roundBtn = 'w-12 h-12 rounded-full bg-surface-container-low text-text-high-contrast hover:text-primary transition-colors flex items-center justify-center hover:scale-110 active:scale-95 disabled:opacity-30 disabled:pointer-events-none';
-
-    main.innerHTML = `
-      <div class="np-container-overlay fixed inset-0 xl:left-64 ${isQueueOpen ? 'xl:right-80' : 'xl:right-0'} z-[35] bg-background flex flex-col items-center justify-center p-md overflow-y-auto">
-        <div class="flex flex-col items-center w-full max-w-3xl mx-auto py-md px-md relative">
-          <div class="flex items-center justify-between w-full mb-lg">
-            <button class="w-10 h-10 rounded-full bg-surface-container-low text-text-high-contrast flex items-center justify-center hover:scale-105 active:scale-95 transition-transform" onclick="history.length > 1 ? history.back() : navigate('audiobooks')" title="Back">
-              <span class="material-symbols-outlined">arrow_back</span>
-            </button>
-            <div class="text-label-caps font-label-caps tracking-widest uppercase text-text-muted">Audiobook</div>
-            <button id="abChaptersBtn" class="w-10 h-10 rounded-full bg-surface-container-low text-text-high-contrast flex items-center justify-center hover:scale-105 active:scale-95 transition-transform" title="Chapters">
-              <span class="material-symbols-outlined">format_list_numbered</span>
-            </button>
-          </div>
-
-          <div class="w-64 h-64 md:w-80 md:h-80 rounded-2xl overflow-hidden bg-surface-container-low shadow-elevation-2 mb-lg flex-shrink-0 border border-border-subtle cursor-pointer" onclick="navigate('audiobook','${esc(bookId)}')" title="Open audiobook">
-            ${cover ? `<img src="${cover}" class="w-full h-full object-cover" />` : `<div class="w-full h-full flex items-center justify-center text-text-muted"><span class="material-symbols-outlined text-[64px]">auto_stories</span></div>`}
-          </div>
-
-          <div class="text-center mb-lg w-full px-md">
-            <h1 class="text-title-md md:text-headline-lg font-bold text-text-high-contrast truncate mb-xs">${esc(currentSong.title)}</h1>
-            <h2 class="text-body-lg text-text-muted truncate cursor-pointer hover:text-text-high-contrast" onclick="navigate('audiobook','${esc(bookId)}')">${esc(bookTitle)}${currentSong.artist_name ? ' · ' + esc(currentSong.artist_name) : ''}</h2>
-            ${chapters.length > 1 && chapterPos >= 0 ? `<p class="text-body-sm text-text-muted mt-xs">Chapter ${chapterPos + 1} of ${chapters.length}</p>` : ''}
-          </div>
-
-          <div class="w-full flex flex-col gap-xs mb-lg max-w-xl">
-            <input type="range" id="podcastSeek" min="0" max="100" step="0.1" value="${pct}" class="cumu-seekbar rounded-full" style="--progress-percent: ${pct}%;" />
-            <div class="flex justify-between text-body-sm font-body-sm text-text-muted font-mono mt-xs">
-              <span id="podcastCurrentTime">${activeAudio ? formatTime(activeAudio.currentTime) : '0:00'}</span>
-              <span id="podcastDuration">${activeAudio ? formatTime(activeAudio.duration || currentSong.duration) : '0:00'}</span>
-            </div>
-          </div>
-
-          <div class="flex items-center justify-center gap-md md:gap-lg mb-lg">
-            <button class="${roundBtn}" onclick="CumuApp.prevTrack()" title="Previous chapter" ${hasPrev ? '' : 'disabled'}>
-              <span class="material-symbols-outlined text-[28px]">skip_previous</span>
-            </button>
-            <button class="${roundBtn}" onclick="CumuApp.seekBy(-15)" title="Back 15 seconds">
-              <span class="relative inline-flex items-center justify-center"><span class="material-symbols-outlined text-[30px]">replay</span><span class="absolute text-[9px] font-bold pt-[3px]">15</span></span>
-            </button>
-            <button class="w-16 h-16 rounded-full bg-text-high-contrast text-on-primary flex items-center justify-center shadow-elevation-2 hover:scale-105 active:scale-95 transition-transform" onclick="CumuApp.togglePlay()">
-              <span class="material-symbols-outlined text-[40px] flex items-center justify-center leading-none select-none p-0 m-0" id="podcastPlayIcon" style="font-variation-settings: 'FILL' 1;">${isPlaying ? 'pause' : 'play_arrow'}</span>
-            </button>
-            <button class="${roundBtn}" onclick="CumuApp.seekBy(30)" title="Forward 30 seconds">
-              <span class="material-symbols-outlined text-[28px]">forward_30</span>
-            </button>
-            <button class="${roundBtn}" onclick="CumuApp.nextTrack()" title="Next chapter" ${hasNext ? '' : 'disabled'}>
-              <span class="material-symbols-outlined text-[28px]">skip_next</span>
-            </button>
-          </div>
-          <div class="flex items-center justify-center gap-sm mb-xl">
-            <button id="abSpeedBtn" class="min-w-[64px] h-9 px-md rounded-full bg-surface-container-low text-text-high-contrast font-bold text-body-sm hover:bg-surface-container transition-colors" onclick="CumuApp.cycleAudiobookSpeed()" title="Playback speed">${formatSpeed(getAudiobookSpeed())}</button>
-          </div>
-
-          <div id="abChaptersModal" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-[9999] flex items-center justify-center p-md">
-            <div class="bg-background border border-border-subtle rounded-2xl max-w-xl w-full max-h-[80vh] flex flex-col shadow-2xl p-lg">
-              <div class="flex items-center justify-between border-b border-border-subtle pb-md mb-md">
-                <h3 class="text-title-md font-bold text-text-high-contrast flex items-center gap-xs"><span class="material-symbols-outlined">format_list_numbered</span> Chapters</h3>
-                <button id="abChaptersClose" class="w-8 h-8 rounded-full bg-surface-container-low text-text-muted hover:text-text-high-contrast flex items-center justify-center"><span class="material-symbols-outlined">close</span></button>
-              </div>
-              <div class="overflow-y-auto flex flex-col gap-xs">
-                ${chapters.map((x, n) => `
-                  <button class="ab-np-chapter flex items-center gap-md text-left py-sm px-sm rounded-lg hover:bg-surface-container-low ${x.i === queueIndex ? 'text-primary font-semibold' : 'text-text-high-contrast'}" data-queue-index="${x.i}">
-                    <span class="w-6 text-center text-label-caps text-text-muted">${x.i === queueIndex ? '<span class="material-symbols-outlined text-[18px] text-primary">graphic_eq</span>' : n + 1}</span>
-                    <span class="flex-1 min-w-0 truncate">${esc(x.s.title)}</span>
-                    <span class="text-label-caps text-text-muted">${formatTime(x.s.duration)}</span>
-                  </button>`).join('')}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>`;
-
-    const modal = document.getElementById('abChaptersModal');
-    document.getElementById('abChaptersBtn')?.addEventListener('click', () => modal.classList.remove('hidden'));
-    document.getElementById('abChaptersClose')?.addEventListener('click', () => modal.classList.add('hidden'));
-    modal?.addEventListener('click', (e) => { if (e.target === modal) modal.classList.add('hidden'); });
-    main.querySelectorAll('.ab-np-chapter').forEach(btn => btn.addEventListener('click', () => {
-      const i = parseInt(btn.dataset.queueIndex, 10);
-      saveAudiobookProgress(true);
-      queueIndex = i;
-      playSong(queue[i], true);
-    }));
-    const seek = document.getElementById('podcastSeek');
-    seek?.addEventListener('input', () => {
-      if (activeAudio.duration) activeAudio.currentTime = (seek.value / 100) * activeAudio.duration;
-    });
-    seek?.addEventListener('change', () => saveAudiobookProgress(true));
-  }
-
-  // ── Sharing with people & links ────────────────────────────────────────────
-  // Buttons carry data-share-type / data-share-id / data-share-title; one
-  // listener opens the dialog (no quoting problems with titles in onclick).
-  const SHARE_LABELS = { song: 'Song', album: 'Album', artist: 'Künstler', playlist: 'Playlist', audiobook: 'Hörbuch' };
-  const linkFor = (type, id) => `${location.origin}/#/${type}/${encodeURIComponent(id)}`;
-
-  function shareButton(type, id, title, cls = 'btn-secondary', label = 'Teilen') {
-    return `<button class="${cls}" data-share-type="${esc(type)}" data-share-id="${esc(id)}" data-share-title="${esc(title || '')}" title="Teilen"><span class="material-symbols-outlined" style="font-size:18px;vertical-align:-4px">share</span>${label ? ' ' + label : ''}</button>`;
-  }
-
-  document.addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-share-type]');
-    if (!btn) return;
-    e.preventDefault();
-    e.stopPropagation();
-    closeContextMenu();
-    openShareItemModal(btn.dataset.shareType, btn.dataset.shareId, btn.dataset.shareTitle);
-  }, true);
-
-  async function copyText(text) {
-    try { await navigator.clipboard.writeText(text); return true; } catch (_) {}
-    const ta = document.createElement('textarea');
-    ta.value = text; document.body.appendChild(ta); ta.select();
-    let ok = false;
-    try { ok = document.execCommand('copy'); } catch (_) {}
-    ta.remove();
-    return ok;
-  }
-
-  async function openShareItemModal(type, id, title) {
-    let modal = document.getElementById('shareItemModal');
-    if (!modal) {
-      modal = document.createElement('div');
-      modal.id = 'shareItemModal';
-      modal.className = 'fixed inset-0 bg-background/80 backdrop-blur-sm z-[9999] flex items-center justify-center p-md';
-      modal.addEventListener('click', (e) => { if (e.target === modal) modal.style.display = 'none'; });
-      document.body.appendChild(modal);
-    }
-    const link = linkFor(type, id);
-    modal.innerHTML = `
-      <div class="w-full max-w-[480px] bg-surface-container rounded-xl shadow-2xl border border-border-subtle p-lg flex flex-col gap-md">
-        <div class="flex items-center justify-between pb-sm border-b border-border-subtle">
-          <h2 class="text-title-md font-bold text-on-surface m-0 truncate">${esc(SHARE_LABELS[type] || '')} teilen${title ? ` · „${esc(title)}“` : ''}</h2>
-          <button class="si-close text-text-muted hover:text-on-surface rounded-full p-xs hover:bg-surface-bright"><span class="material-symbols-outlined text-[20px]">close</span></button>
-        </div>
-        <form class="si-form flex flex-col gap-sm">
-          <label class="text-body-sm font-bold text-on-surface">An eine Person auf diesem Server</label>
-          <div class="relative">
-            <input name="username" autocomplete="off" placeholder="Benutzername" class="w-full bg-surface-container-low border border-border-subtle rounded-lg px-md py-sm text-on-surface focus:border-primary outline-none" />
-            <div class="si-suggest hidden absolute left-0 right-0 top-full mt-1 bg-surface-container-high border border-border-subtle rounded-lg shadow-xl z-10 overflow-hidden"></div>
-          </div>
-          <textarea name="message" rows="2" maxlength="500" placeholder="Nachricht (optional)" class="w-full bg-surface-container-low border border-border-subtle rounded-lg px-md py-sm text-on-surface focus:border-primary outline-none resize-none"></textarea>
-          <p class="si-error hidden text-body-sm text-error m-0"></p>
-          <div class="si-fix hidden"></div>
-          <button class="self-end px-lg py-sm rounded-lg bg-text-high-contrast text-background font-bold flex items-center gap-xs"><span class="material-symbols-outlined text-[18px]">send</span> Senden</button>
-        </form>
-        <div class="pt-sm border-t border-border-subtle flex flex-col gap-xs">
-          <label class="text-body-sm font-bold text-on-surface">Link</label>
-          <div class="flex gap-sm">
-            <input readonly value="${esc(link)}" class="flex-1 min-w-0 bg-surface-container-low border border-border-subtle rounded-lg px-md py-sm text-body-sm text-text-muted" />
-            <button class="si-copy px-md py-sm rounded-lg bg-surface-container-high hover:bg-surface-bright text-on-surface font-bold flex items-center gap-xs"><span class="material-symbols-outlined text-[18px]">content_copy</span> Kopieren</button>
-          </div>
-          <p class="text-body-xs text-text-muted m-0">Funktioniert für alle mit einem Konto auf diesem Server${type === 'playlist' ? ', die die Playlist sehen dürfen' : ''}.</p>
-        </div>
-      </div>`;
-    modal.style.display = 'flex';
-    const form = modal.querySelector('.si-form');
-    const input = form.username;
-    const sugg = modal.querySelector('.si-suggest');
-    const err = modal.querySelector('.si-error');
-    const fix = modal.querySelector('.si-fix');
-    modal.querySelector('.si-close').onclick = () => { modal.style.display = 'none'; };
-    modal.querySelector('.si-copy').onclick = async () => showToast((await copyText(link)) ? 'Link kopiert' : 'Kopieren nicht möglich');
-    setTimeout(() => input.focus(), 50);
-
-    let t;
-    input.addEventListener('input', () => {
-      clearTimeout(t);
-      const q = input.value.trim();
-      if (!q) { sugg.classList.add('hidden'); return; }
-      t = setTimeout(async () => {
-        const users = await CumuApi.get(`/api/users/suggest?q=${encodeURIComponent(q)}`).catch(() => []);
-        if (!Array.isArray(users) || !users.length) { sugg.classList.add('hidden'); return; }
-        sugg.innerHTML = users.map(u => `<button type="button" class="block w-full text-left px-md py-sm hover:bg-surface-bright text-on-surface" data-name="${esc(u.username)}">${esc(u.username)}</button>`).join('');
-        sugg.classList.remove('hidden');
-        sugg.querySelectorAll('button').forEach(b => b.onclick = () => { input.value = b.dataset.name; sugg.classList.add('hidden'); form.message.focus(); });
-      }, 180);
-    });
-
-    const send = async () => {
-      err.classList.add('hidden'); fix.classList.add('hidden');
-      const username = input.value.trim();
-      if (!username) return;
-      const r = await CumuApi.post('/api/shares', { username, type, id, message: form.message.value });
-      if (r && r.success) {
-        showToast(r.share.savedToLibrary ? `Playlist ist jetzt in der Bibliothek von ${r.share.to_username}` : `An ${r.share.to_username} gesendet`);
-        modal.style.display = 'none';
-        return;
-      }
-      err.textContent = (r && r.error) || 'Senden fehlgeschlagen';
-      err.classList.remove('hidden');
-      // Own private playlist: invite the person, then send
-      const pl = type === 'playlist' ? playlists.find(p => p.id === id) : null;
-      if (r && r.needsAccess && pl && isOwnPlaylist(pl)) {
-        fix.innerHTML = `<button type="button" class="px-md py-sm rounded-lg bg-primary text-on-primary font-bold text-body-sm">${esc(username)} einladen und senden</button>`;
-        fix.classList.remove('hidden');
-        fix.querySelector('button').onclick = async () => {
-          const inv = await CumuApi.post(`/api/playlists/${id}/members`, { username, canEdit: false });
-          if (inv && inv.error) { err.textContent = inv.error; return; }
-          await loadPlaylists();
-          send();
-        };
-      }
-    };
-    form.onsubmit = (e) => { e.preventDefault(); sugg.classList.add('hidden'); send(); };
-  }
-
-  // ── Inbox: things other people sent me ─────────────────────────────────────
-  let inboxUnread = 0;
-  function setInboxBadge(n) {
-    inboxUnread = n || 0;
-    document.querySelectorAll('.inbox-badge').forEach(b => {
-      b.textContent = inboxUnread > 9 ? '9+' : String(inboxUnread);
-      b.classList.toggle('hidden', inboxUnread === 0);
-    });
-  }
-  async function refreshInboxBadge() {
-    const r = await CumuApi.get('/api/shares/unread').catch(() => null);
-    if (r && typeof r.unread === 'number') setInboxBadge(r.unread);
-  }
-
-  function timeAgo(sec) {
-    const d = Math.max(0, Math.floor(Date.now() / 1000) - (sec || 0));
-    if (d < 60) return 'gerade eben';
-    if (d < 3600) return `vor ${Math.floor(d / 60)} Min.`;
-    if (d < 86400) return `vor ${Math.floor(d / 3600)} Std.`;
-    if (d < 7 * 86400) return `vor ${Math.floor(d / 86400)} ${Math.floor(d / 86400) === 1 ? 'Tag' : 'Tagen'}`;
-    return new Date(sec * 1000).toLocaleDateString();
-  }
-
-  async function openSharedItem(type, id) {
-    if (type === 'party') {
-      // Joins once the device is registered on the WebSocket
-      pendingPartyJoin = id;
-      wsSend('hello', { deviceId: DEVICE_ID, name: DEVICE_NAME, kind: DEVICE_KIND });
-      return;
-    }
-    if (type === 'song') {
-      const song = await CumuApi.get(`/api/songs/${id}`).catch(() => null);
-      if (song && !song.error) playSong(song);
-      else showToast('Song nicht mehr verfügbar');
-      return;
-    }
-    navigate(type, id);
-  }
-
-  async function renderInbox() {
-    main.innerHTML = '<div class="p-margin-desktop text-center text-text-muted">Lade…</div>';
-    const data = await CumuApi.get('/api/shares/inbox');
-    if (currentPage !== 'inbox') return;
-    const items = (data && data.items) || [];
-    main.innerHTML = `
-      <div class="max-w-[900px] mx-auto">
-        <header class="mb-xl flex items-center justify-between gap-md flex-wrap">
-          <div>
-            <h1 class="text-headline-lg-mobile md:text-headline-lg font-bold text-text-high-contrast flex items-center gap-sm"><span class="material-symbols-outlined text-primary text-[34px]">inbox</span> Mit dir geteilt</h1>
-            <p class="text-body-md text-text-muted mt-xs">Songs, Alben und Playlists, die dir andere geschickt haben.</p>
-          </div>
-        </header>
-        ${items.length ? `<div class="flex flex-col gap-sm">${items.map(it => {
-          const cover = it.cover ? (/^(https?:|\/)/.test(it.cover) ? it.cover : `/stream/cover/${it.cover}`) : null;
-          return `
-          <div class="inbox-item flex items-center gap-md p-md rounded-xl border ${it.read ? 'border-border-subtle bg-surface-bright' : 'border-primary/40 bg-primary/5'} ${it.available ? 'cursor-pointer hover:bg-surface-container-low' : 'opacity-60'} transition-colors" data-type="${esc(it.item_type)}" data-id="${esc(it.item_id)}" data-available="${it.available ? 1 : 0}">
-            <div class="w-14 h-14 rounded-lg overflow-hidden bg-surface-container flex-shrink-0 flex items-center justify-center">
-              ${cover ? `<img src="${cover}" class="w-full h-full object-cover" alt="">` : `<span class="material-symbols-outlined text-text-muted">${{ song: 'music_note', album: 'album', artist: 'person', playlist: 'queue_music', audiobook: 'auto_stories' }[it.item_type] || 'share'}</span>`}
-            </div>
-            <div class="flex-1 min-w-0">
-              <div class="text-body-sm text-text-muted"><b class="text-text-high-contrast">${esc(it.from_username)}</b> hat dir ${it.item_type === 'playlist' ? 'eine Playlist' : it.item_type === 'album' ? 'ein Album' : it.item_type === 'artist' ? 'einen Künstler' : it.item_type === 'audiobook' ? 'ein Hörbuch' : it.item_type === 'party' ? 'eine Einladung zur Listening Party' : 'einen Song'} geschickt · ${timeAgo(it.created_at)}</div>
-              <div class="text-body-lg font-bold text-text-high-contrast truncate">${esc(it.title)}</div>
-              ${it.subtitle ? `<div class="text-body-sm text-text-muted truncate">${esc(it.subtitle)}</div>` : ''}
-              ${it.message ? `<div class="mt-xs text-body-md text-on-surface bg-surface-container-low rounded-lg px-sm py-xs inline-block max-w-full break-words">„${esc(it.message)}“</div>` : ''}
-            </div>
-            <button class="inbox-del text-text-muted hover:text-error p-xs rounded-full" data-share="${esc(it.id)}" title="Entfernen"><span class="material-symbols-outlined">delete</span></button>
-          </div>`;
-        }).join('')}</div>` : `
-          <div class="p-xl text-center text-text-muted border border-dashed border-border-subtle rounded-xl">
-            <span class="material-symbols-outlined text-[40px] block mb-sm">inbox</span>
-            Noch nichts. Wenn dir jemand etwas schickt, erscheint es hier.
-          </div>`}
-      </div>`;
-    main.querySelectorAll('.inbox-item').forEach(el => el.addEventListener('click', () => {
-      if (el.dataset.available === '1') openSharedItem(el.dataset.type, el.dataset.id);
-    }));
-    main.querySelectorAll('.inbox-del').forEach(b => b.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      const r = await CumuApi.del(`/api/shares/${b.dataset.share}`);
-      if (r && typeof r.unread === 'number') setInboxBadge(r.unread);
-      renderInbox();
-    }));
-    // Opening the inbox reads everything
-    if (data && data.unread) {
-      const r = await CumuApi.post('/api/shares/all/read', {}).catch(() => null);
-      setInboxBadge(r && typeof r.unread === 'number' ? r.unread : 0);
-    }
-  }
-
-  // ── Links: #/song/<id>, #/album/<id>, #/playlist/<id>, ... ────────────────
-  const LINK_PAGES = ['song', 'album', 'artist', 'playlist', 'audiobook', 'party'];
-  function linkTarget() {
-    const m = (location.hash || '').match(/^#\/(song|album|artist|playlist|audiobook|party)\/([^/?#]+)/);
-    return m ? { type: m[1], id: decodeURIComponent(m[2]) } : null;
-  }
-  let pendingLink = linkTarget();
-  function clearLinkHash() {
-    try { history.replaceState(history.state, '', location.pathname + location.search); } catch (_) {}
-  }
-  window.addEventListener('hashchange', () => {
-    const t = linkTarget();
-    if (!t) return;
-    clearLinkHash();
-    if (currentUser) openSharedItem(t.type, t.id); else pendingLink = t;
-  });
-  /** After login: the page a link pointed to, else the start page. */
-  function openStartPage() {
-    const t = pendingLink;
-    pendingLink = null;
-    if (t && LINK_PAGES.includes(t.type)) {
-      clearLinkHash();
-      navigate('discover');
-      openSharedItem(t.type, t.id);
-      return;
-    }
-    navigate('discover');
-  }
-
-  // ── Live: devices (play on / control other devices) & listening parties ────
-  // Every tab is a device. The device that plays reports its state; the
-  // others mirror it ("Wiedergabe auf …") and send commands to it.
-  // See src/services/live.js for the protocol.
-
-  const DEVICE_ID = (() => {
-    let id = null;
-    try { id = sessionStorage.getItem('cumu_device_id'); } catch (_) {}
-    if (!id) {
-      id = 'web-' + Math.random().toString(36).slice(2, 10);
-      try { sessionStorage.setItem('cumu_device_id', id); } catch (_) {}
-    }
-    return id;
-  })();
-  const DEVICE_NAME = (() => {
-    const ua = navigator.userAgent || '';
-    const browser = /Edg\//.test(ua) ? 'Edge' : /OPR\//.test(ua) ? 'Opera' : /Firefox\//.test(ua) ? 'Firefox'
-      : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
-    const os = /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iOS' : /Windows/.test(ua) ? 'Windows'
-      : /Mac OS X/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : '';
-    return os ? `${browser} · ${os}` : browser;
-  })();
-  const DEVICE_KIND = window.matchMedia && window.matchMedia('(max-width: 767px)').matches ? 'mobile-web' : 'web';
-
-  let liveDevices = [];
-  let activeDeviceId = null;
-  let remote = null;          // { deviceId, name, state, at } while another device plays
-  let party = null;           // { party, role: 'host' | 'guest' }
-  let partySuggestions = 0;   // host: suggested songs waiting after the current one
-  let pendingPartyJoin = null;
-  let lastReport = 0;
-  let lastReportKey = '';
-
-  const LIVE_GREEN = '#1f9d55';
-  const LIVE_PURPLE = '#9333ea';
-  const isRemote = () => !!remote;
-  const isPartyGuest = () => !!(party && party.role === 'guest');
-  const otherDevices = () => liveDevices.filter(d => d.id !== DEVICE_ID);
-  const deviceIcon = (d) => (d.kind === 'android' || d.kind === 'mobile-web') ? 'smartphone' : 'computer';
-
-  function wsSend(type, payload = {}) { CumuApi.wsPush(type, payload); }
-
-  function sendCommand(target, command, args = {}) { wsSend('device_command', { target, command, args }); }
-
-  /** Light song object for the other devices (same fields as the API). */
-  function songSummary(s) {
-    if (!s) return null;
-    const keep = ['id', 'title', 'artist_id', 'album_id', 'artist_name', 'album_title', 'cover', 'duration', 'track_number', 'genre',
-      'is_audiobook', 'book_id', 'book_title', 'intro_silence_ms', 'outro_silence_ms', 'loudness_gain_db'];
-    const o = {};
-    for (const k of keep) if (s[k] !== undefined && s[k] !== null) o[k] = s[k];
-    return o;
-  }
-
-  /** Reports the local playback (only while this tab plays or is the active device). */
-  function reportState(force = false) {
-    if (isRemote() || !currentSong || currentSong.isPodcast) return;
-    if (!isPlaying && activeDeviceId && activeDeviceId !== DEVICE_ID && !force) return;
-    const k = `${currentSong.id}|${isPlaying}|${queueIndex}|${queue.length}|${isShuffle}|${repeatMode}`;
-    const now = Date.now();
-    if (!force && k === lastReportKey && now - lastReport < 5000) return;
-    lastReport = now;
-    lastReportKey = k;
-    wsSend('device_state', {
-      state: {
-        song: songSummary(currentSong), isPlaying,
-        position: activeAudio ? activeAudio.currentTime || 0 : 0,
-        duration: activeAudio && isFinite(activeAudio.duration) ? activeAudio.duration : (currentSong.duration || 0),
-        volume: activeAudio ? activeAudio.volume : 1,
-        shuffle: isShuffle, repeat: repeatMode,
-        hasNext: queueIndex + 1 < queue.length || repeatMode === 'all' || isShuffle,
-        hasPrev: queueIndex > 0,
-        queueLength: queue.length,
-      },
-    });
-  }
-  setInterval(() => { if (isPlaying) reportState(); }, 5000);
-  ['seeked'].forEach(ev => [audioA, audioB].forEach(a => a.addEventListener(ev, () => { if (a === activeAudio) reportState(true); })));
-
-  // ── Remote mode: another device plays, this one shows it and controls it ──
-  function remotePosition() {
-    if (!remote || !remote.state) return 0;
-    const s = remote.state;
-    const pos = (s.position || 0) + (s.isPlaying ? (Date.now() - remote.receivedAt) / 1000 : 0);
-    return Math.min(pos, s.duration || pos);
-  }
-
-  function enterRemote(device) {
-    if (!device || !device.state || !device.state.song) return;
-    const wasRemote = isRemote();
-    if (!wasRemote && isPlaying) {
-      // Only one device of the account plays at a time
-      activeAudio.pause();
-      if (isFading) standbyAudio.pause();
-    }
-    remote = { deviceId: device.id, name: device.name, state: device.state, receivedAt: Date.now() - Math.max(0, (Date.now() - (device.stateAt || Date.now()))) };
-    applyRemoteState();
-  }
-
-  function applyRemoteState() {
-    if (!remote) return;
-    currentSong = { ...remote.state.song, _remote: true };
-    isPlaying = !!remote.state.isPlaying;
-    isShuffle = !!remote.state.shuffle;
-    if (remote.state.repeat) repeatMode = remote.state.repeat;
-    updatePlayerUI();
-    updateLiveUI();
-    tickRemote();
-  }
-
-  function leaveRemote() {
-    if (!remote) return;
-    remote = null;
-    isPlaying = false;
-    if (currentSong && currentSong._remote) currentSong = queue[queueIndex] || null;
-    if (currentSong) updatePlayerUI(); else hideNpBar();
-    updateLiveUI();
-  }
-
-  function tickRemote() {
-    if (!remote || !remote.state) return;
-    const dur = remote.state.duration || 0;
-    const cur = remotePosition();
-    const pct = dur ? (cur / dur) * 100 : 0;
-    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
-    const seek = document.getElementById('fullNpSeek');
-    if (seek && document.activeElement !== seek) { seek.value = pct; seek.style.setProperty('--progress-percent', `${pct}%`); }
-    set('fullNpCurrent', formatTime(cur));
-    set('fullNpDuration', formatTime(dur));
-    const mini = document.getElementById('miniNpProgress');
-    if (mini) mini.style.width = `${pct}%`;
-  }
-  setInterval(tickRemote, 500);
-
-  /** Seek from a slider (0..100) — local or on the playing device. */
-  function seekPercent(pct) {
-    if (isPartyGuest()) { partyGuestNotice(); return; }
-    if (isRemote()) {
-      const dur = remote.state.duration || 0;
-      const position = (pct / 100) * dur;
-      sendCommand(remote.deviceId, 'seek', { position });
-      remote.state = { ...remote.state, position };
-      remote.receivedAt = Date.now();
-      return;
-    }
-    if (activeAudio && activeAudio.duration) activeAudio.currentTime = (pct / 100) * activeAudio.duration;
-  }
-
-  /** Command from another device of the account. */
-  function handleDeviceCommand(msg) {
-    const a = msg.args || {};
-    switch (msg.command) {
-      case 'play': if (!isPlaying && currentSong) togglePlay(); break;
-      case 'pause': if (isPlaying) togglePlay(); break;
-      case 'toggle': togglePlay(); break;
-      case 'next': nextTrack(); break;
-      case 'prev': prevTrack(); break;
-      case 'seek': if (activeAudio && typeof a.position === 'number') { try { activeAudio.currentTime = a.position; } catch (_) {} } break;
-      case 'volume': if (typeof a.value === 'number') setVolume(a.value); break;
-      case 'shuffle': isShuffle = !!a.value; updatePlayerUI(); break;
-      case 'repeat': if (['none', 'all', 'one'].includes(a.value)) { repeatMode = a.value; updatePlayerUI(); } break;
-      case 'play_songs':
-        if (Array.isArray(a.songs) && a.songs.length) {
-          leaveRemote();
-          playQueue(a.songs, Math.min(Math.max(0, a.index || 0), a.songs.length - 1));
-        }
-        break;
-      case 'transfer': handOffTo(a.to); break;
-      case 'handoff': receiveHandoff(a, msg.fromName); break;
-    }
-    setTimeout(() => reportState(true), 300);
-  }
-
-  /** Gives the playback (queue + position) to another device and stops here. */
-  function handOffTo(targetId) {
-    if (!targetId || targetId === DEVICE_ID || !currentSong || isRemote()) return;
-    sendCommand(targetId, 'handoff', {
-      queue: queue.slice(Math.max(0, queueIndex - 50), queueIndex + 250).map(songSummary),
-      index: Math.min(queueIndex, 50),
-      position: activeAudio ? activeAudio.currentTime || 0 : 0,
-      isPlaying: true, shuffle: isShuffle, repeat: repeatMode,
-    });
-    activeAudio.pause();
-    if (isFading) standbyAudio.pause();
-    isPlaying = false;
-    updatePlayerUI();
-  }
-
-  function receiveHandoff(a, fromName) {
-    if (!Array.isArray(a.queue) || !a.queue.length) return;
-    remote = null;
-    isShuffle = !!a.shuffle;
-    if (a.repeat) repeatMode = a.repeat;
-    queue = a.queue;
-    queueIndex = Math.min(Math.max(0, a.index || 0), queue.length - 1);
-    playSong(queue[queueIndex], isAudiobookSong(queue[queueIndex]), a.position || 0);
-    showToast(`Wiedergabe von ${fromName || 'einem anderen Gerät'} übernommen`);
-    updateLiveUI();
-  }
-
-  /** "Play on" a device from the device list. */
-  function playOnDevice(targetId) {
-    closeDevicePicker();
-    if (isRemote()) {
-      if (targetId === remote.deviceId) return;
-      sendCommand(remote.deviceId, 'transfer', { to: targetId });
-      return;
-    }
-    if (targetId === DEVICE_ID) return;
-    if (!currentSong) { showToast('Starte zuerst einen Song'); return; }
-    handOffTo(targetId);
-  }
-
-  function handleDevices(msg) {
-    liveDevices = msg.devices || [];
-    activeDeviceId = msg.activeDeviceId || null;
-    const act = liveDevices.find(d => d.id === activeDeviceId);
-    if (act && act.id !== DEVICE_ID && act.state && act.state.song && !isPartyGuest()) enterRemote(act);
-    else if (remote && (!act || act.id === DEVICE_ID)) leaveRemote();
-    updateLiveUI();
-  }
-
-  function handleDeviceState(msg) {
-    if (msg.deviceId === DEVICE_ID) return;
-    const d = liveDevices.find(x => x.id === msg.deviceId);
-    if (d) { d.state = msg.state; d.stateAt = msg.at; }
-    if (remote && remote.deviceId === msg.deviceId) {
-      remote.state = msg.state;
-      remote.receivedAt = Date.now();
-      applyRemoteState();
-    } else if (msg.state && msg.state.isPlaying && msg.deviceId === activeDeviceId && d && !isPartyGuest()) {
-      enterRemote(d);
-    }
-  }
-
-  // ── Device picker ──────────────────────────────────────────────────────────
-  function closeDevicePicker() {
-    document.getElementById('devicePicker')?.remove();
-  }
-
-  function openDevicePicker(anchor) {
-    closeDevicePicker();
-    const box = document.createElement('div');
-    box.id = 'devicePicker';
-    box.className = 'fixed z-[9999] w-[320px] max-w-[calc(100vw-24px)] bg-surface-container-high border border-border-subtle rounded-xl shadow-2xl p-md';
-    const playingId = remote ? remote.deviceId : (isPlaying || currentSong ? DEVICE_ID : activeDeviceId);
-    const rows = [...liveDevices].sort((a, b) => (a.id === DEVICE_ID ? -1 : b.id === DEVICE_ID ? 1 : 0));
-    box.innerHTML = `
-      <div class="text-label-caps font-label-caps uppercase tracking-wider text-text-muted mb-sm">Gerät auswählen</div>
-      ${rows.map(d => {
-        const on = d.id === playingId;
-        const song = d.state && d.state.song;
-        return `
-        <button class="dev-row w-full flex items-center gap-md p-sm rounded-lg text-left ${on ? 'bg-primary/15' : 'hover:bg-surface-bright'}" data-dev="${esc(d.id)}">
-          <span class="material-symbols-outlined ${on ? 'text-primary' : 'text-text-muted'}">${on ? 'volume_up' : deviceIcon(d)}</span>
-          <span class="flex-1 min-w-0">
-            <span class="block font-bold truncate ${on ? 'text-primary' : 'text-on-surface'}">${esc(d.id === DEVICE_ID ? 'Dieses Gerät' : d.name)}</span>
-            <span class="block text-body-xs text-text-muted truncate">${d.id === DEVICE_ID ? esc(d.name) : (song ? `${d.state.isPlaying ? 'Spielt' : 'Pausiert'}: ${esc(song.title)}` : 'Bereit')}</span>
-          </span>
-          ${on ? '<span class="np-equalizer playing"><span></span><span></span><span></span><span></span></span>' : ''}
-        </button>`;
-      }).join('')}
-      <p class="text-body-xs text-text-muted mt-sm px-xs">Öffne cumu auf einem anderen Gerät mit deinem Konto, um dort weiterzuhören.</p>`;
-    document.body.appendChild(box);
-    const r = anchor ? anchor.getBoundingClientRect() : { right: window.innerWidth - 12, top: window.innerHeight - 100, bottom: window.innerHeight - 100 };
-    const left = Math.max(12, Math.min(window.innerWidth - box.offsetWidth - 12, r.right - box.offsetWidth));
-    const top = r.top - box.offsetHeight - 10 > 12 ? r.top - box.offsetHeight - 10 : r.bottom + 10;
-    box.style.left = `${left}px`;
-    box.style.top = `${top}px`;
-    box.querySelectorAll('.dev-row').forEach(b => b.addEventListener('click', () => playOnDevice(b.dataset.dev)));
-    setTimeout(() => document.addEventListener('click', function off(e) {
-      if (!box.contains(e.target)) { closeDevicePicker(); document.removeEventListener('click', off); }
-    }), 0);
-  }
-
-  // ── Listening party ────────────────────────────────────────────────────────
-  function partyGuestNotice() {
-    showToast(`${party.party.host.username} steuert die Party. Du kannst Songs vorschlagen.`);
-  }
-
-  function startParty() {
-    if (isRemote()) { showToast(`Starte die Party auf ${remote.name} oder hol die Wiedergabe erst hierher`); return; }
-    if (!currentSong) { showToast('Starte zuerst einen Song, dann die Party'); return; }
-    reportState(true);
-    wsSend('party_create');
-  }
-
-  function joinParty(partyId) {
-    if (!partyId) return;
-    if (isRemote()) leaveRemote();
-    wsSend('party_join', { partyId });
-  }
-
-  function leaveParty() {
-    if (!party) return;
-    const host = party.role === 'host';
-    if (host && !confirm('Party für alle beenden?')) return;
-    wsSend('party_leave');
-  }
-
-  function suggestToParty(song) {
-    if (!party || !song) return;
-    if (party.role === 'host') { addToQueue(song); return; }
-    wsSend('party_queue_add', { song: songSummary(song) });
-  }
-
-  /** Guest: follows the host's playback. */
-  function handlePartySync(msg) {
-    if (!isPartyGuest() || !msg.state || !msg.state.song) return;
-    const s = msg.state;
-    const age = Math.max(0, ((msg.serverNow || Date.now()) - (msg.at || Date.now())) / 1000);
-    const target = (s.position || 0) + (s.isPlaying ? age + 0.15 : 0);
-    if (!currentSong || currentSong.id !== s.song.id) {
-      queue = [s.song];
-      queueIndex = 0;
-      isShuffle = false;
-      repeatMode = 'none';
-      partyApplying = true;
-      playSong(s.song, false, target).finally(() => { partyApplying = false; });
-      if (!s.isPlaying) setTimeout(() => { activeAudio.pause(); isPlaying = false; updatePlayerUI(); }, 400);
-      return;
-    }
-    if (s.isPlaying && !isPlaying) { activeAudio.play().catch(() => {}); isPlaying = true; }
-    if (!s.isPlaying && isPlaying) { activeAudio.pause(); isPlaying = false; }
-    if (activeAudio && Math.abs((activeAudio.currentTime || 0) - target) > 1.5) {
-      try { activeAudio.currentTime = target; } catch (_) {}
-    }
-    updatePlayerUI();
-  }
-
-  function handlePartyQueueAdd(msg) {
-    if (!party || party.role !== 'host' || !msg.song) return;
-    ensureCurrentSongInQueue();
-    // Suggestions play in the order they came, right after the current song
-    const at = Math.min(queue.length, queueIndex + 1 + partySuggestions);
-    queue.splice(at, 0, { ...msg.song, _suggestedBy: msg.by });
-    partySuggestions++;
-    updateQueueUI();
-    showToast(`${msg.by} schlägt „${msg.song.title}“ vor`);
-  }
-
-  function openPartyPanel() {
-    let modal = document.getElementById('partyModal');
-    if (!modal) {
-      modal = document.createElement('div');
-      modal.id = 'partyModal';
-      modal.className = 'fixed inset-0 bg-background/80 backdrop-blur-sm z-[9999] flex items-center justify-center p-md';
-      modal.addEventListener('click', (e) => { if (e.target === modal) modal.style.display = 'none'; });
-      document.body.appendChild(modal);
-    }
-    const p = party && party.party;
-    const host = party && party.role === 'host';
-    const link = p ? `${location.origin}/#/party/${p.id}` : '';
-    modal.innerHTML = !p ? `
-      <div class="w-full max-w-[440px] bg-surface-container rounded-xl shadow-2xl border border-border-subtle p-lg flex flex-col gap-md text-center">
-        <span class="material-symbols-outlined text-[48px] text-primary mx-auto">celebration</span>
-        <h2 class="text-title-md font-bold text-on-surface m-0">Listening Party</h2>
-        <p class="text-body-md text-text-muted m-0">Hört gemeinsam: Alle Gäste hören synchron, was du spielst, und können Songs vorschlagen.</p>
-        <button class="party-start px-lg py-sm rounded-full bg-primary text-on-primary font-bold">Party starten</button>
-        <button class="party-close text-body-sm text-text-muted">Abbrechen</button>
-      </div>` : `
-      <div class="w-full max-w-[480px] max-h-[88vh] overflow-y-auto bg-surface-container rounded-xl shadow-2xl border border-border-subtle p-lg flex flex-col gap-md">
-        <div class="flex items-center justify-between pb-sm border-b border-border-subtle">
-          <h2 class="text-title-md font-bold text-on-surface m-0 flex items-center gap-xs"><span class="material-symbols-outlined text-primary">celebration</span> Listening Party</h2>
-          <button class="party-close text-text-muted hover:text-on-surface rounded-full p-xs hover:bg-surface-bright"><span class="material-symbols-outlined text-[20px]">close</span></button>
-        </div>
-        <div class="flex flex-col gap-xs">
-          <div class="flex items-center gap-md p-sm rounded-lg bg-primary/10">
-            <div class="w-9 h-9 rounded-full bg-primary text-on-primary flex items-center justify-center font-bold">${esc((p.host.username || '?')[0].toUpperCase())}</div>
-            <div class="flex-1 min-w-0"><div class="font-bold text-on-surface truncate">${esc(p.host.username)}${host ? ' (du)' : ''}</div><div class="text-body-xs text-text-muted truncate">Gastgeber · ${esc(p.host.deviceName)}</div></div>
-            <span class="material-symbols-outlined text-primary">graphic_eq</span>
-          </div>
-          ${p.guests.length ? p.guests.map(g => `
-            <div class="flex items-center gap-md p-sm rounded-lg bg-surface-container-low">
-              <div class="w-9 h-9 rounded-full bg-surface-container-high text-on-surface flex items-center justify-center font-bold">${esc((g.username || '?')[0].toUpperCase())}</div>
-              <div class="flex-1 min-w-0"><div class="font-medium text-on-surface truncate">${esc(g.username)}</div><div class="text-body-xs text-text-muted truncate">${esc(g.deviceName)}</div></div>
-            </div>`).join('') : '<p class="text-body-sm text-text-muted m-0 px-xs">Noch keine Gäste. Lade jemanden ein oder teile den Link.</p>'}
-        </div>
-        <form class="party-invite flex gap-sm">
-          <input name="username" autocomplete="off" placeholder="Benutzername einladen" class="flex-1 min-w-0 bg-surface-container-low border border-border-subtle rounded-lg px-md py-sm text-on-surface focus:border-primary outline-none" />
-          <button class="px-md py-sm rounded-lg bg-text-high-contrast text-background font-bold">Einladen</button>
-        </form>
-        <div class="flex gap-sm">
-          <input readonly value="${esc(link)}" class="flex-1 min-w-0 bg-surface-container-low border border-border-subtle rounded-lg px-md py-sm text-body-sm text-text-muted" />
-          <button class="party-copy px-md py-sm rounded-lg bg-surface-container-high hover:bg-surface-bright text-on-surface font-bold">Link kopieren</button>
-        </div>
-        <p class="text-body-xs text-text-muted m-0">${host ? 'Gäste hören synchron mit. Vorgeschlagene Songs landen direkt nach dem aktuellen Song in deiner Warteschlange.' : 'Du hörst synchron mit. Über ⋮ → „Zur Party vorschlagen“ bei einem Song schickst du ihn an den Gastgeber.'}</p>
-        <button class="party-leave self-start px-md py-sm rounded-lg border border-error/40 text-error font-bold hover:bg-error/10">${host ? 'Party beenden' : 'Party verlassen'}</button>
-      </div>`;
-    modal.style.display = 'flex';
-    modal.querySelector('.party-close')?.addEventListener('click', () => { modal.style.display = 'none'; });
-    modal.querySelector('.party-start')?.addEventListener('click', () => { startParty(); });
-    modal.querySelector('.party-copy')?.addEventListener('click', async () => showToast((await copyText(link)) ? 'Link kopiert' : 'Kopieren nicht möglich'));
-    modal.querySelector('.party-leave')?.addEventListener('click', () => { leaveParty(); });
-    const form = modal.querySelector('.party-invite');
-    if (form) form.addEventListener('submit', (e) => {
-      e.preventDefault();
-      const username = form.username.value.trim();
-      if (!username) return;
-      wsSend('party_invite', { username });
-      form.username.value = '';
-    });
-  }
-
-  function handlePartyState(msg) {
-    const wasIn = !!party;
-    party = { party: msg.party, role: msg.role };
-    if (!wasIn) {
-      partySuggestions = 0;
-      showToast(msg.role === 'host' ? 'Party gestartet' : `Du bist in der Party von ${msg.party.host.username}`);
-      if (msg.role === 'guest' && remote) leaveRemote();
-    }
-    updateLiveUI();
-    if (document.getElementById('partyModal')?.style.display === 'flex') openPartyPanel();
-  }
-
-  function handlePartyEnded(msg) {
-    party = null;
-    partySuggestions = 0;
-    showToast(msg.reason || 'Die Party ist vorbei');
-    updateLiveUI();
-    const m = document.getElementById('partyModal');
-    if (m) m.style.display = 'none';
-  }
-
-  /** Strip above the player bar + device / party buttons. */
-  /** Pill on the now playing page: playing on another device / in a party. */
-  function livePillHtml() {
-    if (party) {
-      const p = party.party;
-      const n = p.guests.length;
-      const label = party.role === 'host' ? `Deine Listening Party · ${n} ${n === 1 ? 'Gast' : 'Gäste'}` : `Party von ${esc(p.host.username)} · ${n} ${n === 1 ? 'Gast' : 'Gäste'}`;
-      return `<button onclick="CumuApp.openPartyPanel()" class="mt-md inline-flex items-center gap-xs px-md py-xs rounded-full text-white font-bold text-body-sm shadow-md" style="background:linear-gradient(90deg,#7c3aed,#db2777)"><span class="material-symbols-outlined text-[18px]">celebration</span>${label}</button>`;
-    }
-    if (remote) {
-      const d = liveDevices.find(x => x.id === remote.deviceId);
-      return `<button onclick="event.stopPropagation(); CumuApp.openDevicePicker(this)" class="mt-md inline-flex items-center gap-xs px-md py-xs rounded-full text-white font-bold text-body-sm shadow-md" style="background:${LIVE_GREEN}"><span class="material-symbols-outlined text-[18px]">${d && deviceIcon(d) === 'smartphone' ? 'smartphone' : 'computer'}</span>Wiedergabe auf ${esc(remote.name)}</button>`;
-    }
-    return '';
-  }
-
-  function updateLiveUI() {
-    const multi = liveDevices.length > 1;
-    document.querySelectorAll('.live-devices-btn').forEach(b => {
-      // Only when really more than one device is online (inline style: the
-      // icon font's display rule would beat the "hidden" class)
-      b.classList.remove('hidden');
-      b.style.display = (multi || remote) ? '' : 'none';
-      b.style.color = remote ? LIVE_GREEN : '';
-    });
-    // The party icon is only there while you are in a party (start it from ⋮)
-    document.querySelectorAll('.live-party-btn').forEach(b => { b.classList.remove('hidden'); b.style.display = party ? '' : 'none'; b.style.color = party ? LIVE_PURPLE : ''; });
-    let strip = document.getElementById('liveStrip');
-    let text = '';
-    let icon = '';
-    if (party) {
-      const p = party.party;
-      const n = p.guests.length;
-      icon = 'celebration';
-      text = party.role === 'host'
-        ? `Deine Listening Party · ${n} ${n === 1 ? 'Gast' : 'Gäste'}`
-        : `Listening Party von ${esc(p.host.username)} · ${n} ${n === 1 ? 'Gast' : 'Gäste'}`;
-    } else if (remote) {
-      icon = remote.state && remote.state.song && /android|smartphone/i.test(remote.name) ? 'smartphone' : 'speaker_group';
-      const d = liveDevices.find(x => x.id === remote.deviceId);
-      icon = d ? (deviceIcon(d) === 'smartphone' ? 'smartphone' : 'computer') : icon;
-      text = `Wiedergabe auf ${esc(remote.name)}`;
-    }
-    if (!text) { if (strip) strip.remove(); document.body.classList.remove('live-strip-on'); return; }
-    if (!strip) {
-      strip = document.createElement('div');
-      strip.id = 'liveStrip';
-      document.body.appendChild(strip);
-    }
-    strip.className = `live-strip ${party ? 'is-party' : 'is-remote'}`;
-    strip.innerHTML = `<span class="material-symbols-outlined">${icon}</span><span class="live-strip-text">${text}</span>${party ? '<button class="live-strip-btn">Party</button>' : ''}`;
-    strip.onclick = () => { if (party) openPartyPanel(); else openDevicePicker(strip); };
-    document.body.classList.add('live-strip-on');
-  }
-
-  function handleLiveMessage(msg) {
-    switch (msg.type) {
-      case 'connected': wsSend('hello', { deviceId: DEVICE_ID, name: DEVICE_NAME, kind: DEVICE_KIND }); return true;
-      case 'hello_ok':
-        reportState(true);
-        if (pendingPartyJoin) { const id = pendingPartyJoin; pendingPartyJoin = null; joinParty(id); }
-        return true;
-      case 'devices': handleDevices(msg); return true;
-      case 'device_state': handleDeviceState(msg); return true;
-      case 'device_command': handleDeviceCommand(msg); return true;
-      case 'device_error': showToast(msg.message); return true;
-      case 'party_state': handlePartyState(msg); return true;
-      case 'party_sync': handlePartySync(msg); return true;
-      case 'party_queue_add': handlePartyQueueAdd(msg); return true;
-      case 'party_ended': handlePartyEnded(msg); return true;
-      case 'party_left': party = null; updateLiveUI(); showToast('Party verlassen'); return true;
-      case 'party_error': showToast(msg.message); return true;
-      case 'party_notice': showToast(msg.message); return true;
-      default: return false;
-    }
-  }
-
   window.CumuApp = {
-    openDevicePicker,
-    openPartyPanel,
-    suggestToParty,
-    seekPercent,
-    openShareItemModal,
-    refreshInboxBadge,
-    openShareModal,
-    togglePlaylistSave,
-    leavePlaylist,
-    playAudiobook,
-    addAudiobookToQueue,
-    restartAudiobook,
-    markAudiobookFinished,
-    cycleAudiobookSpeed,
-    setAudiobookSort: (key) => { window._audiobookSort = key; renderAudiobooks(); },
     getPinnedKeys,
     getPinnedCardsData,
     isPinned,
@@ -6623,10 +5003,6 @@ function showToast(msg) {
   window.CumuAudioEngine = {
     setCrossfade: (seconds) => { crossfadeDuration = seconds; },
     setGapless: (enabled) => { gaplessEnabled = enabled; },
-    setVoidSkip: (enabled) => { voidSkipEnabled = !!enabled; },
-    setNormalize: (enabled) => { normalizeEnabled = !!enabled; applyNormalization(activeAudio, currentSong); },
-    setAutoplay: (enabled) => { autoplayEnabled = !!enabled; autoplayTriedFor = null; },
-    getSettings: () => ({ voidSkip: voidSkipEnabled, normalizeVolume: normalizeEnabled, autoplay: autoplayEnabled }),
     setAudioOutputDevice: setAudioOutputDevice,
     getAudioOutputDevices: getAudioOutputDevices,
     getCurrentAudioDeviceId: () => currentAudioDeviceId,
