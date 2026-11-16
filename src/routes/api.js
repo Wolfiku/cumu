@@ -14,7 +14,9 @@ const { cleanupOrphanedAlbums, resolveEditedSongAlbum } = require('../services/a
 const { resolveSongAlias } = require('../services/dedupe');
 const { requireAuth } = require('../middleware/auth');
 const { fetchPodcastSearchResults } = require('./podcasts');
-const { searchLibrary } = require('../services/search');
+const { searchLibrary, prepareQuery, scoreText } = require('../services/search');
+const audiobooks = require('../services/audiobooks');
+const { musicOnly, isSpeechGenre } = audiobooks;
 
 const router = express.Router();
 
@@ -43,6 +45,7 @@ router.get('/home', requireAuth, (req, res) => {
     FROM (
       SELECT song_id, MAX(played_at) AS last_played
       FROM play_history WHERE user_id = ?
+        AND song_id NOT IN (SELECT id FROM songs WHERE is_audiobook = 1)
       GROUP BY song_id ORDER BY last_played DESC LIMIT 10
     ) r
     JOIN songs s ON s.id = r.song_id
@@ -56,6 +59,7 @@ router.get('/home', requireAuth, (req, res) => {
     FROM songs s
     LEFT JOIN albums al ON al.id = s.album_id
     LEFT JOIN artists ar ON ar.id = s.artist_id
+    WHERE ${musicOnly('s')}
     ORDER BY s.play_count DESC LIMIT 10
   `).all();
 
@@ -64,6 +68,7 @@ router.get('/home', requireAuth, (req, res) => {
     FROM songs s
     LEFT JOIN albums al ON al.id = s.album_id
     LEFT JOIN artists ar ON ar.id = s.artist_id
+    WHERE ${musicOnly('s')}
     ORDER BY s.created_at DESC LIMIT 10
   `).all();
 
@@ -76,7 +81,7 @@ router.get('/home', requireAuth, (req, res) => {
     JOIN songs s ON s.id = ph.song_id
     JOIN albums al ON al.id = s.album_id
     LEFT JOIN artists ar ON ar.id = al.artist_id
-    WHERE ph.user_id = ? AND ph.played_at >= ?
+    WHERE ph.user_id = ? AND ph.played_at >= ? AND ${musicOnly('s')}
     GROUP BY al.id
     HAVING plays >= 3
     ORDER BY plays DESC, MAX(ph.played_at) DESC
@@ -89,7 +94,7 @@ router.get('/home', requireAuth, (req, res) => {
       SELECT al.*, ar.name as artist_name
       FROM albums al
       LEFT JOIN artists ar ON ar.id = al.artist_id
-      WHERE EXISTS (SELECT 1 FROM songs s WHERE s.album_id = al.id)
+      WHERE EXISTS (SELECT 1 FROM songs s WHERE s.album_id = al.id AND ${musicOnly('s')})
       ORDER BY al.created_at DESC
       LIMIT 10
     `).all();
@@ -102,7 +107,7 @@ router.get('/home', requireAuth, (req, res) => {
       (SELECT COUNT(*) FROM songs s WHERE s.album_id = al.id) as song_count
     FROM albums al
     LEFT JOIN artists ar ON ar.id = al.artist_id
-    WHERE EXISTS (SELECT 1 FROM songs s WHERE s.album_id = al.id)
+    WHERE EXISTS (SELECT 1 FROM songs s WHERE s.album_id = al.id AND ${musicOnly('s')})
     ORDER BY al.created_at DESC
     LIMIT 13
   `).all();
@@ -112,7 +117,7 @@ router.get('/home', requireAuth, (req, res) => {
     SELECT ar.*, c.song_count,
       (SELECT COUNT(*) FROM albums al WHERE al.artist_id = ar.id) as album_count
     FROM artists ar
-    JOIN (SELECT artist_id, COUNT(*) AS song_count FROM songs WHERE artist_id IS NOT NULL GROUP BY artist_id) c
+    JOIN (SELECT artist_id, COUNT(*) AS song_count FROM songs s WHERE artist_id IS NOT NULL AND ${musicOnly('s')} GROUP BY artist_id) c
       ON c.artist_id = ar.id
     ORDER BY (ar.image IS NULL OR ar.image = '') ASC, c.song_count DESC
     LIMIT 12
@@ -120,9 +125,19 @@ router.get('/home', requireAuth, (req, res) => {
 
   const cumuPlaylists = playlistSummaries(db, userId).filter(p => p.is_generated === 1 && p.song_count > 0);
 
+  // Audiobooks get their own section: started books first, then the newest
+  const books = audiobooks.listBooks(db, userId);
+  const continueBooks = audiobooks.continueListening(books);
+  const startedIds = new Set(continueBooks.map(b => b.id));
+
   res.json({
     recentlyPlayed, mostPlayed, newSongs, topAlbums, topAlbumsMode,
     newAlbums, artists, cumuPlaylists, genres: genreStats(db, userId),
+    audiobooks: {
+      continue: continueBooks.slice(0, 10),
+      recent: books.filter(b => !startedIds.has(b.id)).slice(0, 12),
+      total: books.length,
+    },
   });
 });
 
@@ -200,8 +215,8 @@ function writeFavorites(db, userId, ids) {
 function genreStats(db, userId) {
   const topGenresRaw = db.prepare(`
     SELECT genre, COUNT(*) as count 
-    FROM songs 
-    WHERE genre IS NOT NULL AND genre != '' 
+    FROM songs s
+    WHERE genre IS NOT NULL AND genre != '' AND ${musicOnly('s')}
     GROUP BY genre 
     ORDER BY count DESC 
     LIMIT 3
@@ -212,7 +227,7 @@ function genreStats(db, userId) {
     SELECT ar.name, COUNT(*) as cnt
     FROM songs s
     LEFT JOIN artists ar ON ar.id = s.artist_id
-    WHERE LOWER(TRIM(s.genre)) = LOWER(?) AND ar.name IS NOT NULL AND ar.name != ''
+    WHERE LOWER(TRIM(s.genre)) = LOWER(?) AND ar.name IS NOT NULL AND ar.name != '' AND ${musicOnly('s')}
     GROUP BY ar.name
     ORDER BY cnt DESC
     LIMIT 1
@@ -226,7 +241,7 @@ function genreStats(db, userId) {
     SELECT s.genre, COUNT(*) as count
     FROM play_history ph
     JOIN songs s ON s.id = ph.song_id
-    WHERE ph.user_id = ? AND s.genre IS NOT NULL AND s.genre != ''
+    WHERE ph.user_id = ? AND s.genre IS NOT NULL AND s.genre != '' AND ${musicOnly('s')}
     GROUP BY s.genre
     ORDER BY count DESC
     LIMIT 1
@@ -247,13 +262,16 @@ router.get('/genres/detail/:genre', requireAuth, (req, res) => {
 
   const norm = rawGenre.trim();
   const likeNorm = `%${norm}%`;
+  // Genre pages and the mixes built from them are music only (a speech genre
+  // page lists its audiobook chapters, they are never mixed into music)
+  const only = isSpeechGenre(norm) ? '' : `AND ${musicOnly('s')}`;
 
   const songs = db.prepare(`
     SELECT s.*, al.title as album_title, al.cover, ar.name as artist_name
     FROM songs s
     LEFT JOIN albums al ON al.id = s.album_id
     LEFT JOIN artists ar ON ar.id = s.artist_id
-    WHERE LOWER(TRIM(s.genre)) = LOWER(?) OR s.genre LIKE ?
+    WHERE (LOWER(TRIM(s.genre)) = LOWER(?) OR s.genre LIKE ?) ${only}
     ORDER BY s.play_count DESC, s.created_at DESC
   `).all(norm, likeNorm);
 
@@ -263,7 +281,7 @@ router.get('/genres/detail/:genre', requireAuth, (req, res) => {
     SELECT DISTINCT ar.*
     FROM artists ar
     JOIN songs s ON s.artist_id = ar.id
-    WHERE LOWER(TRIM(s.genre)) = LOWER(?) OR s.genre LIKE ?
+    WHERE (LOWER(TRIM(s.genre)) = LOWER(?) OR s.genre LIKE ?) ${only}
     ORDER BY ar.name ASC
   `).all(norm, likeNorm);
 
@@ -272,7 +290,7 @@ router.get('/genres/detail/:genre', requireAuth, (req, res) => {
     FROM albums al
     JOIN songs s ON s.album_id = al.id
     LEFT JOIN artists ar ON ar.id = al.artist_id
-    WHERE LOWER(TRIM(s.genre)) = LOWER(?) OR s.genre LIKE ?
+    WHERE (LOWER(TRIM(s.genre)) = LOWER(?) OR s.genre LIKE ?) ${only}
     ORDER BY al.title ASC
   `).all(norm, likeNorm);
 
@@ -294,6 +312,8 @@ router.get('/search', requireAuth, async (req, res) => {
   const userId = req.user.id;
 
   const { topResult, songs, albums, artists, playlists: rankedPlaylists } = searchLibrary(db, q, userId);
+  const pq = prepareQuery(q);
+  const audiobookResults = audiobooks.searchBooks(db, userId, (t) => scoreText(pq, t), 10);
   const playlists = rankedPlaylists.map(pl => {
     const pSongs = db.prepare(`
       SELECT s.*, al.title as album_title, al.cover, ar.name as artist_name
@@ -327,13 +347,15 @@ router.get('/search', requireAuth, async (req, res) => {
     podcasts = await fetchPodcastSearchResults(q);
   }
 
-  res.json({ topResult, songs, albums, artists, playlists, podcasts });
+  res.json({ topResult, songs, albums, artists, playlists, podcasts, audiobooks: audiobookResults });
 });
 
 // ── Songs ──────────────────────────────────────────────────────────────────
 router.get('/songs', requireAuth, (req, res) => {
   const db = getDB();
-  const songs = db.prepare(`SELECT s.*, al.title as album_title, al.cover, ar.name as artist_name FROM songs s LEFT JOIN albums al ON al.id=s.album_id LEFT JOIN artists ar ON ar.id=s.artist_id ORDER BY s.created_at DESC`).all();
+  // Music only (shuffle-all mixes use this list); ?audiobooks=1 includes the chapters
+  const where = req.query.audiobooks === '1' ? '' : `WHERE ${musicOnly('s')}`;
+  const songs = db.prepare(`SELECT s.*, al.title as album_title, al.cover, ar.name as artist_name FROM songs s LEFT JOIN albums al ON al.id=s.album_id LEFT JOIN artists ar ON ar.id=s.artist_id ${where} ORDER BY s.created_at DESC`).all();
   res.json(songs);
 });
 
@@ -470,9 +492,11 @@ router.get('/artists/:id', requireAuth, (req, res) => {
   const db = getDB();
   const artist = db.prepare(`SELECT * FROM artists WHERE id=?`).get(req.params.id);
   if (!artist) return res.status(404).json({ error: 'Not found' });
-  const albums = db.prepare(`SELECT * FROM albums WHERE artist_id=? ORDER BY year DESC`).all(req.params.id);
-  const songs  = db.prepare(`SELECT s.*, al.title as album_title, al.cover FROM songs s LEFT JOIN albums al ON al.id=s.album_id WHERE s.artist_id=? ORDER BY s.created_at DESC`).all(req.params.id);
-  res.json({ ...artist, albums, songs });
+  // Music only; the artist's audiobooks come as their own list
+  const albums = db.prepare(`SELECT * FROM albums WHERE artist_id=? AND COALESCE(is_audiobook,0)=0 ORDER BY year DESC`).all(req.params.id);
+  const songs  = db.prepare(`SELECT s.*, al.title as album_title, al.cover FROM songs s LEFT JOIN albums al ON al.id=s.album_id WHERE s.artist_id=? AND ${musicOnly('s')} ORDER BY s.created_at DESC`).all(req.params.id);
+  const books = audiobooks.listBooks(db, req.user.id).filter(b => b.artist_id === req.params.id);
+  res.json({ ...artist, albums, songs, audiobooks: books });
 });
 
 // ── Playlists ──────────────────────────────────────────────────────────────
@@ -624,7 +648,7 @@ router.get('/library/overview', requireAuth, (req, res) => {
       SELECT s.album_id, MAX(ph.played_at) AS last_played, COUNT(*) AS plays
       FROM play_history ph
       JOIN songs s ON s.id = ph.song_id
-      WHERE ph.user_id = ? AND ph.played_at >= ? AND s.album_id IS NOT NULL
+      WHERE ph.user_id = ? AND ph.played_at >= ? AND s.album_id IS NOT NULL AND ${musicOnly('s')}
       GROUP BY s.album_id
     ) r
     JOIN albums al ON al.id = r.album_id
@@ -641,7 +665,7 @@ router.get('/library/overview', requireAuth, (req, res) => {
       SELECT s.artist_id, MAX(ph.played_at) AS last_played, COUNT(*) AS plays
       FROM play_history ph
       JOIN songs s ON s.id = ph.song_id
-      WHERE ph.user_id = ? AND ph.played_at >= ? AND s.artist_id IS NOT NULL
+      WHERE ph.user_id = ? AND ph.played_at >= ? AND s.artist_id IS NOT NULL AND ${musicOnly('s')}
       GROUP BY s.artist_id
     ) r
     JOIN artists ar ON ar.id = r.artist_id
@@ -657,6 +681,7 @@ router.get('/library/overview', requireAuth, (req, res) => {
     favorites: readFavorites(db, userId),
     showFavorites: extra.showFavorites !== false,
     pinned,
+    audiobookCount: db.prepare('SELECT COUNT(DISTINCT COALESCE(album_id, id)) AS n FROM songs WHERE is_audiobook = 1').get().n,
   });
 });
 
@@ -706,6 +731,33 @@ router.delete('/favorites/:songId', requireAuth, (req, res) => {
   const ids = readFavorites(db, req.user.id).filter(id => id !== req.params.songId);
   writeFavorites(db, req.user.id, ids);
   res.json({ success: true, ids });
+});
+
+// ── Audiobooks ─────────────────────────────────────────────────────────────
+router.get('/audiobooks', requireAuth, (req, res) => {
+  const db = getDB();
+  const books = audiobooks.listBooks(db, req.user.id);
+  res.json({ books, continue: audiobooks.continueListening(books) });
+});
+
+router.get('/audiobooks/:id', requireAuth, (req, res) => {
+  const book = audiobooks.getBook(getDB(), req.params.id, req.user.id);
+  if (!book) return res.status(404).json({ error: 'Not found' });
+  res.json(book);
+});
+
+// Body: { songId, position (seconds), finished? }
+router.put('/audiobooks/:id/progress', requireAuth, (req, res) => {
+  const { songId, position, finished } = req.body || {};
+  if (!songId) return res.status(400).json({ error: 'songId required' });
+  const progress = audiobooks.saveProgress(getDB(), req.user.id, req.params.id, songId, position, finished === true);
+  if (!progress) return res.status(404).json({ error: 'Chapter not in this book' });
+  res.json({ success: true, progress });
+});
+
+router.delete('/audiobooks/:id/progress', requireAuth, (req, res) => {
+  audiobooks.clearProgress(getDB(), req.user.id, req.params.id);
+  res.json({ success: true });
 });
 
 // ── Upload Endpoint ─────────────────────────────────────────────────────────

@@ -23,6 +23,8 @@
     playlist: 'library',
     favorites: 'library',
     podcasts: 'library',
+    audiobooks: 'library',
+    audiobook: 'library',
     settings: 'profile',
     admin: 'profile',
   };

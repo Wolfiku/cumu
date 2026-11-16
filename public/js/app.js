@@ -644,6 +644,8 @@ function showToast(msg) {
       if (currentUser?.enablePodcasts === false) { navigate('discover'); return; }
       renderPodcasts();
     }
+    else if (page === 'audiobooks') renderAudiobooks();
+    else if (page === 'audiobook')  renderAudiobook(params);
     else if (page === 'genre')          renderGenre(params);
     else if (page === 'genrePlaylist')  renderGenrePlaylist(params);
     else if (page === 'admin')      renderAdmin();
@@ -663,6 +665,9 @@ function showToast(msg) {
   async function playSong(song, isAudiobook = false, startPosition = 0) {
     if (!song || !song.id) { showToast('Song-Daten fehlen'); return; }
     initWebAudio();
+
+    // Leaving an audiobook chapter: remember where the user was
+    if (currentSong && currentSong.id !== song.id && isAudiobookSong(currentSong)) saveAudiobookProgress(true);
 
     currentSong = song;
     isSpokenWord = isAudiobook || !!song.is_audiobook || !!song.isPodcast;
@@ -718,6 +723,7 @@ function showToast(msg) {
 
     activeAudio.src = audioSrc;
     activeAudio.load();
+    applyPlaybackSpeed(); // audiobooks keep their speed, music always plays at 1×
 
     if (startPosition > 0) {
       const applyPos = () => {
@@ -737,6 +743,7 @@ function showToast(msg) {
         if (startPosition > 0) {
           try { activeAudio.currentTime = startPosition; } catch (_) {}
         }
+        if (isAudiobookSong(song)) setTimeout(() => saveAudiobookProgress(true), 1500);
         updatePlayerUI();
         if (navigator.onLine) {
           CumuApi.post(`/api/songs/${song.id}/play`, {}).catch(() => {});
@@ -912,12 +919,14 @@ function showToast(msg) {
         if (currentSong && currentSong.isPodcast) {
           savePodcastProgress(true);
         }
+        saveAudiobookProgress(true);
         updatePlayerUI();
       }
     });
 
     audioEl.addEventListener('ended', () => {
       if (audioEl === activeAudio) {
+        saveAudiobookProgress(true); // the end of the last chapter finishes the book
         if (repeatMode === 'one') {
           playSong(currentSong, !!currentSong.isPodcast || !!currentSong.is_audiobook);
         } else if (queue.length > 0 && (queueIndex + 1 < queue.length || repeatMode === 'all' || isShuffle)) {
@@ -936,6 +945,7 @@ function showToast(msg) {
       if (currentSong && currentSong.isPodcast) {
         savePodcastProgress(false);
       }
+      saveAudiobookProgress(false);
 
       const cur = activeAudio.currentTime;
       const dur = activeAudio.duration;
@@ -976,13 +986,14 @@ function showToast(msg) {
       if (podDur)  podDur.textContent = formatTime(dur);
 
       const nextSong = queue[queueIndex + 1];
-      if (nextSong && gaplessEnabled && rem < 6 && preloadedNextId !== nextSong.id) {
+      // Chapters of an audiobook never cross-fade
+      if (nextSong && gaplessEnabled && !isSpokenWord && !isAudiobookSong(nextSong) && rem < 6 && preloadedNextId !== nextSong.id) {
         preloadedNextId = nextSong.id;
         standbyAudio.src = nextSong.audioUrl ? nextSong.audioUrl : CumuApi.streamUrl(nextSong.id);
         standbyAudio.load();
       }
 
-      if (crossfadeDuration > 0 && nextSong && rem <= crossfadeDuration && !isFading && cur > 1) {
+      if (crossfadeDuration > 0 && nextSong && !isSpokenWord && !isAudiobookSong(nextSong) && rem <= crossfadeDuration && !isFading && cur > 1) {
         isFading = true;
         const now = audioCtx ? audioCtx.currentTime : 0;
         const fadeTime = Math.max(rem, 0.5);
@@ -2033,6 +2044,12 @@ function showToast(msg) {
         <section class="mb-xl"><h2 class="text-title-md font-title-md font-bold mb-md">Playlists</h2>
           <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-md">${playlists.map(renderSearchPlaylistCard).join('')}</div></section>` });
     }
+    const books = res.audiobooks || [];
+    if (books.length) {
+      sections.push({ score: best(books), html: `
+        <section class="mb-xl"><h2 class="text-title-md font-title-md font-bold mb-md flex items-center gap-xs"><span class="material-symbols-outlined text-tertiary">auto_stories</span> Audiobooks</h2>
+          ${renderBookGrid(books)}</section>` });
+    }
     sections.sort((a, b) => b.score - a.score);
 
     // Podcasts come from an external directory and always go last
@@ -2217,6 +2234,29 @@ function showToast(msg) {
           <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-md">
             ${displayAlbums.map(renderAlbumCard).join('')}
           </div>
+        </section>
+      `;
+    }
+
+    // Audiobooks: their own section, never mixed into the music above
+    const ab = homeData.audiobooks;
+    if (ab && ((ab.continue && ab.continue.length) || (ab.recent && ab.recent.length))) {
+      const books = [...(ab.continue || []), ...(ab.recent || [])].slice(0, 5);
+      const hasCont = ab.continue && ab.continue.length;
+      html += `
+        <section class="mb-xl">
+          <div class="flex items-center justify-between mb-md gap-md">
+            <div class="min-w-0">
+              <h2 class="text-headline-lg-mobile md:text-headline-lg font-headline-lg font-bold text-text-high-contrast flex items-center gap-xs">
+                <span class="material-symbols-outlined text-tertiary text-[28px]">auto_stories</span> ${hasCont ? 'Continue listening' : 'Audiobooks'}
+              </h2>
+              <p class="text-body-sm text-text-muted mt-xs">${hasCont ? 'Your audiobooks, right where you stopped' : 'New in your audiobooks'}</p>
+            </div>
+            <button onclick="navigate('audiobooks')" class="flex-shrink-0 text-body-sm font-bold text-primary hover:text-interactive-hover flex items-center gap-xs cursor-pointer transition-colors bg-surface-container-low/60 hover:bg-surface-container-low px-md py-xs rounded-full">
+              All audiobooks${ab.total ? ` (${ab.total})` : ''} <span class="material-symbols-outlined text-[18px]">chevron_right</span>
+            </button>
+          </div>
+          ${renderBookGrid(books)}
         </section>
       `;
     }
@@ -2564,9 +2604,17 @@ function showToast(msg) {
                   </div>
                 </div>` : ''}
 
-              ${(!getShowFavorites() && (!getShowPodcasts() || currentUser?.enablePodcasts === false)) ? `
-                <p class="text-body-sm text-text-muted py-md">No elements enabled. Enable them in settings.</p>
-              ` : ''}
+              <div class="group flex items-center justify-between p-sm rounded-lg hover:bg-surface-container-low cursor-pointer transition-colors" onclick="navigate('audiobooks')">
+                <div class="flex items-center gap-md">
+                  <div class="w-10 h-10 rounded-lg bg-tertiary-container/40 flex items-center justify-center text-tertiary">
+                    <span class="material-symbols-outlined text-[24px]">auto_stories</span>
+                  </div>
+                  <div>
+                    <h3 class="text-body-lg font-medium text-text-high-contrast">Audiobooks</h3>
+                    <p class="text-body-sm text-text-muted">Continue where you stopped</p>
+                  </div>
+                </div>
+              </div>
             </div>
           </section>
         </div>
@@ -3631,6 +3679,12 @@ function showToast(msg) {
       main.innerHTML = '<div class="page-section"><div class="card p-xl text-center">Album not found</div></div>';
       return;
     }
+    // Albums of audiobook chapters open as audiobook
+    if (album.is_audiobook && (album.songs || []).length && album.songs.every(isAudiobookSong)) {
+      currentPage = 'audiobook';
+      window._lastNavParams = album.id;
+      return renderAudiobook(album.id);
+    }
     const coverSrc = album.cover ? `/stream/cover/${album.cover}` : null;
 
     const totalDur = (album.songs || []).reduce((s, t) => s + (t.duration || 0), 0);
@@ -3766,6 +3820,11 @@ function showToast(msg) {
                 <div class="flex flex-col gap-xs">
                   ${artist.songs.slice(0, 25).map((s, i) => renderSongRow(s, i + 1)).join('')}
                 </div>
+              </section>` : ''}
+            ${artist.audiobooks?.length ? `
+              <section>
+                <h3 class="font-title-md text-title-md text-on-surface mb-lg font-bold flex items-center gap-xs"><span class="material-symbols-outlined text-tertiary">auto_stories</span> Audiobooks</h3>
+                ${renderBookGrid(artist.audiobooks)}
               </section>` : ''}
           </div>
           <div>
@@ -4431,6 +4490,7 @@ function showToast(msg) {
 
   function renderNowPlaying() {
     if (!currentSong) { navigate('discover'); return; }
+    if (isAudiobookSong(currentSong)) { renderAudiobookPlayer(); return; }
     if (isSpokenWord || currentSong.isPodcast) { renderPodcastPlayer(); return; }
     hideNpBar();
     let coverSrc = '';
@@ -4934,7 +4994,393 @@ function showToast(msg) {
     if (pl.songs?.length) playQueue(pl.songs, 0);
   }
 
+  // ── Audiobooks ─────────────────────────────────────────────────────────────
+  // Songs in a speech genre are audiobook chapters; an album of chapters is a
+  // book. Books never play between music: only when started or queued here.
+  // The listening position is saved on the server, so every device (and the
+  // Android app) continues where the user stopped.
+
+  const AB_SPEEDS = [0.75, 1, 1.25, 1.5, 1.75, 2];
+  const isAudiobookSong = (s) => !!(s && !s.isPodcast && (s.is_audiobook === 1 || s.is_audiobook === true));
+  const bookIdOfSong = (s) => s.book_id || (s.album_id ? s.album_id : `s-${s.id}`);
+
+  function getAudiobookSpeed() {
+    let v = 1;
+    try { v = parseFloat(localStorage.getItem('cumu_audiobook_speed')); } catch (_) {}
+    return AB_SPEEDS.includes(v) ? v : 1;
+  }
+
+  function applyPlaybackSpeed() {
+    if (!activeAudio) return;
+    const rate = isAudiobookSong(currentSong) ? getAudiobookSpeed() : 1;
+    activeAudio.defaultPlaybackRate = rate;
+    activeAudio.playbackRate = rate;
+  }
+
+  function cycleAudiobookSpeed() {
+    const cur = getAudiobookSpeed();
+    const next = AB_SPEEDS[(AB_SPEEDS.indexOf(cur) + 1) % AB_SPEEDS.length];
+    try { localStorage.setItem('cumu_audiobook_speed', String(next)); } catch (_) {}
+    applyPlaybackSpeed();
+    const btn = document.getElementById('abSpeedBtn');
+    if (btn) btn.textContent = formatSpeed(next);
+  }
+
+  const formatSpeed = (v) => `${String(v).replace('.', ',')}×`;
+
+  function formatLong(sec) {
+    sec = Math.max(0, Math.round(sec || 0));
+    const h = Math.floor(sec / 3600);
+    const m = Math.round((sec % 3600) / 60);
+    if (h && m) return `${h} h ${m} min`;
+    if (h) return `${h} h`;
+    return `${Math.max(m, sec > 0 ? 1 : 0)} min`;
+  }
+
+  function bookCoverSrc(cover) {
+    if (!cover) return null;
+    return /^(https?:|data:|\/)/.test(cover) ? cover : `/stream/cover/${cover}`;
+  }
+
+  function bookSubtitle(b) {
+    const p = b.progress;
+    if (p && p.finished) return 'Finished';
+    if (p) return `${p.percent}% · ${formatLong(p.remaining)} left`;
+    return `${b.chapter_count} ${b.chapter_count === 1 ? 'chapter' : 'chapters'} · ${formatLong(b.duration)}`;
+  }
+
+  function renderBookCard(b) {
+    const cover = bookCoverSrc(b.cover);
+    const pct = b.progress ? (b.progress.finished ? 100 : b.progress.percent) : 0;
+    return `
+      <div class="group relative bg-surface-bright border border-border-subtle p-md rounded-xl cursor-pointer hover:bg-surface-container-low transition-all min-w-0 shadow-sm hover:shadow-md" onclick="navigate('audiobook','${esc(b.id)}')">
+        <div class="relative w-full aspect-square bg-surface-container rounded-lg overflow-hidden mb-md flex items-center justify-center">
+          ${cover ? `<img src="${cover}" class="w-full h-full object-cover" alt="${esc(b.title)}" loading="lazy">`
+                  : `<span class="material-symbols-outlined text-[48px] text-text-muted">auto_stories</span>`}
+          <span class="absolute top-xs left-xs bg-black/60 text-white text-[10px] font-bold uppercase tracking-wider px-xs py-[2px] rounded">Audiobook</span>
+          <button class="absolute bottom-sm right-sm w-11 h-11 rounded-full bg-primary text-on-primary flex items-center justify-center shadow-lg opacity-0 group-hover:opacity-100 translate-y-2 group-hover:translate-y-0 transition-all"
+                  onclick="event.stopPropagation(); CumuApp.playAudiobook('${esc(b.id)}')" title="${b.progress && !b.progress.finished ? 'Continue listening' : 'Play'}">
+            <span class="material-symbols-outlined text-[26px]" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
+          </button>
+          ${pct > 0 ? `<div class="absolute left-0 right-0 bottom-0 h-1 bg-black/30"><div class="h-full bg-primary" style="width:${pct}%"></div></div>` : ''}
+        </div>
+        <h3 class="text-title-md font-title-md text-text-high-contrast font-bold truncate">${esc(b.title)}</h3>
+        <p class="text-body-sm text-text-muted truncate mt-xs">${esc(b.artist_name || 'Unknown author')}</p>
+        <p class="text-body-xs text-text-muted/80 truncate">${esc(bookSubtitle(b))}</p>
+      </div>`;
+  }
+
+  function renderBookGrid(books) {
+    return `<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-md">${books.map(renderBookCard).join('')}</div>`;
+  }
+
+  /**
+   * Starts a book. Without a chapter it continues at the saved position
+   * (a finished book starts over); with a chapter it starts that chapter.
+   */
+  async function playAudiobook(bookId, chapterIndex = null, opts = {}) {
+    let book;
+    try { book = await CumuApi.get(`/api/audiobooks/${encodeURIComponent(bookId)}`); }
+    catch (e) { showToast('Audiobook could not be loaded'); return; }
+    if (!book || !book.chapters || !book.chapters.length) { showToast('Audiobook not found'); return; }
+    const chapters = book.chapters.map(c => ({ ...c, is_audiobook: 1, book_id: book.id, book_title: book.title, cover: c.cover || book.cover }));
+    let idx = 0;
+    let pos = 0;
+    if (chapterIndex !== null && chapterIndex !== undefined) {
+      idx = Math.min(Math.max(0, chapterIndex), chapters.length - 1);
+    } else if (book.progress && !book.progress.finished && !opts.restart) {
+      idx = Math.max(0, chapters.findIndex(c => c.id === book.progress.songId));
+      pos = Math.max(0, (book.progress.position || 0) - 3); // a few seconds back for context
+    }
+    // A book plays in order
+    isShuffle = false;
+    repeatMode = 'none';
+    queue = chapters;
+    queueIndex = idx;
+    playSong(queue[idx], true, pos);
+  }
+
+  async function addAudiobookToQueue(bookId) {
+    try {
+      const book = await CumuApi.get(`/api/audiobooks/${encodeURIComponent(bookId)}`);
+      const chapters = (book.chapters || []).map(c => ({ ...c, is_audiobook: 1, book_id: book.id, book_title: book.title, cover: c.cover || book.cover }));
+      if (!chapters.length) return;
+      if (!currentSong) { queue = chapters; queueIndex = 0; playSong(queue[0], true); return; }
+      ensureCurrentSongInQueue();
+      queue.push(...chapters);
+      updateQueueUI();
+      showToast(`"${book.title}" added to the queue`);
+    } catch (e) { showToast('Audiobook could not be loaded'); }
+  }
+
+  async function restartAudiobook(bookId) {
+    try { await CumuApi.del(`/api/audiobooks/${encodeURIComponent(bookId)}/progress`); } catch (_) {}
+    playAudiobook(bookId, 0);
+  }
+
+  async function markAudiobookFinished(bookId) {
+    try {
+      const book = await CumuApi.get(`/api/audiobooks/${encodeURIComponent(bookId)}`);
+      const last = book.chapters[book.chapters.length - 1];
+      await CumuApi.put(`/api/audiobooks/${encodeURIComponent(bookId)}/progress`, { songId: last.id, position: last.duration || 0, finished: true });
+      showToast('Marked as finished');
+      if (currentPage === 'audiobook') renderAudiobook(bookId);
+    } catch (_) { showToast('Could not save'); }
+  }
+
+  let lastAudiobookSave = 0;
+  function saveAudiobookProgress(force = false, finished = false) {
+    if (!isAudiobookSong(currentSong) || !activeAudio || !navigator.onLine) return;
+    const now = Date.now();
+    if (!force && now - lastAudiobookSave < 10000) return;
+    const position = activeAudio.currentTime || 0;
+    if (!force && position < 1) return;
+    lastAudiobookSave = now;
+    const bookId = bookIdOfSong(currentSong);
+    CumuApi.put(`/api/audiobooks/${encodeURIComponent(bookId)}/progress`, {
+      songId: currentSong.id, position, ...(finished ? { finished: true } : {}),
+    }).catch(() => {});
+  }
+  window.addEventListener('beforeunload', () => saveAudiobookProgress(true));
+  window.addEventListener('pagehide', () => saveAudiobookProgress(true));
+  document.addEventListener('visibilitychange', () => { if (document.hidden) saveAudiobookProgress(true); });
+
+  async function renderAudiobooks() {
+    main.innerHTML = '<div class="p-margin-desktop text-center text-text-muted">Loading audiobooks…</div>';
+    const data = await CumuApi.get('/api/audiobooks');
+    if (currentPage !== 'audiobooks') return;
+    const books = data.books || [];
+    const cont = data.continue || [];
+    const sort = window._audiobookSort || 'new';
+    const sorted = [...books].sort((a, b) => sort === 'title'
+      ? String(a.title).localeCompare(String(b.title), undefined, { sensitivity: 'base' })
+      : sort === 'author'
+        ? String(a.artist_name || '').localeCompare(String(b.artist_name || ''), undefined, { sensitivity: 'base' }) || String(a.title).localeCompare(String(b.title))
+        : (b.created_at || 0) - (a.created_at || 0));
+    const sortBtn = (key, label) => `<button onclick="CumuApp.setAudiobookSort('${key}')" class="px-md py-xs rounded-full text-body-sm font-bold transition-colors ${sort === key ? 'bg-text-high-contrast text-background' : 'bg-surface-container-low text-text-muted hover:text-text-high-contrast'}">${label}</button>`;
+
+    main.innerHTML = `
+      <div class="max-w-[1280px] mx-auto">
+        <header class="mb-xl">
+          <h1 class="text-headline-lg-mobile md:text-headline-lg font-headline-lg-mobile md:font-headline-lg text-text-high-contrast font-bold flex items-center gap-sm">
+            <span class="material-symbols-outlined text-primary text-[36px]">auto_stories</span> Audiobooks
+          </h1>
+          <p class="text-body-md text-text-muted mt-xs">Every track in the genre "Speech" shows up here. Audiobooks never play in shuffle or mixes, only when you start them.</p>
+        </header>
+        ${cont.length ? `
+          <section class="mb-xl">
+            <h2 class="text-title-md font-title-md font-bold text-text-high-contrast mb-md flex items-center gap-xs">
+              <span class="material-symbols-outlined text-primary">resume</span> Continue listening
+            </h2>
+            ${renderBookGrid(cont)}
+          </section>` : ''}
+        <section class="mb-xl">
+          <div class="flex flex-wrap items-center justify-between gap-md mb-md">
+            <h2 class="text-title-md font-title-md font-bold text-text-high-contrast">All audiobooks (${books.length})</h2>
+            ${books.length > 1 ? `<div class="flex gap-xs">${sortBtn('new', 'Newest')}${sortBtn('title', 'Title')}${sortBtn('author', 'Author')}</div>` : ''}
+          </div>
+          ${books.length ? renderBookGrid(sorted) : `
+            <div class="p-xl text-center text-text-muted border border-dashed border-border-subtle rounded-xl">
+              <span class="material-symbols-outlined text-[40px] block mb-sm">auto_stories</span>
+              No audiobooks yet. Tracks with the genre "Speech" become audiobooks automatically.
+            </div>`}
+        </section>
+      </div>`;
+  }
+
+  async function renderAudiobook(bookId) {
+    main.innerHTML = '<div class="p-margin-desktop text-center text-text-muted">Loading audiobook…</div>';
+    const book = await CumuApi.get(`/api/audiobooks/${encodeURIComponent(bookId)}`);
+    if (currentPage !== 'audiobook') return;
+    if (!book || book.error) {
+      main.innerHTML = '<div class="p-xl text-center text-text-muted">Audiobook not found</div>';
+      return;
+    }
+    const cover = bookCoverSrc(book.cover);
+    const p = book.progress;
+    const started = p && !p.finished;
+    const playingBook = isAudiobookSong(currentSong) && bookIdOfSong(currentSong) === book.id;
+    window._bookChapters = book.chapters;
+
+    main.innerHTML = `
+      <div class="max-w-[1100px] mx-auto">
+        <section class="flex flex-col md:flex-row gap-lg md:gap-xl items-center md:items-end mb-xl">
+          <div class="w-56 h-56 md:w-64 md:h-64 flex-shrink-0 rounded-2xl overflow-hidden bg-surface-container shadow-elevation-2 border border-border-subtle flex items-center justify-center">
+            ${cover ? `<img src="${cover}" class="w-full h-full object-cover" alt="">` : `<span class="material-symbols-outlined text-[72px] text-text-muted">auto_stories</span>`}
+          </div>
+          <div class="min-w-0 flex-1 text-center md:text-left">
+            <span class="text-label-caps font-label-caps text-text-muted uppercase tracking-wider">Audiobook</span>
+            <h1 class="text-headline-lg-mobile md:text-headline-lg font-bold text-text-high-contrast mt-xs break-words">${esc(book.title)}</h1>
+            <p class="text-title-md text-primary mt-xs ${book.artist_id ? 'cursor-pointer hover:underline' : ''}" ${book.artist_id ? `onclick="navigate('artist','${esc(book.artist_id)}')"` : ''}>${esc(book.artist_name || 'Unknown author')}</p>
+            <p class="text-body-sm text-text-muted mt-xs">${book.chapter_count} ${book.chapter_count === 1 ? 'chapter' : 'chapters'} · ${formatLong(book.duration)}${book.year ? ' · ' + book.year : ''}</p>
+            ${p ? `
+              <div class="mt-md max-w-md mx-auto md:mx-0">
+                <div class="h-1.5 rounded-full bg-surface-container overflow-hidden"><div class="h-full bg-primary" style="width:${p.finished ? 100 : p.percent}%"></div></div>
+                <p class="text-body-xs text-text-muted mt-xs">${p.finished ? 'Finished' : `${p.percent}% · ${formatLong(p.remaining)} left · chapter ${p.chapterIndex + 1}`}</p>
+              </div>` : ''}
+            <div class="flex flex-wrap gap-sm mt-lg justify-center md:justify-start">
+              <button class="bg-text-high-contrast text-background px-lg py-sm rounded-full font-bold flex items-center gap-xs hover:scale-105 active:scale-95 transition-transform" onclick="CumuApp.playAudiobook('${esc(book.id)}')">
+                <span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">play_arrow</span> ${started ? 'Continue listening' : (p && p.finished ? 'Listen again' : 'Play')}
+              </button>
+              ${started ? `
+              <button class="bg-surface-container-low text-text-high-contrast px-lg py-sm rounded-full font-bold flex items-center gap-xs hover:bg-surface-container transition-colors" onclick="CumuApp.restartAudiobook('${esc(book.id)}')">
+                <span class="material-symbols-outlined">restart_alt</span> Start over
+              </button>` : ''}
+              <button class="bg-surface-container-low text-text-high-contrast px-lg py-sm rounded-full font-bold flex items-center gap-xs hover:bg-surface-container transition-colors" onclick="CumuApp.addAudiobookToQueue('${esc(book.id)}')">
+                <span class="material-symbols-outlined">queue</span> Add to queue
+              </button>
+              ${!(p && p.finished) ? `
+              <button class="bg-surface-container-low text-text-muted px-md py-sm rounded-full font-bold flex items-center gap-xs hover:text-text-high-contrast transition-colors" onclick="CumuApp.markAudiobookFinished('${esc(book.id)}')" title="Mark as finished">
+                <span class="material-symbols-outlined">done_all</span>
+              </button>` : ''}
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="text-title-md font-title-md font-bold text-text-high-contrast mb-md">Chapters</h2>
+          <div class="flex flex-col gap-xs rounded-xl border border-border-subtle bg-surface-bright/50 p-sm">
+            ${book.chapters.map((c, i) => {
+              const isCurrent = playingBook ? currentSong.id === c.id : (started && p.songId === c.id);
+              const done = p && (p.finished || i < p.chapterIndex);
+              return `
+                <div class="ab-chapter flex items-center gap-md py-sm px-sm rounded-lg hover:bg-surface-container-low transition-colors cursor-pointer group" data-index="${i}">
+                  <div class="w-8 text-center text-label-caps font-label-caps ${isCurrent ? 'text-primary' : 'text-text-muted'}">
+                    ${isCurrent ? `<span class="material-symbols-outlined text-[20px]">${playingBook && isPlaying ? 'graphic_eq' : 'play_arrow'}</span>` : (done ? '<span class="material-symbols-outlined text-[18px]">check</span>' : i + 1)}
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <div class="text-body-lg truncate ${isCurrent ? 'text-primary font-semibold' : 'text-text-high-contrast'} ${done && !isCurrent ? 'opacity-60' : ''}">${esc(c.title)}</div>
+                    ${isCurrent && !playingBook && p ? `<div class="text-body-xs text-text-muted">Stopped at ${formatTime(p.position)}</div>` : ''}
+                  </div>
+                  <div class="text-label-caps font-label-caps text-text-muted">${formatTime(c.duration)}</div>
+                  <button class="text-text-muted hover:text-text-high-contrast p-xs rounded-full hover:bg-surface-container transition-colors song-menu-btn" onclick="event.stopPropagation(); CumuApp.openSongMenu(event, this, '${c.id}')">
+                    <span class="material-symbols-outlined text-[20px]">more_vert</span>
+                  </button>
+                </div>`;
+            }).join('')}
+          </div>
+        </section>
+      </div>`;
+
+    main.querySelectorAll('.ab-chapter').forEach(row => {
+      row.addEventListener('click', () => {
+        const i = parseInt(row.dataset.index, 10);
+        // The saved chapter continues at its position, any other starts at 0
+        if (started && book.chapters[i] && book.chapters[i].id === p.songId) playAudiobook(book.id);
+        else playAudiobook(book.id, i);
+      });
+    });
+  }
+
+  function renderAudiobookPlayer() {
+    if (!currentSong) { navigate('discover'); return; }
+    hideNpBar();
+    const cover = bookCoverSrc(currentSong.cover);
+    const bookId = bookIdOfSong(currentSong);
+    const bookTitle = currentSong.book_title || currentSong.album_title || currentSong.title;
+    // Chapters of this book in the queue, in queue order
+    const chapters = queue.map((s, i) => ({ s, i })).filter(x => isAudiobookSong(x.s) && bookIdOfSong(x.s) === bookId);
+    const chapterPos = chapters.findIndex(x => x.i === queueIndex);
+    const hasPrev = queueIndex > 0;
+    const hasNext = queueIndex + 1 < queue.length;
+    const pct = activeAudio && activeAudio.duration ? (activeAudio.currentTime / activeAudio.duration) * 100 : 0;
+    const roundBtn = 'w-12 h-12 rounded-full bg-surface-container-low text-text-high-contrast hover:text-primary transition-colors flex items-center justify-center hover:scale-110 active:scale-95 disabled:opacity-30 disabled:pointer-events-none';
+
+    main.innerHTML = `
+      <div class="np-container-overlay fixed inset-0 xl:left-64 ${isQueueOpen ? 'xl:right-80' : 'xl:right-0'} z-[35] bg-background flex flex-col items-center justify-center p-md overflow-y-auto">
+        <div class="flex flex-col items-center w-full max-w-3xl mx-auto py-md px-md relative">
+          <div class="flex items-center justify-between w-full mb-lg">
+            <button class="w-10 h-10 rounded-full bg-surface-container-low text-text-high-contrast flex items-center justify-center hover:scale-105 active:scale-95 transition-transform" onclick="history.length > 1 ? history.back() : navigate('audiobooks')" title="Back">
+              <span class="material-symbols-outlined">arrow_back</span>
+            </button>
+            <div class="text-label-caps font-label-caps tracking-widest uppercase text-text-muted">Audiobook</div>
+            <button id="abChaptersBtn" class="w-10 h-10 rounded-full bg-surface-container-low text-text-high-contrast flex items-center justify-center hover:scale-105 active:scale-95 transition-transform" title="Chapters">
+              <span class="material-symbols-outlined">format_list_numbered</span>
+            </button>
+          </div>
+
+          <div class="w-64 h-64 md:w-80 md:h-80 rounded-2xl overflow-hidden bg-surface-container-low shadow-elevation-2 mb-lg flex-shrink-0 border border-border-subtle cursor-pointer" onclick="navigate('audiobook','${esc(bookId)}')" title="Open audiobook">
+            ${cover ? `<img src="${cover}" class="w-full h-full object-cover" />` : `<div class="w-full h-full flex items-center justify-center text-text-muted"><span class="material-symbols-outlined text-[64px]">auto_stories</span></div>`}
+          </div>
+
+          <div class="text-center mb-lg w-full px-md">
+            <h1 class="text-title-md md:text-headline-lg font-bold text-text-high-contrast truncate mb-xs">${esc(currentSong.title)}</h1>
+            <h2 class="text-body-lg text-text-muted truncate cursor-pointer hover:text-text-high-contrast" onclick="navigate('audiobook','${esc(bookId)}')">${esc(bookTitle)}${currentSong.artist_name ? ' · ' + esc(currentSong.artist_name) : ''}</h2>
+            ${chapters.length > 1 && chapterPos >= 0 ? `<p class="text-body-sm text-text-muted mt-xs">Chapter ${chapterPos + 1} of ${chapters.length}</p>` : ''}
+          </div>
+
+          <div class="w-full flex flex-col gap-xs mb-lg max-w-xl">
+            <input type="range" id="podcastSeek" min="0" max="100" step="0.1" value="${pct}" class="cumu-seekbar rounded-full" style="--progress-percent: ${pct}%;" />
+            <div class="flex justify-between text-body-sm font-body-sm text-text-muted font-mono mt-xs">
+              <span id="podcastCurrentTime">${activeAudio ? formatTime(activeAudio.currentTime) : '0:00'}</span>
+              <span id="podcastDuration">${activeAudio ? formatTime(activeAudio.duration || currentSong.duration) : '0:00'}</span>
+            </div>
+          </div>
+
+          <div class="flex items-center justify-center gap-md md:gap-lg mb-lg">
+            <button class="${roundBtn}" onclick="CumuApp.prevTrack()" title="Previous chapter" ${hasPrev ? '' : 'disabled'}>
+              <span class="material-symbols-outlined text-[28px]">skip_previous</span>
+            </button>
+            <button class="${roundBtn}" onclick="CumuApp.seekBy(-15)" title="Back 15 seconds">
+              <span class="relative inline-flex items-center justify-center"><span class="material-symbols-outlined text-[30px]">replay</span><span class="absolute text-[9px] font-bold pt-[3px]">15</span></span>
+            </button>
+            <button class="w-16 h-16 rounded-full bg-text-high-contrast text-on-primary flex items-center justify-center shadow-elevation-2 hover:scale-105 active:scale-95 transition-transform" onclick="CumuApp.togglePlay()">
+              <span class="material-symbols-outlined text-[40px] flex items-center justify-center leading-none select-none p-0 m-0" id="podcastPlayIcon" style="font-variation-settings: 'FILL' 1;">${isPlaying ? 'pause' : 'play_arrow'}</span>
+            </button>
+            <button class="${roundBtn}" onclick="CumuApp.seekBy(30)" title="Forward 30 seconds">
+              <span class="material-symbols-outlined text-[28px]">forward_30</span>
+            </button>
+            <button class="${roundBtn}" onclick="CumuApp.nextTrack()" title="Next chapter" ${hasNext ? '' : 'disabled'}>
+              <span class="material-symbols-outlined text-[28px]">skip_next</span>
+            </button>
+          </div>
+          <div class="flex items-center justify-center gap-sm mb-xl">
+            <button id="abSpeedBtn" class="min-w-[64px] h-9 px-md rounded-full bg-surface-container-low text-text-high-contrast font-bold text-body-sm hover:bg-surface-container transition-colors" onclick="CumuApp.cycleAudiobookSpeed()" title="Playback speed">${formatSpeed(getAudiobookSpeed())}</button>
+          </div>
+
+          <div id="abChaptersModal" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-[9999] flex items-center justify-center p-md">
+            <div class="bg-background border border-border-subtle rounded-2xl max-w-xl w-full max-h-[80vh] flex flex-col shadow-2xl p-lg">
+              <div class="flex items-center justify-between border-b border-border-subtle pb-md mb-md">
+                <h3 class="text-title-md font-bold text-text-high-contrast flex items-center gap-xs"><span class="material-symbols-outlined">format_list_numbered</span> Chapters</h3>
+                <button id="abChaptersClose" class="w-8 h-8 rounded-full bg-surface-container-low text-text-muted hover:text-text-high-contrast flex items-center justify-center"><span class="material-symbols-outlined">close</span></button>
+              </div>
+              <div class="overflow-y-auto flex flex-col gap-xs">
+                ${chapters.map((x, n) => `
+                  <button class="ab-np-chapter flex items-center gap-md text-left py-sm px-sm rounded-lg hover:bg-surface-container-low ${x.i === queueIndex ? 'text-primary font-semibold' : 'text-text-high-contrast'}" data-queue-index="${x.i}">
+                    <span class="w-6 text-center text-label-caps text-text-muted">${x.i === queueIndex ? '<span class="material-symbols-outlined text-[18px] text-primary">graphic_eq</span>' : n + 1}</span>
+                    <span class="flex-1 min-w-0 truncate">${esc(x.s.title)}</span>
+                    <span class="text-label-caps text-text-muted">${formatTime(x.s.duration)}</span>
+                  </button>`).join('')}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>`;
+
+    const modal = document.getElementById('abChaptersModal');
+    document.getElementById('abChaptersBtn')?.addEventListener('click', () => modal.classList.remove('hidden'));
+    document.getElementById('abChaptersClose')?.addEventListener('click', () => modal.classList.add('hidden'));
+    modal?.addEventListener('click', (e) => { if (e.target === modal) modal.classList.add('hidden'); });
+    main.querySelectorAll('.ab-np-chapter').forEach(btn => btn.addEventListener('click', () => {
+      const i = parseInt(btn.dataset.queueIndex, 10);
+      saveAudiobookProgress(true);
+      queueIndex = i;
+      playSong(queue[i], true);
+    }));
+    const seek = document.getElementById('podcastSeek');
+    seek?.addEventListener('input', () => {
+      if (activeAudio.duration) activeAudio.currentTime = (seek.value / 100) * activeAudio.duration;
+    });
+    seek?.addEventListener('change', () => saveAudiobookProgress(true));
+  }
+
   window.CumuApp = {
+    playAudiobook,
+    addAudiobookToQueue,
+    restartAudiobook,
+    markAudiobookFinished,
+    cycleAudiobookSpeed,
+    setAudiobookSort: (key) => { window._audiobookSort = key; renderAudiobooks(); },
     getPinnedKeys,
     getPinnedCardsData,
     isPinned,

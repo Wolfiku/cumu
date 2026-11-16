@@ -1028,6 +1028,8 @@ function runLibraryCorrection(trigger = 'daily') {
   // Albums split by collaborations are only merged once the database was
   // backed up before the first run of these rules (see server.js)
   const result = dedupeLibrary(getDB(), findSongFile, { splitAlbums: getConfig().albumMergeBackup === 2 });
+  // Merged albums keep their audiobook flag in line with their chapters
+  try { require('../services/audiobooks').syncAudiobookFlags(getDB()); } catch (_) {}
   const entry = { at: Date.now(), trigger, albums: result.albums, songs: result.songs };
   setConfig('lastLibraryCorrection', entry);
   if (result.albums || result.songs) {

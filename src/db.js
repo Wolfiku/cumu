@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const bcrypt = require('bcryptjs');
 const { cleanupOrphanedAlbums } = require('./services/albums');
+const { initAudiobooks } = require('./services/audiobooks');
 
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, '../data/cumu.db');
 
@@ -263,6 +264,9 @@ function initDB() {
 
   cleanupOrphanedAlbums(db);
   mergeDuplicateArtists(db);
+
+  // Speech tracks become audiobooks (triggers keep it that way for new songs)
+  try { initAudiobooks(db); } catch (err) { console.error('[cumu] audiobook setup error:', err.message); }
 
   return db;
 }
