@@ -23,6 +23,7 @@ const streamRoutes = require('./routes/stream');
 const userRoutes  = require('./routes/user');
 const syncRoutes  = require('./routes/sync');
 const podcastRoutes = require('./routes/podcasts');
+const socialRoutes = require('./routes/social');
 
 const app = express();
 
@@ -113,6 +114,7 @@ app.use(express.static(path.join(__dirname, '../public')));
 
 app.use('/auth',   authRoutes);
 app.use('/oauth',  oauthRoutes);
+app.use('/api',    socialRoutes);
 app.use('/api',    apiRoutes);
 app.use('/api/sync', syncRoutes);
 app.use('/api/podcasts', podcastRoutes);

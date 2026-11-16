@@ -18,6 +18,7 @@ const { searchLibrary, prepareQuery, scoreText } = require('../services/search')
 const audiobooks = require('../services/audiobooks');
 const { musicOnly, isSpeechGenre } = audiobooks;
 const sharing = require('../services/playlistSharing');
+const social = require('../services/social');
 
 const router = express.Router();
 
@@ -136,6 +137,7 @@ router.get('/home', requireAuth, (req, res) => {
   res.json({
     recentlyPlayed, mostPlayed, newSongs, topAlbums, topAlbumsMode,
     newAlbums, artists, cumuPlaylists, publicPlaylists, genres: genreStats(db, userId),
+    inboxUnread: social.unreadCount(db, userId),
     audiobooks: {
       continue: continueBooks.slice(0, 10),
       recent: books.filter(b => !startedIds.has(b.id)).slice(0, 12),
@@ -380,7 +382,10 @@ router.get('/songs/:id', requireAuth, (req, res) => {
 router.post('/songs/:id/play', requireAuth, (req, res) => {
   const db = getDB();
   db.prepare('INSERT INTO play_history (user_id, song_id) VALUES (?, ?)').run(req.user.id, req.params.id);
-  db.prepare('UPDATE songs SET play_count = play_count + 1 WHERE id = ?').run(req.params.id);
+  // Privacy: the user may keep their plays out of server-wide numbers
+  if (social.getPrivacy(db, req.user.id).count_in_stats) {
+    db.prepare('UPDATE songs SET play_count = play_count + 1 WHERE id = ?').run(req.params.id);
+  }
   res.json({ success: true });
 });
 
@@ -715,9 +720,11 @@ router.post('/playlists/:id/members', requireAuth, (req, res) => {
   if (sharing.isGenerated(pl)) return res.status(400).json({ error: 'Cumu-Playlists bleiben privat' });
   const username = String((req.body && req.body.username) || '').trim();
   if (!username) return res.status(400).json({ error: 'Benutzername fehlt' });
-  const user = db.prepare('SELECT id, username FROM users WHERE username = ? COLLATE NOCASE').get(username);
-  if (!user) return res.status(404).json({ error: `Nutzer „${username}“ gibt es auf diesem Server nicht` });
-  if (user.id === req.user.id) return res.status(400).json({ error: 'Das ist deine eigene Playlist' });
+  const user = social.userByName(db, username);
+  if (!user || user.is_blocked) return res.status(404).json({ error: `Nutzer „${username}“ gibt es auf diesem Server nicht` });
+  // Privacy: the user may not accept invitations (or blocked the owner)
+  const why = social.refusal(db, req.user.id, user, 'invite');
+  if (why) return res.status(user.id === req.user.id ? 400 : 403).json({ error: why });
   db.prepare(`INSERT INTO playlist_members (playlist_id, user_id, can_edit, added_by) VALUES (?, ?, ?, ?)
     ON CONFLICT(playlist_id, user_id) DO UPDATE SET can_edit = excluded.can_edit`)
     .run(pl.id, user.id, req.body.canEdit ? 1 : 0, req.user.id);
@@ -830,6 +837,7 @@ router.get('/library/overview', requireAuth, (req, res) => {
     favorites: readFavorites(db, userId),
     showFavorites: extra.showFavorites !== false,
     pinned,
+    inboxUnread: social.unreadCount(db, userId),
     audiobookCount: db.prepare('SELECT COUNT(DISTINCT COALESCE(album_id, id)) AS n FROM songs WHERE is_audiobook = 1').get().n,
   });
 });

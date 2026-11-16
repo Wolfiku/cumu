@@ -125,6 +125,13 @@ function renderSettingsPage(user, audioSettings = {}, autoLookupVal = false) {
     </div>
   </div>
 
+  <!-- ── Privacy ───────────────────────────────────────────────────── -->
+  <div class="bg-surface-bright border border-border-subtle rounded-xl p-xl mb-xl" id="settingsPrivacySection">
+    <h2 class="text-title-md font-title-md text-text-high-contrast font-bold mb-xs flex items-center gap-xs"><span class="material-symbols-outlined">shield_person</span> Privatsphäre</h2>
+    <p class="text-body-sm text-text-muted mb-lg">Was andere Nutzer auf diesem Server von dir sehen und dir schicken dürfen.</p>
+    <div id="settingsPrivacyBody" class="flex flex-col gap-lg"><p class="text-body-sm text-text-muted">Lade…</p></div>
+  </div>
+
   <!-- ── Section 3: Podcast-Einstellungen ────────────────────────── -->
   <div class="bg-surface-bright border border-border-subtle rounded-xl p-xl mb-xl">
     <h2 class="text-title-md font-title-md text-text-high-contrast font-bold mb-xs">Podcasts</h2>
@@ -408,6 +415,8 @@ async function initSettingsPage() {
     });
   }
 
+  initPrivacySection();
+
   // ── Silence / normalization / autoplay toggles ─────────────────────
   const audioToggles = {
     settingsVoidSkipToggle: ['voidSkip', 'setVoidSkip'],
@@ -646,3 +655,92 @@ async function clearOfflineStorageFromSettings() {
 
 window.clearOfflineStorageFromSettings = clearOfflineStorageFromSettings;
 window.initSettingsPage = initSettingsPage;
+
+
+// ── Privacy section ─────────────────────────────────────────────────────────
+const PRIVACY_OPTIONS = [
+  ['allow_invites', 'Einladungen zu Playlists', 'Andere dürfen dich zu ihren Playlists einladen.'],
+  ['allow_shares', 'Geteilte Inhalte empfangen', 'Andere dürfen dir Songs, Alben und Playlists schicken.'],
+  ['discoverable', 'In Namensvorschlägen erscheinen', 'Dein Name wird vorgeschlagen, wenn jemand beim Teilen tippt. Aus: man muss deinen Namen genau kennen.'],
+  ['show_name_public', 'Name bei öffentlichen Playlists zeigen', 'Aus: deine öffentlichen Playlists erscheinen ohne deinen Namen.'],
+  ['count_in_stats', 'In Server-Statistiken mitzählen', 'Deine Wiedergaben zählen für „Am meisten gehört“ und Autoplay. Dein eigener Verlauf bleibt davon unberührt.'],
+];
+
+async function initPrivacySection() {
+  const body = document.getElementById('settingsPrivacyBody');
+  if (!body) return;
+  let p;
+  try { p = await CumuApi.get('/api/me/privacy'); } catch (_) {}
+  if (!p || p.error) { body.innerHTML = '<p class="text-body-sm text-text-muted">Nicht verfügbar.</p>'; return; }
+
+  const draw = () => {
+    body.innerHTML = `
+      ${PRIVACY_OPTIONS.map(([key, title, text]) => `
+        <div class="flex items-center justify-between gap-md p-md bg-background border border-border-subtle rounded-lg">
+          <div>
+            <div class="text-body-lg font-medium text-text-high-contrast">${title}</div>
+            <div class="text-body-sm text-text-muted mt-xs">${text}</div>
+          </div>
+          <label class="relative inline-block w-12 h-6 cursor-pointer flex-shrink-0">
+            <input type="checkbox" data-privacy="${key}" ${p[key] ? 'checked' : ''} class="opacity-0 w-0 h-0">
+            <span class="absolute inset-0 ${p[key] ? 'bg-text-high-contrast' : 'bg-border-subtle'} rounded-full transition-colors"></span>
+            <span class="absolute top-1 ${p[key] ? 'left-7' : 'left-1'} w-4 h-4 bg-white rounded-full transition-all"></span>
+          </label>
+        </div>`).join('')}
+
+      <div class="p-md bg-background border border-border-subtle rounded-lg">
+        <div class="text-body-lg font-medium text-text-high-contrast">Blockierte Nutzer</div>
+        <div class="text-body-sm text-text-muted mt-xs mb-md">Blockierte Nutzer können dich nicht einladen, dir nichts schicken und sehen deine öffentlichen Playlists nicht, du ihre auch nicht. Sie erfahren nicht, dass du sie blockiert hast.</div>
+        <form id="privacyBlockForm" class="flex gap-sm mb-sm">
+          <input name="username" placeholder="Benutzername" autocomplete="off" class="flex-1 px-md py-sm bg-surface-bright border border-border-subtle rounded-lg text-on-surface focus:outline-none focus:border-text-muted">
+          <button class="px-md py-sm rounded-lg bg-text-high-contrast text-on-primary font-bold">Blockieren</button>
+        </form>
+        <p id="privacyBlockError" class="hidden text-body-sm text-error mb-sm"></p>
+        ${(p.blocked || []).length ? p.blocked.map(b => `
+          <div class="flex items-center justify-between py-xs">
+            <span class="text-body-md text-on-surface">${esc(b.username)}</span>
+            <button class="text-body-sm font-bold text-primary" data-unblock="${esc(b.user_id)}">Freigeben</button>
+          </div>`).join('') : '<p class="text-body-sm text-text-muted">Niemand blockiert.</p>'}
+      </div>
+
+      <div class="flex items-center justify-between gap-md p-md bg-background border border-border-subtle rounded-lg">
+        <div>
+          <div class="text-body-lg font-medium text-text-high-contrast">Hörverlauf löschen</div>
+          <div class="text-body-sm text-text-muted mt-xs">Löscht „Zuletzt gehört“ und deine persönlichen Top-Listen. Kann nicht rückgängig gemacht werden.</div>
+        </div>
+        <button id="privacyDeleteHistory" class="px-md py-sm rounded-lg border border-error/40 text-error font-bold hover:bg-error/10 flex-shrink-0">Löschen</button>
+      </div>`;
+
+    body.querySelectorAll('[data-privacy]').forEach(input => input.addEventListener('change', async () => {
+      const r = await CumuApi.put('/api/me/privacy', { [input.dataset.privacy]: input.checked }).catch(() => null);
+      if (r && !r.error) p = r;
+      draw();
+    }));
+    const form = body.querySelector('#privacyBlockForm');
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const username = form.username.value.trim();
+      if (!username) return;
+      if (!confirm(`${username} blockieren?`)) return;
+      const r = await CumuApi.post('/api/me/blocks', { username }).catch(() => null);
+      if (r && r.error) {
+        const err = body.querySelector('#privacyBlockError');
+        err.textContent = r.error; err.classList.remove('hidden');
+        return;
+      }
+      if (r) p.blocked = r.blocked;
+      draw();
+    });
+    body.querySelectorAll('[data-unblock]').forEach(b => b.addEventListener('click', async () => {
+      const r = await CumuApi.del(`/api/me/blocks/${encodeURIComponent(b.dataset.unblock)}`).catch(() => null);
+      if (r && r.blocked) p.blocked = r.blocked;
+      draw();
+    }));
+    body.querySelector('#privacyDeleteHistory').addEventListener('click', async () => {
+      if (!confirm('Deinen ganzen Hörverlauf löschen?')) return;
+      const r = await CumuApi.del('/api/me/history').catch(() => null);
+      alert(r && r.success ? `Hörverlauf gelöscht (${r.deleted} Einträge).` : 'Löschen fehlgeschlagen.');
+    });
+  };
+  draw();
+}

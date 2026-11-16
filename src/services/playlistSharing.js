@@ -59,6 +59,10 @@ function accessOf(db, pl, userId) {
   if (pl.user_id === userId) return { role: 'owner', canView: true, canEdit: !isGenerated(pl), saved: false };
   const vis = pl.visibility || 'private';
   if (vis === 'private') return { role: null, canView: false, canEdit: false, saved };
+  // Blocked (either way): the playlist does not exist for the other one
+  if (db.prepare('SELECT 1 FROM user_blocks WHERE (user_id = ? AND blocked_id = ?) OR (user_id = ? AND blocked_id = ?)').get(userId, pl.user_id, pl.user_id, userId)) {
+    return { role: null, canView: false, canEdit: false, saved };
+  }
   const m = db.prepare('SELECT can_edit FROM playlist_members WHERE playlist_id = ? AND user_id = ?').get(pl.id, userId);
   if (m) return { role: m.can_edit ? 'editor' : 'listener', canView: true, canEdit: !!m.can_edit, saved };
   if (vis === 'public') return { role: 'public', canView: true, canEdit: false, saved };
@@ -69,6 +73,8 @@ function accessOf(db, pl, userId) {
 function decorate(db, pl, userId, access) {
   const a = access || accessOf(db, pl, userId);
   const owner = db.prepare('SELECT username FROM users WHERE id = ?').get(pl.user_id);
+  // Privacy: owners may hide their name on public playlists (invited people still see it)
+  const hideName = a.role === 'public' && !showsName(db, pl.user_id);
   const counts = db.prepare(`SELECT
       (SELECT COUNT(*) FROM playlist_members WHERE playlist_id = ?) AS members,
       (SELECT COUNT(*) FROM playlist_saves WHERE playlist_id = ?) AS saves`).get(pl.id, pl.id);
@@ -76,7 +82,7 @@ function decorate(db, pl, userId, access) {
     ...pl,
     visibility: pl.visibility || 'private',
     owner_id: pl.user_id,
-    owner_username: owner ? owner.username : null,
+    owner_username: owner && !hideName ? owner.username : null,
     access: a.role,
     is_owner: a.role === 'owner' ? 1 : 0,
     can_edit: a.canEdit ? 1 : 0,
@@ -104,21 +110,31 @@ function libraryPlaylistRows(db, userId) {
 function visiblePlaylistRows(db, userId) {
   return db.prepare(`
     SELECT DISTINCT p.* FROM playlists p
-    WHERE p.user_id = @u OR p.visibility = 'public'
-       OR (p.visibility = 'shared' AND p.id IN (SELECT playlist_id FROM playlist_members WHERE user_id = @u))
+    WHERE p.user_id = @u OR (
+      (p.visibility = 'public'
+        OR (p.visibility = 'shared' AND p.id IN (SELECT playlist_id FROM playlist_members WHERE user_id = @u)))
+      AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE (b.user_id = @u AND b.blocked_id = p.user_id) OR (b.user_id = p.user_id AND b.blocked_id = @u)))
   `).all({ u: userId });
+}
+
+function showsName(db, userId) {
+  const row = db.prepare('SELECT show_name_public FROM user_privacy WHERE user_id = ?').get(userId);
+  return !row || row.show_name_public === 1;
 }
 
 /** Public playlists of other users, most saved first (optionally filtered by name). */
 function discoverPublic(db, userId, q, limit = 30) {
   const like = q ? `%${String(q).trim().toLowerCase()}%` : null;
   return db.prepare(`
-    SELECT p.*, u.username AS owner_username,
+    SELECT p.*, CASE WHEN COALESCE(pv.show_name_public, 1) = 1 THEN u.username ELSE NULL END AS owner_username,
       (SELECT COUNT(*) FROM playlist_saves s WHERE s.playlist_id = p.id) AS save_count,
       (SELECT COUNT(*) FROM playlist_songs ps WHERE ps.playlist_id = p.id) AS song_count
     FROM playlists p JOIN users u ON u.id = p.user_id
+    LEFT JOIN user_privacy pv ON pv.user_id = p.user_id
     WHERE p.visibility = 'public' AND p.user_id != @u
-      ${like ? "AND (LOWER(p.name) LIKE @like OR LOWER(COALESCE(p.description, '')) LIKE @like OR LOWER(u.username) LIKE @like)" : ''}
+      -- blocked either way: hidden
+      AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE (b.user_id = @u AND b.blocked_id = p.user_id) OR (b.user_id = p.user_id AND b.blocked_id = @u))
+      ${like ? "AND (LOWER(p.name) LIKE @like OR LOWER(COALESCE(p.description, '')) LIKE @like OR (COALESCE(pv.show_name_public, 1) = 1 AND LOWER(u.username) LIKE @like))" : ''}
       AND EXISTS (SELECT 1 FROM playlist_songs ps WHERE ps.playlist_id = p.id)
     ORDER BY save_count DESC, COALESCE(p.updated_at, p.created_at) DESC
     LIMIT @limit

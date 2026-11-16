@@ -443,7 +443,8 @@ function showToast(msg) {
     await loadPlaylists();
     updateLeftNavPinned();
     updateQueueUI();
-    navigate('discover');
+    refreshInboxBadge();
+    openStartPage();
   }
 
   document.getElementById('loginForm')?.addEventListener('submit', async (e) => {
@@ -581,6 +582,12 @@ function showToast(msg) {
   }
 
   function handleWsMessage(msg) {
+    if (msg.type === 'share_received' && msg.share) {
+      setInboxBadge(msg.unread);
+      showToast(`${msg.share.from_username || 'Jemand'} hat dir „${msg.share.title || 'etwas'}“ geschickt`);
+      if (currentPage === 'inbox') renderInbox();
+      return;
+    }
     if (msg.type === 'state_update' && msg.state) {
       const s = msg.state;
       if (s.theme && s.theme !== currentTheme) applyTheme(s.theme);
@@ -658,6 +665,7 @@ function showToast(msg) {
       renderPodcasts();
     }
     else if (page === 'audiobooks') renderAudiobooks();
+    else if (page === 'inbox')      renderInbox();
     else if (page === 'audiobook')  renderAudiobook(params);
     else if (page === 'genre')          renderGenre(params);
     else if (page === 'genrePlaylist')  renderGenrePlaylist(params);
@@ -2753,6 +2761,18 @@ function showToast(msg) {
                   </div>
                 </div>` : ''}
 
+              <div class="group flex items-center justify-between p-sm rounded-lg hover:bg-surface-container-low cursor-pointer transition-colors" onclick="navigate('inbox')">
+                <div class="flex items-center gap-md">
+                  <div class="w-10 h-10 rounded-lg bg-primary/15 flex items-center justify-center text-primary">
+                    <span class="material-symbols-outlined text-[24px]">inbox</span>
+                  </div>
+                  <div>
+                    <h3 class="text-body-lg font-medium text-text-high-contrast">Mit dir geteilt</h3>
+                    <p class="text-body-sm text-text-muted">Was dir andere geschickt haben</p>
+                  </div>
+                </div>
+                <span class="inbox-badge ${inboxUnread ? '' : 'hidden'} min-w-[22px] h-[22px] px-1 rounded-full bg-primary text-on-primary text-[11px] font-bold flex items-center justify-center">${inboxUnread > 9 ? '9+' : inboxUnread}</span>
+              </div>
               <div class="group flex items-center justify-between p-sm rounded-lg hover:bg-surface-container-low cursor-pointer transition-colors" onclick="navigate('audiobooks')">
                 <div class="flex items-center gap-md">
                   <div class="w-10 h-10 rounded-lg bg-tertiary-container/40 flex items-center justify-center text-tertiary">
@@ -3983,6 +4003,7 @@ function showToast(msg) {
             <button class="btn-secondary" onclick="CumuApp.playNextPlaylist(window._currentAlbumSongs)">${CumuIcons.get('next')} Play Next</button>
             <button class="btn-secondary" onclick="navigate('artist','${album.artist_id}')">Go to Artist</button>
             <button class="btn-secondary" onclick="navigate('album','edit:${album.id}')">${CumuIcons.get('edit')} Edit</button>
+            ${shareButton('album', album.id, album.title)}
           </div>
         </div>
       </div>
@@ -4085,6 +4106,7 @@ function showToast(msg) {
               <button class="bg-text-high-contrast text-on-primary px-6 py-2 rounded font-label-caps text-label-caps tracking-wider hover:scale-105 transition-transform duration-200 active:scale-95 flex items-center gap-2" onclick="CumuApp.playArtist('${artist.id}')">
                 <span class="material-symbols-outlined text-[18px]">play_arrow</span> play all
               </button>
+              ${shareButton('artist', artist.id, artist.name, 'bg-surface-container-high text-text-high-contrast px-4 py-2 rounded font-label-caps text-label-caps tracking-wider hover:scale-105 transition-transform flex items-center gap-2', 'share')}
             </div>
           </div>
         </section>
@@ -4214,6 +4236,7 @@ function showToast(msg) {
                 <span class="material-symbols-outlined text-[20px]">${(VISIBILITY_INFO[pl.visibility] || VISIBILITY_INFO.private).icon}</span> Teilen
               </button>
             ` : ''}
+            ${shareButton('playlist', pl.id, pl.name, 'w-10 h-10 rounded-full bg-surface-container-high hover:bg-surface-bright text-text-high-contrast flex items-center justify-center hover:scale-110 active:scale-95 transition-all border border-border-subtle shadow-sm cursor-pointer', '')}
             ${!own && (pl.access === 'public' || pl.saved) ? `
               <button class="h-10 px-md rounded-full ${pl.saved ? 'bg-primary/20 text-primary border-primary/40' : 'bg-surface-container-high text-text-high-contrast border-border-subtle hover:bg-surface-bright'} flex items-center gap-xs hover:scale-105 active:scale-95 transition-all border shadow-sm cursor-pointer font-bold text-body-sm"
                       onclick="CumuApp.togglePlaylistSave('${pl.id}', ${pl.saved ? 'false' : 'true'})">
@@ -4993,6 +5016,9 @@ function showToast(msg) {
       <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.openAddToPlaylistModal('${currentSong.id}'); CumuApp.closeContextMenu()">
         <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('playlist')}</span> Add to Playlist
       </button>
+      <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" data-share-type="song" data-share-id="${esc(song.id)}" data-share-title="${esc(song.title)}">
+        <span class="text-text-muted flex items-center justify-center w-5 h-5"><span class="material-symbols-outlined text-[20px]">share</span></span> Teilen
+      </button>
     `;
 
     positionDropdownMenu(ctxMenu, targetEl, event);
@@ -5027,6 +5053,9 @@ function showToast(msg) {
       </button>
       <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.openAddToPlaylistModal('${song.id}'); CumuApp.closeContextMenu()">
         <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('playlist')}</span> Add to Playlist
+      </button>
+      <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" data-share-type="song" data-share-id="${esc(song.id)}" data-share-title="${esc(song.title)}">
+        <span class="text-text-muted flex items-center justify-center w-5 h-5"><span class="material-symbols-outlined text-[20px]">share</span></span> Teilen
       </button>
       <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="navigate('song','edit:${song.id}'); CumuApp.closeContextMenu()">
         <span class="text-text-muted flex items-center justify-center w-5 h-5">${CumuIcons.get('edit')}</span> Edit
@@ -5096,6 +5125,9 @@ function showToast(msg) {
       ` : ''}
       <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" onclick="CumuApp.togglePin('${pKey}', event); CumuApp.closeContextMenu()">
         <span class="text-text-muted flex items-center justify-center w-5 h-5"><span class="material-symbols-outlined text-[20px]" style="${pPinned ? "font-variation-settings: 'FILL' 1;" : ''}">push_pin</span></span> ${pPinned ? 'Unpin from sidebar' : 'Pin to sidebar'}
+      </button>
+      <button class="flex items-center gap-md w-full px-md py-sm text-left font-body-sm text-body-sm text-on-surface hover:bg-surface-bright transition-colors active:scale-95" data-share-type="playlist" data-share-id="${esc(pl.id)}" data-share-title="${esc(pl.name)}">
+        <span class="text-text-muted flex items-center justify-center w-5 h-5"><span class="material-symbols-outlined text-[20px]">send</span></span> An jemanden senden / Link
       </button>
       <div class="my-xs border-t border-border-subtle"></div>
       ${own ? `
@@ -5549,6 +5581,7 @@ function showToast(msg) {
               <button class="bg-surface-container-low text-text-high-contrast px-lg py-sm rounded-full font-bold flex items-center gap-xs hover:bg-surface-container transition-colors" onclick="CumuApp.restartAudiobook('${esc(book.id)}')">
                 <span class="material-symbols-outlined">restart_alt</span> Start over
               </button>` : ''}
+              ${shareButton('audiobook', book.id, book.title, 'bg-surface-container-low text-text-high-contrast px-lg py-sm rounded-full font-bold flex items-center gap-xs hover:bg-surface-container transition-colors')}
               <button class="bg-surface-container-low text-text-high-contrast px-lg py-sm rounded-full font-bold flex items-center gap-xs hover:bg-surface-container transition-colors" onclick="CumuApp.addAudiobookToQueue('${esc(book.id)}')">
                 <span class="material-symbols-outlined">queue</span> Add to queue
               </button>
@@ -5697,7 +5730,238 @@ function showToast(msg) {
     seek?.addEventListener('change', () => saveAudiobookProgress(true));
   }
 
+  // ── Sharing with people & links ────────────────────────────────────────────
+  // Buttons carry data-share-type / data-share-id / data-share-title; one
+  // listener opens the dialog (no quoting problems with titles in onclick).
+  const SHARE_LABELS = { song: 'Song', album: 'Album', artist: 'Künstler', playlist: 'Playlist', audiobook: 'Hörbuch' };
+  const linkFor = (type, id) => `${location.origin}/#/${type}/${encodeURIComponent(id)}`;
+
+  function shareButton(type, id, title, cls = 'btn-secondary', label = 'Teilen') {
+    return `<button class="${cls}" data-share-type="${esc(type)}" data-share-id="${esc(id)}" data-share-title="${esc(title || '')}" title="Teilen"><span class="material-symbols-outlined" style="font-size:18px;vertical-align:-4px">share</span>${label ? ' ' + label : ''}</button>`;
+  }
+
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-share-type]');
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    closeContextMenu();
+    openShareItemModal(btn.dataset.shareType, btn.dataset.shareId, btn.dataset.shareTitle);
+  }, true);
+
+  async function copyText(text) {
+    try { await navigator.clipboard.writeText(text); return true; } catch (_) {}
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (_) {}
+    ta.remove();
+    return ok;
+  }
+
+  async function openShareItemModal(type, id, title) {
+    let modal = document.getElementById('shareItemModal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'shareItemModal';
+      modal.className = 'fixed inset-0 bg-background/80 backdrop-blur-sm z-[9999] flex items-center justify-center p-md';
+      modal.addEventListener('click', (e) => { if (e.target === modal) modal.style.display = 'none'; });
+      document.body.appendChild(modal);
+    }
+    const link = linkFor(type, id);
+    modal.innerHTML = `
+      <div class="w-full max-w-[480px] bg-surface-container rounded-xl shadow-2xl border border-border-subtle p-lg flex flex-col gap-md">
+        <div class="flex items-center justify-between pb-sm border-b border-border-subtle">
+          <h2 class="text-title-md font-bold text-on-surface m-0 truncate">${esc(SHARE_LABELS[type] || '')} teilen${title ? ` · „${esc(title)}“` : ''}</h2>
+          <button class="si-close text-text-muted hover:text-on-surface rounded-full p-xs hover:bg-surface-bright"><span class="material-symbols-outlined text-[20px]">close</span></button>
+        </div>
+        <form class="si-form flex flex-col gap-sm">
+          <label class="text-body-sm font-bold text-on-surface">An eine Person auf diesem Server</label>
+          <div class="relative">
+            <input name="username" autocomplete="off" placeholder="Benutzername" class="w-full bg-surface-container-low border border-border-subtle rounded-lg px-md py-sm text-on-surface focus:border-primary outline-none" />
+            <div class="si-suggest hidden absolute left-0 right-0 top-full mt-1 bg-surface-container-high border border-border-subtle rounded-lg shadow-xl z-10 overflow-hidden"></div>
+          </div>
+          <textarea name="message" rows="2" maxlength="500" placeholder="Nachricht (optional)" class="w-full bg-surface-container-low border border-border-subtle rounded-lg px-md py-sm text-on-surface focus:border-primary outline-none resize-none"></textarea>
+          <p class="si-error hidden text-body-sm text-error m-0"></p>
+          <div class="si-fix hidden"></div>
+          <button class="self-end px-lg py-sm rounded-lg bg-text-high-contrast text-background font-bold flex items-center gap-xs"><span class="material-symbols-outlined text-[18px]">send</span> Senden</button>
+        </form>
+        <div class="pt-sm border-t border-border-subtle flex flex-col gap-xs">
+          <label class="text-body-sm font-bold text-on-surface">Link</label>
+          <div class="flex gap-sm">
+            <input readonly value="${esc(link)}" class="flex-1 min-w-0 bg-surface-container-low border border-border-subtle rounded-lg px-md py-sm text-body-sm text-text-muted" />
+            <button class="si-copy px-md py-sm rounded-lg bg-surface-container-high hover:bg-surface-bright text-on-surface font-bold flex items-center gap-xs"><span class="material-symbols-outlined text-[18px]">content_copy</span> Kopieren</button>
+          </div>
+          <p class="text-body-xs text-text-muted m-0">Funktioniert für alle mit einem Konto auf diesem Server${type === 'playlist' ? ', die die Playlist sehen dürfen' : ''}.</p>
+        </div>
+      </div>`;
+    modal.style.display = 'flex';
+    const form = modal.querySelector('.si-form');
+    const input = form.username;
+    const sugg = modal.querySelector('.si-suggest');
+    const err = modal.querySelector('.si-error');
+    const fix = modal.querySelector('.si-fix');
+    modal.querySelector('.si-close').onclick = () => { modal.style.display = 'none'; };
+    modal.querySelector('.si-copy').onclick = async () => showToast((await copyText(link)) ? 'Link kopiert' : 'Kopieren nicht möglich');
+    setTimeout(() => input.focus(), 50);
+
+    let t;
+    input.addEventListener('input', () => {
+      clearTimeout(t);
+      const q = input.value.trim();
+      if (!q) { sugg.classList.add('hidden'); return; }
+      t = setTimeout(async () => {
+        const users = await CumuApi.get(`/api/users/suggest?q=${encodeURIComponent(q)}`).catch(() => []);
+        if (!Array.isArray(users) || !users.length) { sugg.classList.add('hidden'); return; }
+        sugg.innerHTML = users.map(u => `<button type="button" class="block w-full text-left px-md py-sm hover:bg-surface-bright text-on-surface" data-name="${esc(u.username)}">${esc(u.username)}</button>`).join('');
+        sugg.classList.remove('hidden');
+        sugg.querySelectorAll('button').forEach(b => b.onclick = () => { input.value = b.dataset.name; sugg.classList.add('hidden'); form.message.focus(); });
+      }, 180);
+    });
+
+    const send = async () => {
+      err.classList.add('hidden'); fix.classList.add('hidden');
+      const username = input.value.trim();
+      if (!username) return;
+      const r = await CumuApi.post('/api/shares', { username, type, id, message: form.message.value });
+      if (r && r.success) {
+        showToast(`An ${r.share.to_username} gesendet`);
+        modal.style.display = 'none';
+        return;
+      }
+      err.textContent = (r && r.error) || 'Senden fehlgeschlagen';
+      err.classList.remove('hidden');
+      // Own private playlist: invite the person, then send
+      const pl = type === 'playlist' ? playlists.find(p => p.id === id) : null;
+      if (r && r.needsAccess && pl && isOwnPlaylist(pl)) {
+        fix.innerHTML = `<button type="button" class="px-md py-sm rounded-lg bg-primary text-on-primary font-bold text-body-sm">${esc(username)} einladen und senden</button>`;
+        fix.classList.remove('hidden');
+        fix.querySelector('button').onclick = async () => {
+          const inv = await CumuApi.post(`/api/playlists/${id}/members`, { username, canEdit: false });
+          if (inv && inv.error) { err.textContent = inv.error; return; }
+          await loadPlaylists();
+          send();
+        };
+      }
+    };
+    form.onsubmit = (e) => { e.preventDefault(); sugg.classList.add('hidden'); send(); };
+  }
+
+  // ── Inbox: things other people sent me ─────────────────────────────────────
+  let inboxUnread = 0;
+  function setInboxBadge(n) {
+    inboxUnread = n || 0;
+    document.querySelectorAll('.inbox-badge').forEach(b => {
+      b.textContent = inboxUnread > 9 ? '9+' : String(inboxUnread);
+      b.classList.toggle('hidden', inboxUnread === 0);
+    });
+  }
+  async function refreshInboxBadge() {
+    const r = await CumuApi.get('/api/shares/unread').catch(() => null);
+    if (r && typeof r.unread === 'number') setInboxBadge(r.unread);
+  }
+
+  function timeAgo(sec) {
+    const d = Math.max(0, Math.floor(Date.now() / 1000) - (sec || 0));
+    if (d < 60) return 'gerade eben';
+    if (d < 3600) return `vor ${Math.floor(d / 60)} Min.`;
+    if (d < 86400) return `vor ${Math.floor(d / 3600)} Std.`;
+    if (d < 7 * 86400) return `vor ${Math.floor(d / 86400)} ${Math.floor(d / 86400) === 1 ? 'Tag' : 'Tagen'}`;
+    return new Date(sec * 1000).toLocaleDateString();
+  }
+
+  async function openSharedItem(type, id) {
+    if (type === 'song') {
+      const song = await CumuApi.get(`/api/songs/${id}`).catch(() => null);
+      if (song && !song.error) playSong(song);
+      else showToast('Song nicht mehr verfügbar');
+      return;
+    }
+    navigate(type, id);
+  }
+
+  async function renderInbox() {
+    main.innerHTML = '<div class="p-margin-desktop text-center text-text-muted">Lade…</div>';
+    const data = await CumuApi.get('/api/shares/inbox');
+    if (currentPage !== 'inbox') return;
+    const items = (data && data.items) || [];
+    main.innerHTML = `
+      <div class="max-w-[900px] mx-auto">
+        <header class="mb-xl flex items-center justify-between gap-md flex-wrap">
+          <div>
+            <h1 class="text-headline-lg-mobile md:text-headline-lg font-bold text-text-high-contrast flex items-center gap-sm"><span class="material-symbols-outlined text-primary text-[34px]">inbox</span> Mit dir geteilt</h1>
+            <p class="text-body-md text-text-muted mt-xs">Songs, Alben und Playlists, die dir andere geschickt haben.</p>
+          </div>
+        </header>
+        ${items.length ? `<div class="flex flex-col gap-sm">${items.map(it => {
+          const cover = it.cover ? (/^(https?:|\/)/.test(it.cover) ? it.cover : `/stream/cover/${it.cover}`) : null;
+          return `
+          <div class="inbox-item flex items-center gap-md p-md rounded-xl border ${it.read ? 'border-border-subtle bg-surface-bright' : 'border-primary/40 bg-primary/5'} ${it.available ? 'cursor-pointer hover:bg-surface-container-low' : 'opacity-60'} transition-colors" data-type="${esc(it.item_type)}" data-id="${esc(it.item_id)}" data-available="${it.available ? 1 : 0}">
+            <div class="w-14 h-14 rounded-lg overflow-hidden bg-surface-container flex-shrink-0 flex items-center justify-center">
+              ${cover ? `<img src="${cover}" class="w-full h-full object-cover" alt="">` : `<span class="material-symbols-outlined text-text-muted">${{ song: 'music_note', album: 'album', artist: 'person', playlist: 'queue_music', audiobook: 'auto_stories' }[it.item_type] || 'share'}</span>`}
+            </div>
+            <div class="flex-1 min-w-0">
+              <div class="text-body-sm text-text-muted"><b class="text-text-high-contrast">${esc(it.from_username)}</b> hat dir ${it.item_type === 'playlist' ? 'eine Playlist' : it.item_type === 'album' ? 'ein Album' : it.item_type === 'artist' ? 'einen Künstler' : it.item_type === 'audiobook' ? 'ein Hörbuch' : 'einen Song'} geschickt · ${timeAgo(it.created_at)}</div>
+              <div class="text-body-lg font-bold text-text-high-contrast truncate">${esc(it.title)}</div>
+              ${it.subtitle ? `<div class="text-body-sm text-text-muted truncate">${esc(it.subtitle)}</div>` : ''}
+              ${it.message ? `<div class="mt-xs text-body-md text-on-surface bg-surface-container-low rounded-lg px-sm py-xs inline-block max-w-full break-words">„${esc(it.message)}“</div>` : ''}
+            </div>
+            <button class="inbox-del text-text-muted hover:text-error p-xs rounded-full" data-share="${esc(it.id)}" title="Entfernen"><span class="material-symbols-outlined">delete</span></button>
+          </div>`;
+        }).join('')}</div>` : `
+          <div class="p-xl text-center text-text-muted border border-dashed border-border-subtle rounded-xl">
+            <span class="material-symbols-outlined text-[40px] block mb-sm">inbox</span>
+            Noch nichts. Wenn dir jemand etwas schickt, erscheint es hier.
+          </div>`}
+      </div>`;
+    main.querySelectorAll('.inbox-item').forEach(el => el.addEventListener('click', () => {
+      if (el.dataset.available === '1') openSharedItem(el.dataset.type, el.dataset.id);
+    }));
+    main.querySelectorAll('.inbox-del').forEach(b => b.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const r = await CumuApi.del(`/api/shares/${b.dataset.share}`);
+      if (r && typeof r.unread === 'number') setInboxBadge(r.unread);
+      renderInbox();
+    }));
+    // Opening the inbox reads everything
+    if (data && data.unread) {
+      const r = await CumuApi.post('/api/shares/all/read', {}).catch(() => null);
+      setInboxBadge(r && typeof r.unread === 'number' ? r.unread : 0);
+    }
+  }
+
+  // ── Links: #/song/<id>, #/album/<id>, #/playlist/<id>, ... ────────────────
+  const LINK_PAGES = ['song', 'album', 'artist', 'playlist', 'audiobook'];
+  function linkTarget() {
+    const m = (location.hash || '').match(/^#\/(song|album|artist|playlist|audiobook)\/([^/?#]+)/);
+    return m ? { type: m[1], id: decodeURIComponent(m[2]) } : null;
+  }
+  let pendingLink = linkTarget();
+  function clearLinkHash() {
+    try { history.replaceState(history.state, '', location.pathname + location.search); } catch (_) {}
+  }
+  window.addEventListener('hashchange', () => {
+    const t = linkTarget();
+    if (!t) return;
+    clearLinkHash();
+    if (currentUser) openSharedItem(t.type, t.id); else pendingLink = t;
+  });
+  /** After login: the page a link pointed to, else the start page. */
+  function openStartPage() {
+    const t = pendingLink;
+    pendingLink = null;
+    if (t && LINK_PAGES.includes(t.type)) {
+      clearLinkHash();
+      navigate('discover');
+      openSharedItem(t.type, t.id);
+      return;
+    }
+    navigate('discover');
+  }
+
   window.CumuApp = {
+    openShareItemModal,
+    refreshInboxBadge,
     openShareModal,
     togglePlaylistSave,
     leavePlaylist,

@@ -103,4 +103,9 @@ function pushStateUpdate(userId, state) {
   broadcast(userId, { type: 'state_update', state }, null);
 }
 
-module.exports = { createWsServer, pushStateUpdate };
+/** Sends any event to every open connection of a user (e.g. share_received). */
+function pushToUser(userId, payload) {
+  broadcast(userId, payload, null);
+}
+
+module.exports = { createWsServer, pushStateUpdate, pushToUser };

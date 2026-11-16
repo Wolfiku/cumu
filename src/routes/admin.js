@@ -210,6 +210,7 @@ router.put('/users/:id', requireAdmin, async (req, res) => {
 router.delete('/users/:id', requireAdmin, (req, res) => {
   const db = getDB();
   try { require('../services/playlistSharing').forgetUser(db, req.params.id); } catch (_) {}
+  try { require('../services/social').forgetUser(db, req.params.id); } catch (_) {}
   db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
   log('info', 'admin', `User deleted: ${req.params.id}`);
   res.json({ success: true });
