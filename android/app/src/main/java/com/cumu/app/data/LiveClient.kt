@@ -136,7 +136,16 @@ class LiveClient(
                     val wsUrl = url.replaceFirst("https://", "wss://").replaceFirst("http://", "ws://") + "?token=" + java.net.URLEncoder.encode(token, "UTF-8")
                     val closed = kotlinx.coroutines.CompletableDeferred<Unit>()
                     socket = wsHttp.newWebSocket(Request.Builder().url(wsUrl).build(), object : WebSocketListener() {
-                        override fun onMessage(webSocket: WebSocket, text: String) = handle(text)
+                        // Register as a device right away, on this socket: the server's
+                        // first message can arrive before [socket] is assigned
+                        override fun onOpen(webSocket: WebSocket, response: Response) {
+                            socket = webSocket
+                            sendHello(webSocket)
+                        }
+                        override fun onMessage(webSocket: WebSocket, text: String) {
+                            socket = webSocket
+                            handle(text, webSocket)
+                        }
                         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) { closed.complete(Unit) }
                         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) { closed.complete(Unit) }
                     })
@@ -194,11 +203,17 @@ class LiveClient(
 
     private fun str(o: JsonObject, k: String) = (o[k] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull
 
-    private fun handle(text: String) {
+    private fun sendHello(ws: WebSocket) {
+        val o = buildJsonObject { put("type", "hello"); put("deviceId", deviceId); put("name", deviceName); put("kind", "android") }
+        ws.send(o.toString())
+    }
+
+    private fun handle(text: String, ws: WebSocket) {
         val o = runCatching { api.json.parseToJsonElement(text) as JsonObject }.getOrNull() ?: return
         val json = api.json
         when (str(o, "type")) {
-            "connected" -> send("hello", buildJsonObject { put("deviceId", deviceId); put("name", deviceName); put("kind", "android") })
+            // hello was already sent in onOpen; once more does no harm (same device id)
+            "connected" -> if (!_connected.value) sendHello(ws)
             "hello_ok" -> {
                 _connected.value = true
                 pendingJoin?.let { id -> pendingJoin = null; joinParty(id) }
