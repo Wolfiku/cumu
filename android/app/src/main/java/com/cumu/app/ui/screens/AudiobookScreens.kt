@@ -324,6 +324,7 @@ fun AudiobookScreen(id: String) {
                                 } catch (e: Exception) { snackbar(errorText(e)) }
                             }
                         }) { Icon(Icons.Rounded.DoneAll, "Als fertig gehört markieren") }
+                        com.cumu.app.ui.components.ShareButton("audiobook", book.id, book.title)
                         DownloadAllButton(chapters)
                     }
                 }

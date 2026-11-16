@@ -34,7 +34,7 @@ data class HomeFeed(
 class Repository(private val api: ApiClient, private val downloadedSongs: () -> List<Song>) {
 
     suspend fun home(): HomeData = try {
-        api.get("/api/home")
+        api.get<HomeData>("/api/home").also { h -> h.inboxUnread?.let { _inboxUnread.value = it } }
     } catch (e: OfflineException) {
         val songs = downloadedSongs()
         HomeData(recentlyPlayed = songs.take(10), newSongs = songs.drop(10).take(10))
@@ -87,6 +87,7 @@ class Repository(private val api: ApiClient, private val downloadedSongs: () -> 
             return legacyOverview()
         }
         _favorites.value = o.favorites.toSet()
+        o.inboxUnread?.let { _inboxUnread.value = it }
         return o
     }
 
@@ -351,6 +352,60 @@ class Repository(private val api: ApiClient, private val downloadedSongs: () -> 
         api.get<RadioResult>("/api/radio?seeds=${enc(seeds.joinToString(","))}&exclude=${enc(exclude.joinToString(","))}&limit=20").songs
     } catch (e: Exception) {
         emptyList()
+    }
+
+    // ── Sending things to other users, inbox, privacy ───────────────────────
+
+    private val _inboxUnread = MutableStateFlow(0)
+    /** Unread items in "Mit dir geteilt". */
+    val inboxUnread: StateFlow<Int> = _inboxUnread.asStateFlow()
+
+    suspend fun refreshInboxUnread() {
+        runCatching { api.get<UnreadAnswer>("/api/shares/unread") }.getOrNull()?.let { _inboxUnread.value = it.unread }
+    }
+
+    suspend fun suggestUsers(q: String): List<UserSuggestion> =
+        if (q.isBlank()) emptyList() else runCatching { api.get<List<UserSuggestion>>("/api/users/suggest?q=${enc(q.trim())}") }.getOrDefault(emptyList())
+
+    /** Sends a song / album / artist / playlist / audiobook to a user of this server. */
+    suspend fun sendShare(username: String, type: String, id: String, message: String?) {
+        api.post("/api/shares", buildJsonObject {
+            put("username", username.trim())
+            put("type", type)
+            put("id", id)
+            if (!message.isNullOrBlank()) put("message", message.trim())
+        })
+    }
+
+    suspend fun inbox(): Inbox = api.get<Inbox>("/api/shares/inbox").also { _inboxUnread.value = it.unread }
+
+    suspend fun markInboxRead() {
+        runCatching { api.post("/api/shares/all/read") }
+        _inboxUnread.value = 0
+    }
+
+    suspend fun deleteShare(id: String) {
+        val text = api.delete("/api/shares/${enc(id)}")
+        runCatching { api.json.decodeFromString<UnreadAnswer>(text) }.getOrNull()?.let { _inboxUnread.value = it.unread }
+    }
+
+    suspend fun song(id: String): Song = api.get("/api/songs/${enc(id)}")
+
+    suspend fun privacy(): Privacy = api.get("/api/me/privacy")
+
+    suspend fun setPrivacy(key: String, value: Boolean): Privacy =
+        api.json.decodeFromString(api.put("/api/me/privacy", buildJsonObject { put(key, value) }))
+
+    suspend fun blockUser(username: String): List<BlockedUser> =
+        api.json.decodeFromString<BlocksAnswer>(api.post("/api/me/blocks", buildJsonObject { put("username", username.trim()) })).blocked
+
+    suspend fun unblockUser(userId: String): List<BlockedUser> =
+        api.json.decodeFromString<BlocksAnswer>(api.delete("/api/me/blocks/${enc(userId)}")).blocked
+
+    /** Deletes the own listening history; returns how many entries. */
+    suspend fun deleteHistory(): Int {
+        val text = api.delete("/api/me/history")
+        return runCatching { (api.json.parseToJsonElement(text) as JsonObject)["deleted"]?.jsonPrimitive?.contentOrNull?.toInt() }.getOrNull() ?: 0
     }
 
     /** Counts a play (history, "most played"); fire and forget. */

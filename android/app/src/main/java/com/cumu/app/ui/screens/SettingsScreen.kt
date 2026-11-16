@@ -16,6 +16,7 @@ import androidx.compose.material.icons.rounded.AllInclusive
 import androidx.compose.material.icons.rounded.FastForward
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.PrivacyTip
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.runtime.mutableFloatStateOf
@@ -48,6 +49,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun SettingsScreen() {
     val app = CumuApplication.instance
+    val nav = com.cumu.app.ui.LocalNav.current
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val session by app.sessions.session.collectAsState()
@@ -74,6 +76,12 @@ fun SettingsScreen() {
                 headlineContent = { Text("Downloads") },
                 supportingContent = { Text("${downloads.size} Titel · ${formatBytes(downloads.values.sumOf { it.bytes })}") },
                 leadingContent = { Icon(Icons.Rounded.SdStorage, null) },
+            )
+            ListItem(
+                headlineContent = { Text("Privatsphäre") },
+                supportingContent = { Text("Einladungen, Teilen, blockierte Nutzer, Hörverlauf") },
+                leadingContent = { Icon(Icons.Rounded.PrivacyTip, null) },
+                modifier = Modifier.clickable { nav.privacy() },
             )
             HorizontalDivider()
             PlaybackSection()

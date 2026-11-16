@@ -32,6 +32,7 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.Tag
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Inbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
@@ -118,6 +119,12 @@ private fun HomeHeader() {
                 "Schön, dass du da bist, ${session?.username ?: ""}",
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+        val unread by app.repo.inboxUnread.collectAsState()
+        IconButton(onClick = { nav.inbox() }) {
+            androidx.compose.material3.BadgedBox(badge = {
+                if (unread > 0) androidx.compose.material3.Badge { Text(if (unread > 9) "9+" else "$unread") }
+            }) { Icon(Icons.Rounded.Inbox, "Mit dir geteilt") }
         }
         IconButton(onClick = { nav.search() }) { Icon(Icons.Rounded.Search, "Suche") }
         // Avatar with the first letter of the user name

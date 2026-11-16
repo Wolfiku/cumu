@@ -86,6 +86,8 @@ class Nav(private val c: NavHostController) {
     fun songs() = c.navigate("songs") { launchSingleTop = true }
     fun favorites() = c.navigate("favorites") { launchSingleTop = true }
     fun audiobooks() = c.navigate("audiobooks") { launchSingleTop = true }
+    fun inbox() = c.navigate("inbox") { launchSingleTop = true }
+    fun privacy() = c.navigate("privacy") { launchSingleTop = true }
     fun audiobook(id: String) = c.navigate("audiobook/${android.net.Uri.encode(id)}")
     fun search() = c.navigate("search") {
         popUpTo(c.graph.findStartDestination().id) { saveState = true }
@@ -166,6 +168,13 @@ fun CumuAppUi() {
     LaunchedEffect(Unit) { app.player.messages.collect { snackbarHost.showSnackbar(it) } }
     // Save the whole library for offline use (search, lists)
     LaunchedEffect(session?.serverUrl, session?.username) { app.appScope.launch { app.repo.prefetch() } }
+    // "Mit dir geteilt" badge: check now and then while the app is open
+    LaunchedEffect(session?.serverUrl, session?.username) {
+        while (true) {
+            if (!app.api.offline.value) app.repo.refreshInboxUnread()
+            kotlinx.coroutines.delay(90_000)
+        }
+    }
     val offline by app.api.offline.collectAsState()
 
     CompositionLocalProvider(LocalNav provides nav, LocalSnackbar provides showSnackbar) {
@@ -235,6 +244,8 @@ fun CumuAppUi() {
                     composable("artist/{id}") { ArtistScreen(it.arguments?.getString("id")!!) }
                     composable("playlist/{id}") { PlaylistScreen(it.arguments?.getString("id")!!) }
                     composable("audiobooks") { com.cumu.app.ui.screens.AudiobooksScreen() }
+                    composable("inbox") { com.cumu.app.ui.screens.InboxScreen() }
+                    composable("privacy") { com.cumu.app.ui.screens.PrivacyScreen() }
                     composable("audiobook/{id}") { com.cumu.app.ui.screens.AudiobookScreen(it.arguments?.getString("id")!!) }
                 }
             }

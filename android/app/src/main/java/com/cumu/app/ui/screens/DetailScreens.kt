@@ -121,7 +121,7 @@ fun AlbumScreen(id: String) {
         AudiobookScreen(loaded.id)
         return
     }
-    DetailScaffold("Album") { padding ->
+    DetailScaffold("Album", actions = { loaded?.let { com.cumu.app.ui.components.ShareButton("album", it.id, it.title) } }) { padding ->
         LoadContent(loader) { album ->
             // Album track lists come without album fields; fill them in for the player
             val songs = album.songs.map {
@@ -165,6 +165,7 @@ fun PlaylistScreen(id: String) {
     DetailScaffold(
         playlist?.name ?: "Playlist",
         actions = {
+            if (playlist != null) com.cumu.app.ui.components.ShareButton("playlist", playlist.id, playlist.name, ownPlaylist = playlist.isOwn)
             if (playlist != null && playlist.isOwn && !playlist.readOnly) IconButton(onClick = { share = true }) {
                 Icon(Icons.Rounded.Share, "Teilen & Sichtbarkeit")
             }

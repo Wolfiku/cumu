@@ -53,6 +53,23 @@
 - "Add to playlist" offers only playlists you may edit.
 - Playlists cumu creates itself stay private.
 
+## 📨 Send Music to Other Users (web and Android)
+
+- **Share** songs, albums, artists, playlists and audiobooks with a person on the server, with an optional message. Name suggestions appear while you type.
+- **Inbox "Mit dir geteilt":** everything others sent you, with sender, message and time. Tap to play or open. A badge shows new items: live on the web, in the app on the start page and in the library.
+- **Links:** every item has a link (`https://your-server/#/album/…`). It opens the item directly after login. Copy it on the web; in the app, share it with any app or copy it.
+- A private playlist can only be sent once the person may open it: cumu offers to invite them in the same step.
+
+## 🛡️ Privacy (web: Settings → Privatsphäre, app: Profil → Privatsphäre)
+
+- **Invitations to playlists:** allow or refuse.
+- **Receive shared items:** allow or refuse.
+- **Appear in name suggestions:** off means others have to know your exact name.
+- **Show my name on public playlists:** off means your public playlists appear without your name.
+- **Count in server statistics:** off means your plays do not count for "most played" and autoplay popularity. Your own history stays.
+- **Block users:** no invitations or shares in either direction, and neither sees the other's public playlists. Existing invitations between you are removed. Blocked users are not told; they see the same message as for a refused setting.
+- **Delete listening history:** removes "recently played" and your personal top lists.
+
 ## 🔒 Security
 
 - Playlists are now checked on the server: before, any signed-in user could open or change any playlist by its id. Private playlists of other users now answer "not found".
@@ -73,12 +90,15 @@
 - `PUT /api/playlists/:id` `{ name?, description?, visibility? }`, `GET /api/playlists/discover?q=`, `PUT|DELETE /api/playlists/:id/save`.
 - `GET|POST /api/playlists/:id/members` `{ username, canEdit }`, `PUT|DELETE /api/playlists/:id/members/:userId` (`me` to leave).
 - `DELETE /api/playlists/:id` deletes for the owner and removes the playlist from the library for everyone else.
+- `POST /api/shares` `{ username, type, id, message? }`, `GET /api/shares/inbox`, `GET /api/shares/unread`, `POST /api/shares/:id|all/read`, `DELETE /api/shares/:id`; WebSocket event `share_received`.
+- `GET /api/users/suggest?q=`, `GET|PUT /api/me/privacy`, `POST /api/me/blocks` `{ username }`, `DELETE /api/me/blocks/:userId`, `DELETE /api/me/history`.
+- `/api/home` and `/api/library/overview` gain `inboxUnread`.
 - Songs carry `intro_silence_ms`, `outro_silence_ms`, `loudness_lufs`, `peak_db` and `loudness_gain_db` once analysed.
 
 ## ⬆️ Updating
 
 - **Docker / NAS:** Watchtower updates automatically, or use "Update installieren" in the admin panel.
 - **Linux / LXC / .deb:** `sudo cumu-update`
-- **Android:** install the new `cumu_0.7.0-alpha.apk` from this release for the sleep timer, audiobooks, crossfade, gestures, the new queue and shared playlists. Older app versions keep working, but they show no audiobook sections.
+- **Android:** install the new `cumu_0.7.0-alpha.apk` from this release for the sleep timer, audiobooks, crossfade, gestures, the new queue, shared playlists, sharing and privacy. Older app versions keep working, but they show no audiobook sections.
 
 After updating, reload the web app once (the offline cache is refreshed automatically).

@@ -24,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.AutoStories
+import androidx.compose.material.icons.rounded.Inbox
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.AutoAwesome
@@ -120,6 +121,15 @@ fun LibraryScreen() {
                     if (filter == LibFilter.All || filter == LibFilter.Playlists) {
                         if (data.showFavorites || data.favorites.isNotEmpty()) {
                             item(key = "pin-favorites") { FavoritesEntry(Modifier.animateItem()) }
+                        }
+                    }
+                    if (filter == LibFilter.All && data.inboxUnread != null) {
+                        item(key = "pin-inbox") {
+                            val unread by app.repo.inboxUnread.collectAsState()
+                            PinnedEntry(
+                                "Mit dir geteilt", if (unread > 0) "$unread neu" else "Was dir andere geschickt haben",
+                                Icons.Rounded.Inbox, LocalAccents.current.gradients[1], Modifier.animateItem(),
+                            ) { nav.inbox() }
                         }
                     }
                     if (filter == LibFilter.All && (data.audiobookCount ?: 0) > 0) {

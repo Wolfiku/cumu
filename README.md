@@ -52,6 +52,8 @@ curl -fsSL https://raw.githubusercontent.com/Wolfiku/cumu/main/scripts/install.s
 [+] Audio Seeking & Range Stream — HTTP Range requests for instant scrubbing
 [+] Playlists & Library          — manage playlists, favorite songs, albums, and artists
 [+] Shared Playlists            — private, public (whole server) or shared with chosen users, collaborative editing
+[+] Share & Inbox               — send songs, albums & playlists to other users, links to every item
+[+] Privacy Controls            — invitations, shares, name visibility, statistics, blocking, delete history
 [+] Modern Theme Engine          — clean, minimalist Studio Environment design system
 [+] 100% Self-Hosted & Private   — SQLite backend, no cloud dependency, no telemetry
 ```

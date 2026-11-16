@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
+import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Album
@@ -167,6 +168,7 @@ fun SongMenu(song: Song, onRemove: (() -> Unit)? = null, removeLabel: String = "
     val scope = rememberCoroutineScope()
     var open by remember { mutableStateOf(false) }
     var pickPlaylist by remember { mutableStateOf(false) }
+    var share by remember { mutableStateOf(false) }
 
     Box {
         IconButton(onClick = { open = true }) { Icon(Icons.Rounded.MoreVert, "Mehr") }
@@ -216,6 +218,11 @@ fun SongMenu(song: Song, onRemove: (() -> Unit)? = null, removeLabel: String = "
                 },
             )
             DropdownMenuItem(
+                text = { Text("Teilen") },
+                leadingIcon = { Icon(Icons.AutoMirrored.Rounded.Send, null) },
+                onClick = { open = false; share = true },
+            )
+            DropdownMenuItem(
                 text = { Text("Zu Playlist hinzufügen") },
                 leadingIcon = { Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, null) },
                 onClick = { open = false; pickPlaylist = true },
@@ -258,5 +265,6 @@ fun SongMenu(song: Song, onRemove: (() -> Unit)? = null, removeLabel: String = "
         }
     }
     if (pickPlaylist) PlaylistPicker(listOf(song)) { pickPlaylist = false }
+    if (share) ShareItemSheet(if (song.isAudiobook) "audiobook" else "song", if (song.isAudiobook) song.audiobookId else song.id, song.bookTitle ?: song.title) { share = false }
 }
 

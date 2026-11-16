@@ -172,6 +172,48 @@ data class PlaylistMember(
 )
 
 @Serializable
+data class UserSuggestion(@SerialName("user_id") val userId: String, val username: String = "")
+
+/** Something another user sent (inbox). */
+@Serializable
+data class InboxItem(
+    val id: String,
+    @SerialName("from_username") val fromUsername: String = "",
+    /** song | album | artist | playlist | audiobook */
+    @SerialName("item_type") val itemType: String = "",
+    @SerialName("item_id") val itemId: String = "",
+    val message: String? = null,
+    @SerialName("created_at") val createdAt: Long = 0,
+    val read: Boolean = false,
+    val available: Boolean = true,
+    val title: String = "",
+    val subtitle: String = "",
+    val cover: String? = null,
+)
+
+@Serializable
+data class Inbox(val items: List<InboxItem> = emptyList(), val unread: Int = 0)
+
+@Serializable
+data class UnreadAnswer(val unread: Int = 0)
+
+@Serializable
+data class BlockedUser(@SerialName("user_id") val userId: String, val username: String = "")
+
+@Serializable
+data class Privacy(
+    @SerialName("allow_invites") val allowInvites: Boolean = true,
+    @SerialName("allow_shares") val allowShares: Boolean = true,
+    val discoverable: Boolean = true,
+    @SerialName("show_name_public") val showNamePublic: Boolean = true,
+    @SerialName("count_in_stats") val countInStats: Boolean = true,
+    val blocked: List<BlockedUser> = emptyList(),
+)
+
+@Serializable
+data class BlocksAnswer(val blocked: List<BlockedUser> = emptyList())
+
+@Serializable
 data class PlaylistUpdate(val playlist: Playlist? = null)
 
 @Serializable
@@ -191,6 +233,8 @@ data class HomeData(
     val artists: List<Artist>? = null,
     val cumuPlaylists: List<Playlist>? = null,
     val genres: GenreStats? = null,
+    /** Unread items in "Mit dir geteilt" (servers from v0.7.0). */
+    val inboxUnread: Int? = null,
     /** Public playlists of other users (servers from v0.7.0). */
     val publicPlaylists: List<Playlist>? = null,
     /** Servers from v0.7.0: started and new audiobooks. */
@@ -210,6 +254,7 @@ data class LibraryOverview(
     val showFavorites: Boolean = true,
     /** Items pinned in the web app: "playlist:<id>", "favorites", "podcasts". */
     val pinned: List<String> = emptyList(),
+    val inboxUnread: Int? = null,
     /** Number of audiobooks (servers from v0.7.0, else null). */
     val audiobookCount: Int? = null,
 )
