@@ -97,7 +97,7 @@ The `WATCHTOWER_HTTP_*` lines let admins trigger an immediate update from cumu (
 curl -fsSL https://raw.githubusercontent.com/Wolfiku/cumu/main/scripts/install.sh | bash
 ```
 
-The installer detects the NAS, suggests suitable data and music folders, and starts cumu plus Watchtower as containers. It prints the URL and the admin login code at the end; the code is stored in `<data folder>/cumu.env`. On other systems you can force this mode with `--docker`; set the folders with `--data-dir` and `--music-path`.
+The installer detects the NAS, suggests suitable data and music folders, and starts cumu plus Watchtower as containers. It prints the URL and the admin login code at the end; the code is stored in `<data folder>/cumu.env`. It also writes a `docker-compose.yml` into the data folder, so after a reboot or crash you can bring cumu back with `docker compose up -d` in that folder (or open it as a project in your NAS's container UI). On other systems you can force this mode with `--docker`; set the folders with `--data-dir` and `--music-path`.
 
 **Option B — container UI.** Paste [`docker-compose.nas.yml`](docker-compose.nas.yml) into your NAS's compose/project dialog. Its header lists the matching folder paths for each NAS.
 
