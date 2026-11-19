@@ -16,6 +16,7 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
+      - HOST=0.0.0.0
       - SESSION_SECRET=${SESSION_SECRET:-cumu-default-production-secret-change-me}
       - MUSIC_PATH=/music
       # Lets admins trigger an immediate update via Watchtower (admin panel / scan screen)

@@ -27,6 +27,7 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
+      - HOST=0.0.0.0
       - SESSION_SECRET=change-me-to-a-long-random-string
       - MUSIC_PATH=/volume1/music      # suggested music folder, can be changed in cumu
       - WATCHTOWER_URL=http://watchtower:8080

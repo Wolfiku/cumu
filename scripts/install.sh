@@ -185,6 +185,7 @@ install_docker_mode() {
   cat > "$ENV_FILE" << ENVEOF
 NODE_ENV=production
 PORT=3000
+HOST=0.0.0.0
 MUSIC_PATH=${MUSIC_DIR}
 SESSION_SECRET=${SECRET}
 ADMIN_LOGIN_CODE=${CODE}
@@ -216,6 +217,8 @@ ENVEOF
     for d in "${SHARES[@]}"; do echo "      - \"${d}:${d}\""; done
     echo "    labels:"
     echo "      - \"com.centurylinklabs.watchtower.enable=true\""
+    echo "    networks:"
+    echo "      - cumu-net"
     echo ""
     echo "  cumu_watchtower:"
     echo "    image: containrrr/watchtower:latest"
@@ -230,6 +233,15 @@ ENVEOF
     echo "      - WATCHTOWER_HTTP_API_TOKEN=cumu-watchtower-internal"
     echo "    volumes:"
     echo "      - /var/run/docker.sock:/var/run/docker.sock"
+    echo "    networks:"
+    echo "      - cumu-net"
+    echo ""
+    echo "# Persistent bridge network created by the installer (docker network create"
+    echo "# cumu-net). external: compose never deletes it, so it survives restarts."
+    echo "networks:"
+    echo "  cumu-net:"
+    echo "    external: true"
+    echo "    name: cumu-net"
   } > "$COMPOSE_FILE"
   log "Compose-Datei geschrieben: ${COMPOSE_FILE}"
 
@@ -253,15 +265,19 @@ ENVEOF
 
   log "Starte cumu..."
   local STARTED_WITH="compose"
-  # Compose uses its own network; drop the one older installers created
-  [[ ${#COMPOSE[@]} -gt 0 ]] && "$DOCKER" network rm cumu-net &>/dev/null || true
+  # Persistent bridge network for cumu + Watchtower (with subnet and gateway);
+  # Docker keeps it across reboots, compose only uses it (external)
+  "$DOCKER" network inspect cumu-net &>/dev/null || "$DOCKER" network create --driver bridge cumu-net >/dev/null \
+    || error "Docker-Netzwerk cumu-net konnte nicht angelegt werden."
+  local NET_INFO
+  NET_INFO="$("$DOCKER" network inspect -f '{{range .IPAM.Config}}{{.Subnet}} gateway {{.Gateway}}{{end}}' cumu-net 2>/dev/null || true)"
+  log "Netzwerk cumu-net: ${NET_INFO:-?}"
   if [[ ${#COMPOSE[@]} -gt 0 ]] && (cd "$BASE" && "${COMPOSE[@]}" -f "$COMPOSE_FILE" up -d --remove-orphans); then
     :
   else
     [[ ${#COMPOSE[@]} -gt 0 ]] && warn "docker compose ist fehlgeschlagen — starte die Container direkt mit docker run."
     STARTED_WITH="run"
     "$DOCKER" rm -f cumu cumu_watchtower &>/dev/null || true
-    "$DOCKER" network inspect cumu-net &>/dev/null || "$DOCKER" network create cumu-net >/dev/null
     "$DOCKER" run -d --name cumu --restart unless-stopped --network cumu-net \
       -p "${PORT}:3000" --env-file "$ENV_FILE" \
       -v "${BASE}/data:/app/data" "${MOUNTS[@]}" \
