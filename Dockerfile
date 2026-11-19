@@ -20,6 +20,8 @@ RUN apk add --no-cache ffmpeg tini wget
 
 ENV NODE_ENV=production
 ENV PORT=3000
+# Always listen on all interfaces inside the container (Docker maps the port)
+ENV HOST=0.0.0.0
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .

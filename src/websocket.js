@@ -44,6 +44,9 @@ function broadcast(userId, payload, excludeSocket) {
 
 function createWsServer(httpServer) {
   const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
+  // HTTP server errors (e.g. listen failures) are re-emitted here; server.js
+  // handles them, so don't let them crash the process as unhandled events
+  wss.on('error', () => {});
 
   wss.on('connection', (ws, req) => {
     // Parse token from query string

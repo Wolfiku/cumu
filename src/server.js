@@ -243,12 +243,33 @@ async function prepareLibrary() {
 const server = http.createServer(app);
 createWsServer(server);
 
-server.listen(PORT, HOST, async () => {
+let listenHost = HOST;
+let started = false;
+server.on('error', (err) => {
+  // A stored/explicit address that does not exist here (e.g. the NAS IP inside
+  // a container) would otherwise crash cumu in a restart loop: listen on all
+  // interfaces instead.
+  if (!started && listenHost !== '0.0.0.0' && (err.code === 'EADDRNOTAVAIL' || err.code === 'EINVAL' || err.code === 'ENOTFOUND')) {
+    console.warn(`[cumu] Cannot listen on ${listenHost}:${PORT} (${err.code}) — falling back to 0.0.0.0`);
+    listenHost = '0.0.0.0';
+    server.listen(PORT, listenHost);
+    return;
+  }
+  console.error(`[cumu] Server error on ${listenHost}:${PORT}:`, err.message);
+  if (!started) process.exit(1);
+});
+
+server.on('listening', async () => {
+  if (started) return;
+  started = true;
   await checkAutoSetup();
   startBackgroundScanner();
-  console.log(`[cumu] Server running at http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
+  console.log(`[cumu] Listening on ${listenHost}:${PORT}`);
+  console.log(`[cumu] Server running at http://${listenHost === '0.0.0.0' ? 'localhost' : listenHost}:${PORT}`);
   console.log(`[cumu] WebSocket endpoint: ws://localhost:${PORT}/ws`);
   if (!isSetupDone()) {
     console.log('[cumu] First run — open the URL above to complete setup.');
   }
 });
+
+server.listen(PORT, listenHost);
