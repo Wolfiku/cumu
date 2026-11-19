@@ -172,13 +172,31 @@ install_docker_mode() {
   local -a SHARES=() MOUNTS=()
   local d
   case "$PLATFORM" in
-    synology|asustor) for d in /volume[0-9]*; do [[ -d "$d" ]] && SHARES+=("$d"); done ;;
+    # Synology Container Manager refuses to start containers that bind a whole
+    # volume (/volume1): "Fail to parse share name ... Failed to get c2 share
+    # list from volume binds". Bind every shared folder on its own instead
+    # (/volume1/music, ...), skipping DSM system folders (@appstore, #recycle, ...)
+    synology)         for d in /volume[0-9]*/*; do
+                        [[ -d "$d" && ! -L "$d" ]] || continue
+                        case "${d##*/}" in @*|.*|\#*|lost+found) continue ;; esac
+                        # DSM tool: only real shared folders (not plain dirs)
+                        if [[ $EUID -eq 0 && -x /usr/syno/sbin/synoshare ]]; then
+                          /usr/syno/sbin/synoshare --get "${d##*/}" &>/dev/null || continue
+                        fi
+                        SHARES+=("$d")
+                      done ;;
+    asustor)          for d in /volume[0-9]*; do [[ -d "$d" ]] && SHARES+=("$d"); done ;;
     qnap)             [[ -d /share ]] && SHARES+=("/share") ;;
     unraid|truenas)   [[ -d /mnt ]] && SHARES+=("/mnt") ;;
   esac
   local inside=false
   for d in "${SHARES[@]}"; do [[ "$MUSIC_DIR" == "$d" || "$MUSIC_DIR" == "$d"/* ]] && inside=true; done
-  [[ "$inside" == true ]] || SHARES+=("$MUSIC_DIR")
+  if [[ "$inside" != true ]]; then
+    SHARES+=("$MUSIC_DIR")
+    [[ "$PLATFORM" == "synology" ]] && warn "Der Musik-Ordner ${MUSIC_DIR} liegt in keinem freigegebenen Ordner.
+        Der Container Manager kann cumu dann nicht starten. Lege in DSM einen freigegebenen
+        Ordner an (Systemsteuerung → Freigegebener Ordner, z. B. \"music\") und installiere erneut."
+  fi
   for d in "${SHARES[@]}"; do MOUNTS+=(-v "${d}:${d}"); done
   log "Für cumu freigegeben: ${SHARES[*]}"
 
