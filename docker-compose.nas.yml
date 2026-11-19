@@ -6,12 +6,14 @@
 # Manual use — adjust the data folder and the shared NAS drive under "volumes".
 # The drive is shared under the SAME path, so any NAS path works in cumu.
 # Typical data folder and drive per NAS:
-#   Synology  (Container Manager → Project)   /volume1/docker/cumu/data   /volume1
+#   Synology  (Container Manager → Project)   /volume1/docker/cumu/data   /volume1/music
 #   QNAP      (Container Station → Apps)      /share/Container/cumu/data  /share
 #   Unraid    (Compose Manager plugin)        /mnt/user/appdata/cumu/data /mnt
 #   TrueNAS SCALE (Apps → Install via YAML)   /mnt/<pool>/apps/cumu/data  /mnt
 #   Asustor   (Portainer)                     /volume1/Docker/cumu/data   /volume1
 #   Others with Portainer: any absolute paths on your NAS
+# Synology: bind shared folders (/volume1/music), never a whole volume
+# (/volume1) — Container Manager then refuses to start the container.
 # Create the data folder first, change SESSION_SECRET, then start.
 #
 # Uses the prebuilt image (x86_64 + arm64, no build on the NAS). The admin
@@ -34,7 +36,7 @@ services:
       - WATCHTOWER_HTTP_API_TOKEN=cumu-watchtower-internal
     volumes:
       - /volume1/docker/cumu/data:/app/data   # database, sessions, .env  ← adjust
-      - /volume1:/volume1                     # NAS drive, same path inside ← adjust
+      - /volume1/music:/volume1/music         # shared folder, same path inside ← adjust
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
 
